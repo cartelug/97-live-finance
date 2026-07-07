@@ -73,6 +73,8 @@ select.inp{appearance:none;-webkit-appearance:none;padding-right:32px;background
 @keyframes sheetUp{from{transform:translateY(16px);opacity:.5}to{transform:translateY(0);opacity:1}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 .fu{animation:fadeUp .4s ease both}
+/* The .fu screen wrapper keeps a transform (fadeUp, fill-mode both), which creates a stacking context that traps the modal .backdrop below the fixed bottom nav — hiding the sheet's Save/Upload footer behind it. When a screen holds an open modal, lift that wrapper above the nav so the backdrop covers the nav and the green action buttons stay visible and tappable. */
+.fu:has(.backdrop){position:relative;z-index:70}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
