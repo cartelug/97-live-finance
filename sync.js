@@ -48,7 +48,7 @@
     return bucketId(c.code).then(function(id){
       return fetch(base(c.url)+"/rest/v1/sync?id=eq."+id+"&select=data,rev",
         { headers:{ apikey:c.key, Authorization:"Bearer "+c.key } }); })
-      .then(function(r){ if(!r.ok) throw new Error("GET "+r.status); return r.json(); })
+      .then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error("GET "+r.status+(t?": "+t.slice(0,160):"")); }); return r.json(); })
       .then(function(rows){ return (rows && rows[0]) ? rows[0] : null; });
   }
   function remotePut(dataBlob, rev){
@@ -59,7 +59,7 @@
           headers:{ apikey:c.key, Authorization:"Bearer "+c.key, "Content-Type":"application/json",
                     Prefer:"resolution=merge-duplicates,return=minimal" },
           body:JSON.stringify({ id:id, data:dataBlob, rev:rev }) }); })
-      .then(function(r){ if(!r.ok) throw new Error("PUT "+r.status); });
+      .then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error("PUT "+r.status+(t?": "+t.slice(0,160):"")); }); });
   }
 
   // ---------- engine ----------
@@ -129,7 +129,11 @@
           setStatus("ok"); location.reload();
         });
       }
-      return pushLocal();
+      var plain = get(DATA_KEY) || "{}";
+      return encryptData(code, plain).then(function(blob){
+        var rev = Date.now();
+        return remotePut(blob, rev).then(function(){ lastUploadedRev = rev; put(K.rev, String(rev)); setStatus("ok"); });
+      });
     }).catch(function(e){ setStatus("err"); throw e; });
   }
   function disconnect(){ put(K.on, "0"); setStatus("off"); }
@@ -272,7 +276,16 @@
       }
       return connect(url, key, code, dir);
     }).then(function(){ if (enabled() && status!=="err"){ renderPanel(); } })
-      .catch(function(){ toast("Couldn’t connect — check the URL, key and internet"); });
+      .catch(function(e){
+        var m=String((e&&e.message)||e||""), hint;
+        if(/Failed to fetch|NetworkError|Load failed|ERR_|TypeError/i.test(m)) hint="can’t reach that URL — check the Supabase URL and your internet";
+        else if(/does not exist|relation|PGRST205|\b404\b/i.test(m)) hint="table not found — run the SQL step";
+        else if(/\b401\b|JWT|JWS|apikey|No API key|Invalid API/i.test(m)) hint="key rejected — re-copy the anon public key";
+        else if(/\b403\b|row-level|policy|permission/i.test(m)) hint="blocked by permissions — re-run the SQL policies";
+        else hint=(m.slice(0,180)||"unknown error");
+        toast("Couldn’t connect: "+hint);
+        try{console.error("[97 sync] connect failed:",e);}catch(_){}
+      });
   }
 
   function copy(text){
