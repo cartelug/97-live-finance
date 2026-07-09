@@ -1,19 +1,20 @@
-/* 97 LIVE — Cloud Sync (optional, end-to-end encrypted).
-   Fully self-contained: talks only to the app's localStorage + a Supabase REST table.
-   Your data is AES-GCM encrypted in the browser with a key derived from your Sync Code,
-   so Supabase only ever stores ciphertext. No React internals are touched. */
+/* 97 LIVE — Cloud Sync (optional, end-to-end encrypted) via a private GitHub Gist.
+   Self-contained: talks only to the app's localStorage + the GitHub API. Your data is
+   AES-GCM encrypted in the browser with a key derived from your Sync Code, so GitHub only
+   ever stores ciphertext. No React internals are touched. GitHub never pauses like a free DB. */
 (function () {
   "use strict";
   if (!window.crypto || !crypto.subtle) return; // needs a secure context (https/localhost)
 
-  var DATA_KEY = "ns97-finance-v1";                 // the app's own data blob
-  var K = { url:"ns97.sync.url", key:"ns97.sync.key", code:"ns97.sync.code", on:"ns97.sync.on", rev:"ns97.sync.rev" };
-  var POLL_MS = 4000, DEBOUNCE_MS = 1200;
+  var DATA_KEY = "ns97-finance-v1";
+  var K = { token:"ns97.sync.token", gist:"ns97.sync.gist", code:"ns97.sync.code", on:"ns97.sync.on", rev:"ns97.sync.rev" };
+  var POLL_MS = 6000, DEBOUNCE_MS = 1200;
 
   var enc = new TextEncoder(), dec = new TextDecoder();
   var _set = localStorage.setItem.bind(localStorage);
   function get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
   function put(k,v){ try { _set(k,v); } catch(e){} }
+  function apiBase(){ return get("ns97.sync.api") || "https://api.github.com"; } // override is test-only
 
   // ---------- crypto ----------
   function b64(buf){ var b=new Uint8Array(buf),s="",i; for(i=0;i<b.length;i++) s+=String.fromCharCode(b[i]); return btoa(s); }
@@ -37,33 +38,49 @@
       return crypto.subtle.decrypt({name:"AES-GCM", iv:iv}, key, ct); }).then(function(pt){ return dec.decode(pt); }); }
 
   // ---------- config ----------
-  function cfg(){ return { url:get(K.url), key:get(K.key), code:get(K.code) }; }
-  function enabled(){ var c=cfg(); return get(K.on)==="1" && c.url && c.key && c.code; }
-  function bucketId(code){ return sha256hex("ns97|"+code).then(function(h){ return "b_"+h.slice(0,40); }); }
-  function base(url){ return cleanUrl(url).replace(/\/+$/,""); }
-  // Strip anything a copy-paste might have slipped in. A JWT is only [A-Za-z0-9._-];
-  // stray smart-quotes / spaces / zero-width chars break fetch() headers (non ISO-8859-1).
-  function cleanKey(k){ return String(k==null?"":k).replace(/[^A-Za-z0-9._-]/g,""); }
-  function cleanUrl(u){ return String(u==null?"":u).replace(/\s+/g,"").replace(/[^\x21-\x7E]/g,""); }
+  function cfg(){ return { token:get(K.token), gist:get(K.gist), code:get(K.code) }; }
+  function enabled(){ var c=cfg(); return get(K.on)==="1" && c.token && c.code; }
+  // strip anything a copy-paste might slip in — GitHub tokens are [A-Za-z0-9_], never smart chars
+  function cleanTok(t){ return String(t==null?"":t).replace(/[^A-Za-z0-9._-]/g,""); }
+  function fname(code){ return sha256hex("ns97|"+code).then(function(h){ return "ns97-"+h.slice(0,32)+".json"; }); }
+  function ghHeaders(){ return { Authorization:"Bearer "+cleanTok(cfg().token), Accept:"application/vnd.github+json",
+    "Content-Type":"application/json", "X-GitHub-Api-Version":"2022-11-28" }; }
+  function ok(op){ return function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error(op+" "+r.status+(t?": "+t.slice(0,140):"")); }); return Promise.resolve(r); }; }
 
-  // ---------- Supabase REST ----------
-  function remoteGet(){
-    var c = cfg();
-    return bucketId(c.code).then(function(id){
-      return fetch(base(c.url)+"/rest/v1/sync?id=eq."+id+"&select=data,rev",
-        { headers:{ apikey:cleanKey(c.key), Authorization:"Bearer "+cleanKey(c.key) } }); })
-      .then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error("GET "+r.status+(t?": "+t.slice(0,160):"")); }); return r.json(); })
-      .then(function(rows){ return (rows && rows[0]) ? rows[0] : null; });
+  // ---------- GitHub Gist REST ----------
+  function findGist(fn){
+    return fetch(apiBase()+"/gists?per_page=100", {headers:ghHeaders()}).then(ok("LIST")).then(function(r){ return r.json(); })
+      .then(function(list){ for(var i=0;i<list.length;i++){ if(list[i].files && list[i].files[fn]){ put(K.gist, list[i].id); return list[i]; } } return null; });
   }
-  function remotePut(dataBlob, rev){
-    var c = cfg();
-    return bucketId(c.code).then(function(id){
-      return fetch(base(c.url)+"/rest/v1/sync",
-        { method:"POST",
-          headers:{ apikey:cleanKey(c.key), Authorization:"Bearer "+cleanKey(c.key), "Content-Type":"application/json",
-                    Prefer:"resolution=merge-duplicates,return=minimal" },
-          body:JSON.stringify({ id:id, data:dataBlob, rev:rev }) }); })
-      .then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error("PUT "+r.status+(t?": "+t.slice(0,160):"")); }); });
+  // returns {rev, blob} or null
+  function remoteGet(){
+    var code = cfg().code;
+    return fname(code).then(function(fn){
+      var gid = get(K.gist);
+      var got = gid
+        ? fetch(apiBase()+"/gists/"+gid, {headers:ghHeaders()}).then(function(r){ if(r.status===404){ put(K.gist,""); return findGist(fn); } return ok("GET")(r).then(function(x){ return x.json(); }); })
+        : findGist(fn);
+      return got.then(function(g){
+        if(!g || !g.files || !g.files[fn]) return null;
+        var content = g.files[fn].content || "";
+        var i = content.indexOf("\n");
+        if(i<0) return null;
+        return { rev: Number(content.slice(0,i))||0, blob: content.slice(i+1) };
+      });
+    });
+  }
+  function remotePut(blob, rev){
+    return fname(cfg().code).then(function(fn){
+      var files={}; files[fn]={ content: rev + "\n" + blob };
+      function create(){ return fetch(apiBase()+"/gists", {method:"POST", headers:ghHeaders(),
+          body:JSON.stringify({description:"97 LIVE — encrypted finance sync (safe to keep private)", public:false, files:files})})
+          .then(ok("CREATE")).then(function(r){ return r.json(); }).then(function(g){ put(K.gist, g.id); }); }
+      function patch(gid){ return fetch(apiBase()+"/gists/"+gid, {method:"PATCH", headers:ghHeaders(), body:JSON.stringify({files:files})})
+          .then(function(r){ if(r.status===404){ put(K.gist,""); return create(); } return ok("PATCH")(r); }); }
+      var gid = get(K.gist);
+      if(gid) return patch(gid);
+      return findGist(fn).then(function(g){ return g ? patch(g.id) : create(); });
+    });
   }
 
   // ---------- engine ----------
@@ -83,16 +100,14 @@
   function schedulePush(){ if(!enabled()) return; clearTimeout(uploadTimer); uploadTimer = setTimeout(pushLocal, DEBOUNCE_MS); }
 
   function idle(){
-    if (document.querySelector(".backdrop")) return false;                 // a sheet/modal is open
-    if (document.getElementById("s97-modal")) return false;                // our panel is open
+    if (document.querySelector(".backdrop")) return false;
+    if (document.getElementById("s97-modal")) return false;
     var a = document.activeElement;
     if (a && (a.tagName==="INPUT" || a.tagName==="TEXTAREA" || a.isContentEditable)) return false;
     return true;
   }
   function applyRemote(plain, rev){
-    applying = true;
-    put(DATA_KEY, plain); put(K.rev, String(rev));
-    applying = false;
+    applying = true; put(DATA_KEY, plain); put(K.rev, String(rev)); applying = false;
     setStatus("pulled");
     if (idle()) location.reload(); else pendingReload = true;
   }
@@ -102,16 +117,15 @@
       if (!row) return;
       var rev = Number(row.rev)||0, appliedRev = Number(get(K.rev))||0;
       if (rev <= appliedRev) return;
-      if (rev === lastUploadedRev) { put(K.rev, String(rev)); return; }     // our own echo
-      return decryptData(cfg().code, row.data).then(function(plain){
-        JSON.parse(plain);                                                  // sanity: must be valid JSON
+      if (rev === lastUploadedRev) { put(K.rev, String(rev)); return; }
+      return decryptData(cfg().code, row.blob).then(function(plain){
+        JSON.parse(plain);
         if (plain === get(DATA_KEY)) { put(K.rev, String(rev)); return; }
         applyRemote(plain, rev);
       });
     }).catch(function(){ setStatus("err"); });
   }
 
-  // intercept the app's saves → schedule an upload
   localStorage.setItem = function(k, v){ _set(k, v); if (k===DATA_KEY && !applying) schedulePush(); };
 
   setInterval(function(){ if (enabled() && navigator.onLine) pull(); }, POLL_MS);
@@ -122,12 +136,12 @@
   });
 
   // ---------- connect / disconnect ----------
-  function connect(url, key, code, direction){
-    put(K.url, cleanUrl(url)); put(K.key, cleanKey(key)); put(K.code, code); put(K.on, "1");
+  function connect(token, code, gistId, direction){
+    put(K.token, cleanTok(token)); put(K.code, code); if(gistId) put(K.gist, gistId); put(K.on, "1");
     setStatus("syncing");
     return remoteGet().then(function(row){
       if (row && direction !== "push") {
-        return decryptData(code, row.data).then(function(plain){
+        return decryptData(code, row.blob).then(function(plain){
           JSON.parse(plain);
           applying = true; put(DATA_KEY, plain); put(K.rev, String(Number(row.rev)||0)); applying = false;
           setStatus("ok"); location.reload();
@@ -142,14 +156,13 @@
   }
   function disconnect(){ put(K.on, "0"); setStatus("off"); }
 
-  // device link: one string carrying url+key+code so the 2nd device is a single paste
-  function makeLink(){ var c=cfg(); return "ns97sync:" + b64(enc.encode(JSON.stringify({u:c.url,k:c.key,c:c.code}))); }
+  function makeLink(){ var c=cfg(); return "ns97sync:" + b64(enc.encode(JSON.stringify({t:c.token, g:get(K.gist)||"", c:c.code}))); }
   function parseLink(s){ s=String(s).trim(); if(s.indexOf("ns97sync:")!==0) throw new Error("not a link");
-    var o=JSON.parse(dec.decode(unb64(s.slice(9)))); if(!o.u||!o.k||!o.c) throw new Error("bad link"); return o; }
+    var o=JSON.parse(dec.decode(unb64(s.slice(9)))); if(!o.t||!o.c) throw new Error("bad link"); return o; }
   function randomCode(){ var a=new Uint8Array(9); crypto.getRandomValues(a);
     return "97-" + b64(a).replace(/[^a-zA-Z0-9]/g,"").slice(0,12).toLowerCase(); }
 
-  // ---------- UI (appended to <body>, outside #root, so React never disturbs it) ----------
+  // ---------- UI (appended to <body>, outside #root) ----------
   function css(){
     if (document.getElementById("s97-css")) return;
     var s = document.createElement("style"); s.id = "s97-css";
@@ -164,7 +177,7 @@
       "@media(min-width:560px){.s97-modal{border-radius:26px}}",
       ".s97-modal h3{font-family:var(--fd,serif);font-weight:600;font-size:19px;margin:2px 0 2px}",
       ".s97-modal p{color:var(--tx2,#B7BCA6);font-size:13px;line-height:1.5;margin:6px 0}",
-      ".s97-modal label{display:block;font-size:12px;font-weight:700;color:var(--tx2);margin:12px 0 5px;text-transform:none}",
+      ".s97-modal label{display:block;font-size:12px;font-weight:700;color:var(--tx2);margin:12px 0 5px}",
       ".s97-inp{width:100%;background:var(--bg,#0A0D07);border:1px solid var(--line2);border-radius:11px;padding:11px 12px;color:var(--tx);font-size:13.5px;outline:none;box-shadow:inset 0 1px 2px rgba(0,0,0,.35)}",
       ".s97-inp:focus{border-color:var(--pos)}",
       ".s97-row{display:flex;gap:9px;margin-top:14px;flex-wrap:wrap}",
@@ -175,7 +188,7 @@
       ".s97-status{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--tx2);margin-top:4px}",
       ".s97-pill{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--tx3)}",
       ".s97-pill.ok{background:var(--pos)}.s97-pill.syncing{background:var(--warn)}.s97-pill.err{background:var(--neg)}",
-      ".s97-help{font-size:12px;color:var(--tx3,#8B917B);line-height:1.5;margin-top:10px;border-top:1px solid var(--line);padding-top:10px}",
+      ".s97-help{font-size:12.5px;color:var(--tx3,#8B917B);line-height:1.55;margin-top:10px;border-top:1px solid var(--line);padding-top:10px}",
       ".s97-help a,.s97-link{color:var(--usd,#35C6D4);cursor:pointer;text-decoration:underline}",
       ".s97-x{float:right;width:32px;height:32px;border-radius:50%;background:var(--card2);border:1px solid var(--line);color:var(--tx2);cursor:pointer;font-size:16px}"
     ].join("\n");
@@ -192,8 +205,7 @@
       launcher.addEventListener("click", openPanel);
       document.body.appendChild(launcher);
     }
-    var dot = launcher.querySelector(".s97-dot");
-    dot.className = "s97-dot" + (enabled() ? (" " + (status==="off"?"ok":status)) : "");
+    launcher.querySelector(".s97-dot").className = "s97-dot" + (enabled() ? (" " + (status==="off"?"ok":status)) : "");
   }
 
   function statusText(){
@@ -212,23 +224,22 @@
       + '<div class="s97-status"><span class="s97-pill '+(on?(status==="off"?"ok":status):"")+'"></span>'+statusText()+'</div>';
     var frag;
     if (on){
-      frag = '<p>This device is linked. Any change here appears on your other devices within a few seconds — and vice-versa. Your numbers are encrypted before they leave the device.</p>'
+      frag = '<p>This device is linked. Any change here shows on your other devices within a few seconds — and back again. Your numbers are encrypted before they leave the device.</p>'
         + '<div class="s97-row"><button class="s97-btn p" data-a="now">Sync now</button>'
         + '<button class="s97-btn g" data-a="copylink">Copy link for other device</button></div>'
         + '<div class="s97-row"><button class="s97-btn d" data-a="disconnect">Disconnect this device</button></div>'
-        + '<div class="s97-help">To add another device: open 97 LIVE there, tap the cloud button, choose <b>Paste link from another device</b>, and paste. That’s it.</div>';
+        + '<div class="s97-help">Add another device: open 97 LIVE there → cloud button → paste this link. That’s the whole setup.</div>';
     } else {
-      frag = '<p>Link your phone and PC so they always show the same numbers. Free, private (end-to-end encrypted), and it keeps working offline.</p>'
+      frag = '<p>Link your phone and PC so they always show the same numbers. Free, private (end-to-end encrypted), works offline.</p>'
         + '<label>Already set up another device? Paste its link:</label>'
         + '<input class="s97-inp" id="s97-linkin" placeholder="ns97sync:…" autocomplete="off" spellcheck="false">'
         + '<div class="s97-row"><button class="s97-btn p" data-a="paste">Link this device</button></div>'
         + '<div class="s97-help">First device / manual setup:<br>'
-        + '<label>Supabase URL</label><input class="s97-inp" id="s97-url" placeholder="https://xxxx.supabase.co" autocomplete="off" spellcheck="false">'
-        + '<label>Supabase anon key</label><input class="s97-inp" id="s97-key" placeholder="eyJhbGciOi…" autocomplete="off" spellcheck="false">'
+        + '<label>GitHub token</label><input class="s97-inp" id="s97-token" placeholder="ghp_…" autocomplete="off" spellcheck="false">'
         + '<label>Sync Code (secret — same on every device)</label><input class="s97-inp" id="s97-code" placeholder="pick a strong secret" autocomplete="off" spellcheck="false">'
         + '<div class="s97-row"><button class="s97-btn g" data-a="gen">Generate a Sync Code</button>'
         + '<button class="s97-btn p" data-a="connect">Connect</button></div>'
-        + '<span class="s97-link" data-a="help">How do I get the Supabase URL &amp; key? (2-min setup)</span></div>';
+        + '<span class="s97-link" data-a="help">How do I get a GitHub token? (30 seconds)</span></div>';
     }
     body.innerHTML = head + frag;
   }
@@ -245,47 +256,46 @@
     modal.addEventListener("click", onPanelClick);
   }
   function closePanel(){ var m = document.getElementById("s97-modal"); if (m) m.remove(); }
-
-  function toast(msg){ setStatus(status); var s = document.querySelector("#s97-modal .s97-status"); if (s) s.lastChild.textContent = msg; }
+  function toast(msg){ var s = document.querySelector("#s97-modal .s97-status"); if (s && s.lastChild) s.lastChild.textContent = msg; }
 
   function onPanelClick(e){
-    var t = e.target.closest("[data-a]") || (e.target.classList && e.target.classList.contains("s97-x") ? e.target : null);
     if (e.target.classList && e.target.classList.contains("s97-x")) return closePanel();
-    if (!t) return;
+    var t = e.target.closest("[data-a]"); if (!t) return;
     var a = t.getAttribute("data-a");
     if (a === "gen"){ var el=document.getElementById("s97-code"); if(el) el.value = randomCode(); }
     else if (a === "help"){ showHelp(); }
     else if (a === "now"){ pushLocal().then(pull); }
     else if (a === "disconnect"){ if (confirm("Stop syncing on this device? Your data stays here; it just won’t update to/from other devices.")) { disconnect(); renderPanel(); } }
-    else if (a === "copylink"){ var link = makeLink(); copy(link).then(function(){ toast("Link copied — paste it on your other device"); }); }
+    else if (a === "copylink"){ copy(makeLink()).then(function(){ toast("Link copied — paste it on your other device"); }); }
     else if (a === "paste"){
       var v = (document.getElementById("s97-linkin")||{}).value || "";
-      try { var o = parseLink(v); doConnect(o.u, o.k, o.c); } catch(err){ toast("That link doesn’t look right"); }
+      try { var o = parseLink(v); doConnect(o.t, o.c, o.g, true); } catch(err){ toast("That link doesn’t look right"); }
     }
     else if (a === "connect"){
-      var url=(document.getElementById("s97-url")||{}).value||"", key=(document.getElementById("s97-key")||{}).value||"", code=(document.getElementById("s97-code")||{}).value||"";
-      if (!url||!key||!code){ toast("Fill in all three fields"); return; }
-      doConnect(url, key, code);
+      var token=(document.getElementById("s97-token")||{}).value||"", code=(document.getElementById("s97-code")||{}).value||"";
+      if (!token||!code){ toast("Add your GitHub token and a Sync Code"); return; }
+      doConnect(token, code, "");
     }
   }
-  function doConnect(url, key, code){
-    var hasLocal = false; try { var d=get(DATA_KEY); hasLocal = !!d && d.length>40; } catch(e){}
+  function doConnect(token, code, gistId, isLink){
     toast("Connecting…");
-    // peek remote to decide direction
-    put(K.url,cleanUrl(url)); put(K.key,cleanKey(key)); put(K.code,code);
+    put(K.token, cleanTok(token)); put(K.code, code); if(gistId) put(K.gist, gistId);
     remoteGet().then(function(row){
       var dir = "push";
       if (row){
-        dir = confirm("Cloud already has saved data.\n\nOK = load the cloud data onto THIS device.\nCancel = upload THIS device’s data to the cloud (overwrites cloud).") ? "pull" : "push";
+        // Pasting a link means "join the existing sync" → always load the cloud data.
+        // Manual first-device setup with data already in the cloud → ask which way.
+        dir = isLink ? "pull"
+          : (confirm("Cloud already has saved data.\n\nOK = load the cloud data onto THIS device.\nCancel = upload THIS device’s data to the cloud (overwrites cloud).") ? "pull" : "push");
       }
-      return connect(url, key, code, dir);
+      return connect(token, code, gistId, dir);
     }).then(function(){ if (enabled() && status!=="err"){ renderPanel(); } })
       .catch(function(e){
         var m=String((e&&e.message)||e||""), hint;
-        if(/Failed to fetch|NetworkError|Load failed|ERR_|TypeError/i.test(m)) hint="can’t reach that URL — check the Supabase URL and your internet";
-        else if(/does not exist|relation|PGRST205|\b404\b/i.test(m)) hint="table not found — run the SQL step";
-        else if(/\b401\b|JWT|JWS|apikey|No API key|Invalid API/i.test(m)) hint="key rejected — re-copy the anon public key";
-        else if(/\b403\b|row-level|policy|permission/i.test(m)) hint="blocked by permissions — re-run the SQL policies";
+        if(/Failed to fetch|NetworkError|Load failed|ERR_|TypeError/i.test(m)) hint="can’t reach GitHub — check your internet";
+        else if(/\b401\b|Bad credentials|Requires authentication/i.test(m)) hint="token rejected — re-copy it (it may have expired)";
+        else if(/\b403\b|rate limit|forbidden|gist/i.test(m)) hint="token needs the ‘gist’ permission — make a new one with gist ticked";
+        else if(/\b404\b/i.test(m)) hint="couldn’t find the sync — try again";
         else hint=(m.slice(0,180)||"unknown error");
         toast("Couldn’t connect: "+hint);
         try{console.error("[97 sync] connect failed:",e);}catch(_){}
@@ -299,26 +309,21 @@
   }
 
   function showHelp(){
-    var b = document.querySelector("#s97-modal .s97-body");
-    if (!b) return;
-    b.innerHTML = '<button class="s97-x" aria-label="Close">✕</button><h3>Get your Supabase keys</h3>'
-      + '<p>One-time, ~2 minutes, free. You only do this on the <b>first</b> device.</p>'
+    var b = document.querySelector("#s97-modal .s97-body"); if (!b) return;
+    b.innerHTML = '<button class="s97-x" aria-label="Close">✕</button><h3>Get a GitHub token</h3>'
+      + '<p>About 30 seconds, free. You already have GitHub. This token can only touch “gists” (private text snippets) — it can’t see your repos or anything else.</p>'
       + '<div class="s97-help" style="border-top:none;color:var(--tx2);font-size:13px">'
-      + '1. Go to <span class="s97-link" data-a="open-supabase">supabase.com</span> → <b>Start your project</b> (sign in with GitHub).<br><br>'
-      + '2. <b>New project</b> → give it any name → set a database password → Create. Wait ~1 min.<br><br>'
-      + '3. Left sidebar → <b>SQL Editor</b> → <b>New query</b> → paste the block below → <b>Run</b>.<br><br>'
-      + '4. Left sidebar → <b>Project Settings</b> → <b>API</b>. Copy the <b>Project URL</b> and the <b>anon public</b> key into this app.<br><br>'
-      + 'SQL to paste in step 3:</div>'
-      + '<textarea class="s97-inp" readonly rows="7" style="font-family:ui-monospace,monospace;font-size:11.5px;margin-top:8px" id="s97-sql">'
-      + 'create table if not exists sync (\n  id text primary key,\n  data text,\n  rev bigint default 0,\n  updated_at timestamptz default now()\n);\nalter table sync enable row level security;\ncreate policy "sync read"   on sync for select to anon using (true);\ncreate policy "sync insert" on sync for insert to anon with check (true);\ncreate policy "sync update" on sync for update to anon using (true) with check (true);</textarea>'
-      + '<div class="s97-row"><button class="s97-btn g" data-a="copysql">Copy SQL</button><button class="s97-btn p" data-a="back">Back</button></div>';
+      + '1. Tap this link (it opens GitHub with the right box already ticked):<br><span class="s97-link" data-a="open-token">github.com → new token (gist)</span><br><br>'
+      + '2. Under <b>Expiration</b> choose <b>No expiration</b>.<br><br>'
+      + '3. Scroll to the bottom → tap the green <b>Generate token</b> button.<br><br>'
+      + '4. Copy the token it shows (starts <b>ghp_</b>) and paste it into the box on the previous screen.</div>'
+      + '<div class="s97-row"><button class="s97-btn p" data-a="back">Back</button></div>';
   }
 
   document.addEventListener("click", function(e){
     var t = e.target.closest("[data-a]"); if (!t) return;
     var a = t.getAttribute("data-a");
-    if (a==="open-supabase"){ window.open("https://supabase.com","_blank","noopener"); }
-    else if (a==="copysql"){ var ta=document.getElementById("s97-sql"); if(ta) copy(ta.value); t.textContent="Copied ✓"; }
+    if (a==="open-token"){ window.open("https://github.com/settings/tokens/new?scopes=gist&description=97%20LIVE%20Sync","_blank","noopener"); }
     else if (a==="back"){ renderPanel(); }
   });
 
