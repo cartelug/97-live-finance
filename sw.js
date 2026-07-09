@@ -2,8 +2,8 @@
    Network-first for the app shell so new versions actually reach every device;
    stale-while-revalidate for static assets; cache is the offline fallback only.
    Cross-origin (fonts, Anthropic API) is never intercepted. */
-const CACHE = "ns97-live-v5";
-const ASSETS = ["./", "./index.html", "./sync.js?v=3", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/favicon.svg"];
+const CACHE = "ns97-live-v6";
+const ASSETS = ["./", "./index.html", "./sync.js?v=4", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/favicon.svg"];
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();
