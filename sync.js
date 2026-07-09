@@ -52,10 +52,13 @@
   function unb64(str){ var s=atob(str),b=new Uint8Array(s.length),i; for(i=0;i<s.length;i++) b[i]=s.charCodeAt(i); return b; }
   function sha256hex(str){ return crypto.subtle.digest("SHA-256", enc.encode(str)).then(function(h){
     var b=new Uint8Array(h),s="",i; for(i=0;i<b.length;i++) s+=b[i].toString(16).padStart(2,"0"); return s; }); }
+  var _keyCache = {};
   function deriveKey(code){
-    return crypto.subtle.importKey("raw", enc.encode(code), "PBKDF2", false, ["deriveKey"]).then(function(base){
+    if (_keyCache[code]) return _keyCache[code]; // PBKDF2@120k is ~100ms — derive once, reuse for every poll
+    _keyCache[code] = crypto.subtle.importKey("raw", enc.encode(code), "PBKDF2", false, ["deriveKey"]).then(function(base){
       return crypto.subtle.deriveKey({name:"PBKDF2", salt:enc.encode("ns97-sync-v1"), iterations:120000, hash:"SHA-256"},
-        base, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]); }); }
+        base, {name:"AES-GCM", length:256}, false, ["encrypt","decrypt"]); });
+    return _keyCache[code]; }
   function encryptData(code, plaintext){
     return deriveKey(code).then(function(key){
       var iv = crypto.getRandomValues(new Uint8Array(12));
@@ -88,8 +91,12 @@
   }
 
   // ---------- GitHub Gist REST ----------
+  // no-store: NEVER let the browser answer an API call from its own HTTP cache. GitHub sends
+  // "Cache-Control: max-age=60" on gist reads, and some browsers (Safari especially) will happily
+  // serve a poll from that stale cache for a minute — which looks exactly like "sync stopped".
+  function ghFetch(url, opts){ opts = opts || {}; opts.cache = "no-store"; return fetch(url, opts); }
   function findGist(fn){
-    return fetch(apiBase()+"/gists?per_page=100", {headers:ghHeaders()}).then(ok("LIST")).then(function(r){ return r.json(); })
+    return ghFetch(apiBase()+"/gists?per_page=100", {headers:ghHeaders()}).then(ok("LIST")).then(function(r){ return r.json(); })
       .then(function(list){ for(var i=0;i<list.length;i++){ if(list[i].files && list[i].files[fn]){ put(K.gist, list[i].id); return list[i]; } } return null; });
   }
   // Pull the wrapper apart into {rev, blob, by} (or null if it isn't a usable snapshot).
@@ -115,14 +122,17 @@
   // returns {rev, blob, by} on a change, {__nm:true} when the cloud is unchanged, or null.
   // Uses a conditional request (If-None-Match): a 304 "not modified" costs nothing against the
   // GitHub rate limit, so many devices can poll every couple seconds on one shared link.
-  function remoteGet(){
+  function remoteGet(depth){
     var code = cfg().code;
     return fname(code).then(function(fn){
       var gid = get(K.gist);
-      if (!gid) return findGist(fn).then(function(g){ return parseGist(g, fn); });
+      // No gist id yet → find it in the list. The LIST endpoint returns file metadata WITHOUT
+      // content, so after finding it we must re-read the single gist to actually get the data —
+      // otherwise a fresh device thinks the cloud is empty and overwrites it.
+      if (!gid) return findGist(fn).then(function(g){ return (g && !depth) ? remoteGet(1) : null; });
       var h = ghHeaders(), et = get("ns97.sync.etag");
       if (et) h["If-None-Match"] = et;
-      return fetch(apiBase()+"/gists/"+gid, {headers:h}).then(function(r){
+      return ghFetch(apiBase()+"/gists/"+gid, {headers:h}).then(function(r){
         if (r.status===304) return {__nm:true};                       // unchanged — free (no rate-limit cost)
         if (r.status===404){ put(K.gist,""); put("ns97.sync.etag",""); return findGist(fn).then(function(g){ return parseGist(g, fn); }); }
         return ok("GET")(r).then(function(x){
@@ -136,10 +146,10 @@
     return fname(cfg().code).then(function(fn){
       var files={}; files[fn]={ content: rev + "\n" + encName(devName()) + "\n" + blob };
       function keepTag(r){ var t=r.headers.get("ETag"); if(t) put("ns97.sync.etag", t); return r; }
-      function create(){ return fetch(apiBase()+"/gists", {method:"POST", headers:ghHeaders(),
+      function create(){ return ghFetch(apiBase()+"/gists", {method:"POST", headers:ghHeaders(),
           body:JSON.stringify({description:"97 LIVE — encrypted finance sync (safe to keep private)", public:false, files:files})})
           .then(ok("CREATE")).then(keepTag).then(function(r){ return r.json(); }).then(function(g){ put(K.gist, g.id); }); }
-      function patch(gid){ return fetch(apiBase()+"/gists/"+gid, {method:"PATCH", headers:ghHeaders(), body:JSON.stringify({files:files})})
+      function patch(gid){ return ghFetch(apiBase()+"/gists/"+gid, {method:"PATCH", headers:ghHeaders(), body:JSON.stringify({files:files})})
           .then(function(r){ if(r.status===404){ put(K.gist,""); put("ns97.sync.etag",""); return create(); } return ok("PATCH")(r).then(keepTag); }); }
       var gid = get(K.gist);
       if(gid) return patch(gid);
@@ -199,12 +209,15 @@
     return remoteGet().then(function(row){
       if (!row || row.__nm) return; // nothing new (a free 304)
       var rev = Number(row.rev)||0, appliedRev = Number(get(K.rev))||0;
-      if (rev <= appliedRev) return;
-      if (rev === lastUploadedRev) { put(K.rev, String(rev)); return; }
+      if (rev === lastUploadedRev) { put(K.rev, String(Math.max(rev, appliedRev))); return; } // our own write
+      // CONTENT decides, not the counter. Reaching here means the cloud file actually changed
+      // (the ETag moved). If a device running an old app version — or writing through a stale
+      // browser cache — stamped it with a LOWER rev than ours, skipping it by rev comparison is
+      // exactly how "phone updated but the PC never saw it" happens. So: decrypt, compare, apply.
       return decryptData(cfg().code, row.blob).then(function(plain){
-        if (!looksValidData(plain)) { put(K.rev, String(rev)); return; } // ignore an incomplete cloud copy
-        if (plain === get(DATA_KEY)) { put(K.rev, String(rev)); return; }
-        applyRemote(plain, rev);
+        if (!looksValidData(plain)) return; // incomplete cloud copy — don't touch this device
+        if (plain === get(DATA_KEY)) { put(K.rev, String(Math.max(rev, appliedRev))); return; }
+        applyRemote(plain, Math.max(rev, appliedRev + 1));
       });
     }).catch(function(){ setStatus("err"); });
   }
@@ -216,6 +229,7 @@
   function wake(){
     if (pendingReload && idle()) { pendingReload = false; location.reload(); return; }
     if (!enabled() || !navigator.onLine) return;
+    put("ns97.sync.etag", ""); // the moment you look at the app, do one FULL fresh read — never a cached answer
     if (dirty) pushLocal().then(pull); else pull();
   }
   setInterval(function(){ if (enabled() && navigator.onLine){ if (dirty) pushLocal(); else pull(); } }, POLL_MS);
@@ -471,7 +485,7 @@
     renderLauncher();
     var d = get(DATA_KEY);
     if (d != null && !looksValidData(d)) { corrupted = true; openPanel(); return; } // app can't render this — offer recovery
-    if (enabled()){ setStatus("ok"); if (navigator.onLine) pull(); }
+    if (enabled()){ setStatus("ok"); put("ns97.sync.etag", ""); if (navigator.onLine) pull(); } // boot = full fresh read
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();
