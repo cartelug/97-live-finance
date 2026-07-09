@@ -40,14 +40,18 @@
   function cfg(){ return { url:get(K.url), key:get(K.key), code:get(K.code) }; }
   function enabled(){ var c=cfg(); return get(K.on)==="1" && c.url && c.key && c.code; }
   function bucketId(code){ return sha256hex("ns97|"+code).then(function(h){ return "b_"+h.slice(0,40); }); }
-  function base(url){ return String(url).replace(/\/+$/,""); }
+  function base(url){ return cleanUrl(url).replace(/\/+$/,""); }
+  // Strip anything a copy-paste might have slipped in. A JWT is only [A-Za-z0-9._-];
+  // stray smart-quotes / spaces / zero-width chars break fetch() headers (non ISO-8859-1).
+  function cleanKey(k){ return String(k==null?"":k).replace(/[^A-Za-z0-9._-]/g,""); }
+  function cleanUrl(u){ return String(u==null?"":u).replace(/\s+/g,"").replace(/[^\x21-\x7E]/g,""); }
 
   // ---------- Supabase REST ----------
   function remoteGet(){
     var c = cfg();
     return bucketId(c.code).then(function(id){
       return fetch(base(c.url)+"/rest/v1/sync?id=eq."+id+"&select=data,rev",
-        { headers:{ apikey:c.key, Authorization:"Bearer "+c.key } }); })
+        { headers:{ apikey:cleanKey(c.key), Authorization:"Bearer "+cleanKey(c.key) } }); })
       .then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error("GET "+r.status+(t?": "+t.slice(0,160):"")); }); return r.json(); })
       .then(function(rows){ return (rows && rows[0]) ? rows[0] : null; });
   }
@@ -56,7 +60,7 @@
     return bucketId(c.code).then(function(id){
       return fetch(base(c.url)+"/rest/v1/sync",
         { method:"POST",
-          headers:{ apikey:c.key, Authorization:"Bearer "+c.key, "Content-Type":"application/json",
+          headers:{ apikey:cleanKey(c.key), Authorization:"Bearer "+cleanKey(c.key), "Content-Type":"application/json",
                     Prefer:"resolution=merge-duplicates,return=minimal" },
           body:JSON.stringify({ id:id, data:dataBlob, rev:rev }) }); })
       .then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error("PUT "+r.status+(t?": "+t.slice(0,160):"")); }); });
@@ -119,7 +123,7 @@
 
   // ---------- connect / disconnect ----------
   function connect(url, key, code, direction){
-    put(K.url, String(url).trim()); put(K.key, String(key).trim()); put(K.code, code); put(K.on, "1");
+    put(K.url, cleanUrl(url)); put(K.key, cleanKey(key)); put(K.code, code); put(K.on, "1");
     setStatus("syncing");
     return remoteGet().then(function(row){
       if (row && direction !== "push") {
@@ -268,7 +272,7 @@
     var hasLocal = false; try { var d=get(DATA_KEY); hasLocal = !!d && d.length>40; } catch(e){}
     toast("Connecting…");
     // peek remote to decide direction
-    put(K.url,String(url).trim()); put(K.key,String(key).trim()); put(K.code,code);
+    put(K.url,cleanUrl(url)); put(K.key,cleanKey(key)); put(K.code,code);
     remoteGet().then(function(row){
       var dir = "push";
       if (row){
