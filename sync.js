@@ -16,6 +16,37 @@
   function put(k,v){ try { _set(k,v); } catch(e){} }
   function apiBase(){ return get("ns97.sync.api") || "https://api.github.com"; } // override is test-only
 
+  // ---------- device identity ----------
+  // Each device carries a friendly name so you can always tell which one is "the main",
+  // and see which device made the most recent change (and when). Name is local to the device;
+  // it rides along (URL-encoded) inside the encrypted-blob wrapper so other devices can show it.
+  function defaultDevName(){
+    var ua = navigator.userAgent || "";
+    if (/iPhone/i.test(ua)) return "iPhone";
+    if (/iPad/i.test(ua)) return "iPad";
+    if (/Android/i.test(ua)) return "Android phone";
+    if (/Macintosh|Mac OS X/i.test(ua)) return "Mac";
+    if (/Windows/i.test(ua)) return "Windows PC";
+    if (/CrOS/i.test(ua)) return "Chromebook";
+    if (/Linux/i.test(ua)) return "Linux PC";
+    return "This device";
+  }
+  function devName(){ var n = get("ns97.sync.dev"); n = n && n.trim(); return n ? n : defaultDevName(); }
+  function encName(n){ try { return encodeURIComponent(n); } catch(e){ return ""; } }
+  function decName(s){ try { return decodeURIComponent(s); } catch(e){ return String(s||""); } }
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  function ago(ts){
+    ts = Number(ts)||0; if(!ts) return "";
+    var s = Math.max(0, Math.floor((Date.now()-ts)/1000));
+    if(s<45) return "just now";
+    if(s<90) return "a minute ago";
+    var m = Math.round(s/60); if(m<60) return m+" min ago";
+    var h = Math.round(m/60); if(h<24) return h+(h===1?" hour ago":" hours ago");
+    var d = Math.round(h/24); if(d<7) return d+(d===1?" day ago":" days ago");
+    try { return new Date(ts).toLocaleDateString(); } catch(e){ return ""; }
+  }
+
   // ---------- crypto ----------
   function b64(buf){ var b=new Uint8Array(buf),s="",i; for(i=0;i<b.length;i++) s+=String.fromCharCode(b[i]); return btoa(s); }
   function unb64(str){ var s=atob(str),b=new Uint8Array(s.length),i; for(i=0;i<s.length;i++) b[i]=s.charCodeAt(i); return b; }
@@ -74,13 +105,24 @@
         var content = g.files[fn].content || "";
         var i = content.indexOf("\n");
         if(i<0) return null;
-        return { rev: Number(content.slice(0,i))||0, blob: content.slice(i+1) };
+        var rev = Number(content.slice(0,i))||0;
+        var rest = content.slice(i+1), by = "";
+        // New wrapper: "rev\n<url-encoded device name>\n<ciphertext>". Old wrapper had no name line.
+        // The ciphertext always starts "v1:", so if the next line isn't ciphertext it's the device name.
+        if (rest.slice(0,3) !== "v1:"){
+          var j = rest.indexOf("\n");
+          if(j<0) return null;
+          by = decName(rest.slice(0,j)); rest = rest.slice(j+1);
+        }
+        put("ns97.sync.lastat", String(rev));
+        put("ns97.sync.lastby", by);
+        return { rev: rev, blob: rest, by: by };
       });
     });
   }
   function remotePut(blob, rev){
     return fname(cfg().code).then(function(fn){
-      var files={}; files[fn]={ content: rev + "\n" + blob };
+      var files={}; files[fn]={ content: rev + "\n" + encName(devName()) + "\n" + blob };
       function create(){ return fetch(apiBase()+"/gists", {method:"POST", headers:ghHeaders(),
           body:JSON.stringify({description:"97 LIVE — encrypted finance sync (safe to keep private)", public:false, files:files})})
           .then(ok("CREATE")).then(function(r){ return r.json(); }).then(function(g){ put(K.gist, g.id); }); }
@@ -103,7 +145,8 @@
     setStatus("syncing");
     return encryptData(c.code, plain).then(function(blob){
       var rev = Date.now();
-      return remotePut(blob, rev).then(function(){ lastUploadedRev = rev; put(K.rev, String(rev)); setStatus("ok"); });
+      return remotePut(blob, rev).then(function(){ lastUploadedRev = rev; put(K.rev, String(rev));
+        put("ns97.sync.lastat", String(rev)); put("ns97.sync.lastby", devName()); setStatus("ok"); });
     }).catch(function(){ setStatus("err"); });
   }
   function schedulePush(){ if(!enabled()) return; clearTimeout(uploadTimer); uploadTimer = setTimeout(pushLocal, DEBOUNCE_MS); }
@@ -162,7 +205,8 @@
       if (!looksValidData(plain)) throw new Error("this device has no complete data to upload yet — open the app first");
       return encryptData(code, plain).then(function(blob){
         var rev = Date.now();
-        return remotePut(blob, rev).then(function(){ lastUploadedRev = rev; put(K.rev, String(rev)); setStatus("ok"); });
+        return remotePut(blob, rev).then(function(){ lastUploadedRev = rev; put(K.rev, String(rev));
+          put("ns97.sync.lastat", String(rev)); put("ns97.sync.lastby", devName()); setStatus("ok"); });
       });
     }).catch(function(e){ setStatus("err"); throw e; });
   }
@@ -202,7 +246,16 @@
       ".s97-pill.ok{background:var(--pos)}.s97-pill.syncing{background:var(--warn)}.s97-pill.err{background:var(--neg)}",
       ".s97-help{font-size:12.5px;color:var(--tx3,#8B917B);line-height:1.55;margin-top:10px;border-top:1px solid var(--line);padding-top:10px}",
       ".s97-help a,.s97-link{color:var(--usd,#35C6D4);cursor:pointer;text-decoration:underline}",
-      ".s97-x{float:right;width:32px;height:32px;border-radius:50%;background:var(--card2);border:1px solid var(--line);color:var(--tx2);cursor:pointer;font-size:16px}"
+      ".s97-x{float:right;width:32px;height:32px;border-radius:50%;background:var(--card2);border:1px solid var(--line);color:var(--tx2);cursor:pointer;font-size:16px}",
+      ".s97-dev{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--card2,#212717);border:1px solid var(--line,rgba(228,238,205,.11));border-radius:14px;padding:11px 13px;margin-top:12px}",
+      ".s97-dev-lbl{font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--tx3,#8B917B)}",
+      ".s97-dev-name{font-family:var(--fd,serif);font-size:17px;font-weight:600;color:var(--tx,#F3F3E9);margin-top:2px;display:flex;align-items:center;gap:7px}",
+      ".s97-here{font-family:var(--fu,system-ui);font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--pos2,#2FA774);background:rgba(98,219,162,.13);border:1px solid rgba(98,219,162,.34);border-radius:999px;padding:2px 8px}",
+      ".s97-ren{flex:none;background:transparent;border:1px solid var(--line2,rgba(228,238,205,.18));color:var(--tx2,#B7BCA6);border-radius:10px;padding:8px 12px;font-size:12.5px;font-weight:700;cursor:pointer}",
+      ".s97-ren:active{transform:scale(.96)}",
+      ".s97-last{font-size:12.5px;color:var(--tx2,#B7BCA6);margin:9px 2px 2px;display:flex;align-items:center;gap:7px}",
+      ".s97-last b{color:var(--tx,#F3F3E9);font-weight:700}",
+      ".s97-last .s97-pill{width:7px;height:7px}"
     ].join("\n");
     document.head.appendChild(s);
   }
@@ -247,11 +300,22 @@
       + '<div class="s97-status"><span class="s97-pill '+(on?(status==="off"?"ok":status):"")+'"></span>'+statusText()+'</div>';
     var frag;
     if (on){
-      frag = '<p>This device is linked. Any change here shows on your other devices within a few seconds — and back again. Your numbers are encrypted before they leave the device.</p>'
+      var here = devName();
+      var by = get("ns97.sync.lastby"), at = get("ns97.sync.lastat");
+      var mine = by && by === here;
+      var lastLine = at
+        ? ('Last change: <b>' + (by ? (mine ? "this device" : esc(by)) : "another device") + '</b>'
+            + (ago(at) ? ' · ' + esc(ago(at)) : ''))
+        : 'No cloud changes recorded yet — make an edit to start the history.';
+      frag = '<div class="s97-dev"><div><div class="s97-dev-lbl">You’re on</div>'
+        + '<div class="s97-dev-name">' + esc(here) + '<span class="s97-here">This device</span></div></div>'
+        + '<button class="s97-ren" data-a="rename">Rename</button></div>'
+        + '<div class="s97-last"><span class="s97-pill '+(mine?"ok":"")+'"></span>' + lastLine + '</div>'
+        + '<p>Any change here shows on your other devices within a few seconds — and back again. Your numbers are encrypted before they leave the device.</p>'
         + '<div class="s97-row"><button class="s97-btn p" data-a="now">Sync now</button>'
         + '<button class="s97-btn g" data-a="copylink">Copy link for other device</button></div>'
         + '<div class="s97-row"><button class="s97-btn d" data-a="disconnect">Disconnect this device</button></div>'
-        + '<div class="s97-help">Add another device: open 97 LIVE there → cloud button → paste this link. That’s the whole setup.</div>';
+        + '<div class="s97-help">Name your master device something clear (e.g. “Main PC”) so you can always tell which is which. Add another device: open 97 LIVE there → cloud button → paste this link.</div>';
     } else {
       frag = '<p>Link your phone and PC so they always show the same numbers. Free, private (end-to-end encrypted), works offline.</p>'
         + '<label>Already set up another device? Paste its link:</label>'
@@ -275,6 +339,8 @@
     modal.innerHTML = '<div class="s97-body"></div>';
     back.appendChild(modal); document.body.appendChild(back);
     renderPanel();
+    // pull the latest cloud revision's author/time so "Last change" is current, not just the last poll
+    if (enabled() && navigator.onLine && !corrupted){ remoteGet().then(function(){ renderPanel(); }).catch(function(){}); }
     back.addEventListener("mousedown", function(e){ if (e.target === back) closePanel(); });
     modal.addEventListener("click", onPanelClick);
   }
@@ -288,6 +354,13 @@
     if (a === "gen"){ var el=document.getElementById("s97-code"); if(el) el.value = randomCode(); }
     else if (a === "help"){ showHelp(); }
     else if (a === "now"){ pushLocal().then(pull); }
+    else if (a === "rename"){
+      var v = prompt("Name this device — it shows on your other devices when this one makes a change:", devName());
+      if (v !== null){ v = String(v).trim().slice(0,40); put("ns97.sync.dev", v);
+        renderPanel();
+        if (enabled()) pushLocal(); // re-stamp the cloud so other devices see the new name as last editor
+      }
+    }
     else if (a === "disconnect"){ if (confirm("Stop syncing on this device? Your data stays here; it just won’t update to/from other devices.")) { disconnect(); renderPanel(); } }
     else if (a === "copylink"){ copy(makeLink()).then(function(){ toast("Link copied — paste it on your other device"); }); }
     else if (a === "paste"){
