@@ -8,7 +8,7 @@
 
   var DATA_KEY = "ns97-finance-v1";
   var K = { token:"ns97.sync.token", gist:"ns97.sync.gist", code:"ns97.sync.code", on:"ns97.sync.on", rev:"ns97.sync.rev" };
-  var POLL_MS = 6000, DEBOUNCE_MS = 1200;
+  var POLL_MS = 2500, DEBOUNCE_MS = 800; // fast, near-real-time; polls that find no change are free (ETag 304s)
 
   var enc = new TextEncoder(), dec = new TextDecoder();
   var _set = localStorage.setItem.bind(localStorage);
@@ -92,43 +92,55 @@
     return fetch(apiBase()+"/gists?per_page=100", {headers:ghHeaders()}).then(ok("LIST")).then(function(r){ return r.json(); })
       .then(function(list){ for(var i=0;i<list.length;i++){ if(list[i].files && list[i].files[fn]){ put(K.gist, list[i].id); return list[i]; } } return null; });
   }
-  // returns {rev, blob} or null
+  // Pull the wrapper apart into {rev, blob, by} (or null if it isn't a usable snapshot).
+  function parseGist(g, fn){
+    if(!g || !g.files || !g.files[fn]) return null;
+    var content = g.files[fn].content || "";
+    var i = content.indexOf("\n");
+    if(i<0) return null;
+    var rev = Number(content.slice(0,i))||0;
+    var rest = content.slice(i+1), by = "";
+    // New wrapper: "rev\n<url-encoded device name>\n<ciphertext>". Old wrapper had no name line.
+    // The ciphertext always starts "v1:", so if the next line isn't ciphertext it's the device name.
+    if (rest.slice(0,3) !== "v1:"){
+      var j = rest.indexOf("\n");
+      if(j<0) return null;
+      by = decName(rest.slice(0,j)); rest = rest.slice(j+1);
+    }
+    put("ns97.sync.lastat", String(rev));
+    put("ns97.sync.lastby", by);
+    if (rev > (Number(get("ns97.sync.maxrev"))||0)) put("ns97.sync.maxrev", String(rev)); // high-water mark for monotonic revs
+    return { rev: rev, blob: rest, by: by };
+  }
+  // returns {rev, blob, by} on a change, {__nm:true} when the cloud is unchanged, or null.
+  // Uses a conditional request (If-None-Match): a 304 "not modified" costs nothing against the
+  // GitHub rate limit, so many devices can poll every couple seconds on one shared link.
   function remoteGet(){
     var code = cfg().code;
     return fname(code).then(function(fn){
       var gid = get(K.gist);
-      var got = gid
-        ? fetch(apiBase()+"/gists/"+gid, {headers:ghHeaders()}).then(function(r){ if(r.status===404){ put(K.gist,""); return findGist(fn); } return ok("GET")(r).then(function(x){ return x.json(); }); })
-        : findGist(fn);
-      return got.then(function(g){
-        if(!g || !g.files || !g.files[fn]) return null;
-        var content = g.files[fn].content || "";
-        var i = content.indexOf("\n");
-        if(i<0) return null;
-        var rev = Number(content.slice(0,i))||0;
-        var rest = content.slice(i+1), by = "";
-        // New wrapper: "rev\n<url-encoded device name>\n<ciphertext>". Old wrapper had no name line.
-        // The ciphertext always starts "v1:", so if the next line isn't ciphertext it's the device name.
-        if (rest.slice(0,3) !== "v1:"){
-          var j = rest.indexOf("\n");
-          if(j<0) return null;
-          by = decName(rest.slice(0,j)); rest = rest.slice(j+1);
-        }
-        put("ns97.sync.lastat", String(rev));
-        put("ns97.sync.lastby", by);
-        if (rev > (Number(get("ns97.sync.maxrev"))||0)) put("ns97.sync.maxrev", String(rev)); // high-water mark for monotonic revs
-        return { rev: rev, blob: rest, by: by };
+      if (!gid) return findGist(fn).then(function(g){ return parseGist(g, fn); });
+      var h = ghHeaders(), et = get("ns97.sync.etag");
+      if (et) h["If-None-Match"] = et;
+      return fetch(apiBase()+"/gists/"+gid, {headers:h}).then(function(r){
+        if (r.status===304) return {__nm:true};                       // unchanged — free (no rate-limit cost)
+        if (r.status===404){ put(K.gist,""); put("ns97.sync.etag",""); return findGist(fn).then(function(g){ return parseGist(g, fn); }); }
+        return ok("GET")(r).then(function(x){
+          var tag = x.headers.get("ETag"); if (tag) put("ns97.sync.etag", tag);
+          return x.json().then(function(g){ return parseGist(g, fn); });
+        });
       });
     });
   }
   function remotePut(blob, rev){
     return fname(cfg().code).then(function(fn){
       var files={}; files[fn]={ content: rev + "\n" + encName(devName()) + "\n" + blob };
+      function keepTag(r){ var t=r.headers.get("ETag"); if(t) put("ns97.sync.etag", t); return r; }
       function create(){ return fetch(apiBase()+"/gists", {method:"POST", headers:ghHeaders(),
           body:JSON.stringify({description:"97 LIVE — encrypted finance sync (safe to keep private)", public:false, files:files})})
-          .then(ok("CREATE")).then(function(r){ return r.json(); }).then(function(g){ put(K.gist, g.id); }); }
+          .then(ok("CREATE")).then(keepTag).then(function(r){ return r.json(); }).then(function(g){ put(K.gist, g.id); }); }
       function patch(gid){ return fetch(apiBase()+"/gists/"+gid, {method:"PATCH", headers:ghHeaders(), body:JSON.stringify({files:files})})
-          .then(function(r){ if(r.status===404){ put(K.gist,""); return create(); } return ok("PATCH")(r); }); }
+          .then(function(r){ if(r.status===404){ put(K.gist,""); put("ns97.sync.etag",""); return create(); } return ok("PATCH")(r).then(keepTag); }); }
       var gid = get(K.gist);
       if(gid) return patch(gid);
       return findGist(fn).then(function(g){ return g ? patch(g.id) : create(); });
@@ -158,7 +170,9 @@
     setStatus("syncing");
     // Read the cloud's current revision first, then write strictly above it — clock-proof ordering.
     return remoteGet().then(function(row){
-      var rev = nextRev(row ? (Number(row.rev)||0) : 0);
+      // {__nm} = cloud unchanged since our last read → the current cloud rev is our high-water mark.
+      var cloudRev = (row && !row.__nm && row.rev != null) ? (Number(row.rev)||0) : (Number(get("ns97.sync.maxrev"))||0);
+      var rev = nextRev(cloudRev);
       return encryptData(c.code, plain).then(function(blob){
         return remotePut(blob, rev).then(function(){ lastUploadedRev = rev; put(K.rev, String(rev));
           put("ns97.sync.lastat", String(rev)); put("ns97.sync.lastby", devName()); dirty = false; setStatus("ok"); });
@@ -183,7 +197,7 @@
   function pull(){
     if (!enabled() || applying) return Promise.resolve();
     return remoteGet().then(function(row){
-      if (!row) return;
+      if (!row || row.__nm) return; // nothing new (a free 304)
       var rev = Number(row.rev)||0, appliedRev = Number(get(K.rev))||0;
       if (rev <= appliedRev) return;
       if (rev === lastUploadedRev) { put(K.rev, String(rev)); return; }
@@ -213,9 +227,10 @@
   // ---------- connect / disconnect ----------
   function connect(token, code, gistId, direction){
     put(K.token, cleanTok(token)); put(K.code, code); if(gistId) put(K.gist, gistId); put(K.on, "1");
+    put("ns97.sync.etag", ""); // force a full (non-conditional) read on connect
     setStatus("syncing");
     return remoteGet().then(function(row){
-      if (row && direction !== "push") {
+      if (row && !row.__nm && direction !== "push") {
         return decryptData(code, row.blob).then(function(plain){
           if (!looksValidData(plain)) throw new Error("the cloud copy looks incomplete — not loading it onto this device");
           var cur = get(DATA_KEY); if (looksValidData(cur)) put("ns97.sync.backup", cur);
@@ -226,7 +241,7 @@
       var plain = get(DATA_KEY);
       if (!looksValidData(plain)) throw new Error("this device has no complete data to upload yet — open the app first");
       return encryptData(code, plain).then(function(blob){
-        var rev = nextRev(row ? (Number(row.rev)||0) : 0);
+        var rev = nextRev(row && !row.__nm && row.rev != null ? (Number(row.rev)||0) : 0);
         return remotePut(blob, rev).then(function(){ lastUploadedRev = rev; put(K.rev, String(rev));
           put("ns97.sync.lastat", String(rev)); put("ns97.sync.lastby", devName()); dirty = false; setStatus("ok"); });
       });
@@ -395,18 +410,18 @@
       doConnect(token, code, "");
     }
     else if (a === "rb"){ var bk=get("ns97.sync.backup"); if(looksValidData(bk)){ put(DATA_KEY, bk); location.reload(); } else toast("No good backup on this device"); }
-    else if (a === "rc"){ toast("Loading from cloud…"); put(K.rev,"0");
-      remoteGet().then(function(row){ if(!row) throw new Error("nothing saved in the cloud yet");
+    else if (a === "rc"){ toast("Loading from cloud…"); put(K.rev,"0"); put("ns97.sync.etag","");
+      remoteGet().then(function(row){ if(!row || row.__nm) throw new Error("nothing saved in the cloud yet");
         return decryptData(cfg().code,row.blob).then(function(plain){ if(!looksValidData(plain)) throw new Error("the cloud copy is also incomplete"); put(DATA_KEY,plain); put(K.rev,String(Number(row.rev)||0)); location.reload(); }); })
         .catch(function(e){ toast("Couldn’t load: "+String((e&&e.message)||e).slice(0,90)); }); }
     else if (a === "reset"){ if(confirm("Start fresh on THIS device with the default sheet?\n\nOnly do this if your real data is safe on another device or a backup.")){ try{localStorage.removeItem(DATA_KEY);}catch(e){} location.reload(); } }
   }
   function doConnect(token, code, gistId, isLink){
     toast("Connecting…");
-    put(K.token, cleanTok(token)); put(K.code, code); if(gistId) put(K.gist, gistId);
+    put(K.token, cleanTok(token)); put(K.code, code); if(gistId) put(K.gist, gistId); put("ns97.sync.etag","");
     remoteGet().then(function(row){
       var dir = "push";
-      if (row){
+      if (row && !row.__nm){
         // Pasting a link means "join the existing sync" → always load the cloud data.
         // Manual first-device setup with data already in the cloud → ask which way.
         dir = isLink ? "pull"
