@@ -46,6 +46,15 @@
   function ghHeaders(){ return { Authorization:"Bearer "+cleanTok(cfg().token), Accept:"application/vnd.github+json",
     "Content-Type":"application/json", "X-GitHub-Api-Version":"2022-11-28" }; }
   function ok(op){ return function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error(op+" "+r.status+(t?": "+t.slice(0,140):"")); }); return Promise.resolve(r); }; }
+  // A real snapshot the app can render must be an object with meta.appName + the core arrays.
+  // Guarding on this prevents pushing/applying an empty or partial blob (which crashes the app to a blank page).
+  function looksValidData(str){
+    if(str==null) return false;
+    var o; try{ o=JSON.parse(str); }catch(e){ return false; }
+    if(!o || typeof o!=="object" || Array.isArray(o)) return false;
+    if(!o.meta || typeof o.meta!=="object" || typeof o.meta.appName==="undefined") return false;
+    return Array.isArray(o.followups) && Array.isArray(o.balances) && Array.isArray(o.credit);
+  }
 
   // ---------- GitHub Gist REST ----------
   function findGist(fn){
@@ -84,13 +93,13 @@
   }
 
   // ---------- engine ----------
-  var lastUploadedRev = 0, applying = false, uploadTimer = null, pendingReload = false, status = "off";
+  var lastUploadedRev = 0, applying = false, uploadTimer = null, pendingReload = false, status = "off", corrupted = false;
   function setStatus(s){ status = s; renderLauncher(); renderPanel(); }
 
   function pushLocal(){
     if (!enabled() || applying) return Promise.resolve();
     var c = cfg(), plain = get(DATA_KEY);
-    if (plain == null) return Promise.resolve();
+    if (!looksValidData(plain)) return Promise.resolve(); // never upload an empty/partial snapshot
     setStatus("syncing");
     return encryptData(c.code, plain).then(function(blob){
       var rev = Date.now();
@@ -107,6 +116,7 @@
     return true;
   }
   function applyRemote(plain, rev){
+    var cur = get(DATA_KEY); if (looksValidData(cur)) put("ns97.sync.backup", cur); // keep a rollback copy
     applying = true; put(DATA_KEY, plain); put(K.rev, String(rev)); applying = false;
     setStatus("pulled");
     if (idle()) location.reload(); else pendingReload = true;
@@ -119,7 +129,7 @@
       if (rev <= appliedRev) return;
       if (rev === lastUploadedRev) { put(K.rev, String(rev)); return; }
       return decryptData(cfg().code, row.blob).then(function(plain){
-        JSON.parse(plain);
+        if (!looksValidData(plain)) { put(K.rev, String(rev)); return; } // ignore an incomplete cloud copy
         if (plain === get(DATA_KEY)) { put(K.rev, String(rev)); return; }
         applyRemote(plain, rev);
       });
@@ -142,12 +152,14 @@
     return remoteGet().then(function(row){
       if (row && direction !== "push") {
         return decryptData(code, row.blob).then(function(plain){
-          JSON.parse(plain);
+          if (!looksValidData(plain)) throw new Error("the cloud copy looks incomplete — not loading it onto this device");
+          var cur = get(DATA_KEY); if (looksValidData(cur)) put("ns97.sync.backup", cur);
           applying = true; put(DATA_KEY, plain); put(K.rev, String(Number(row.rev)||0)); applying = false;
           setStatus("ok"); location.reload();
         });
       }
-      var plain = get(DATA_KEY) || "{}";
+      var plain = get(DATA_KEY);
+      if (!looksValidData(plain)) throw new Error("this device has no complete data to upload yet — open the app first");
       return encryptData(code, plain).then(function(blob){
         var rev = Date.now();
         return remotePut(blob, rev).then(function(){ lastUploadedRev = rev; put(K.rev, String(rev)); setStatus("ok"); });
@@ -219,6 +231,17 @@
   function renderPanel(){
     var m = document.getElementById("s97-modal"); if (!m) return;
     var body = m.querySelector(".s97-body"); if (!body) return;
+    if (corrupted){
+      var hasBackup = looksValidData(get("ns97.sync.backup"));
+      body.innerHTML = '<button class="s97-x" aria-label="Close">✕</button><h3>Recover this device</h3>'
+        + '<div class="s97-status"><span class="s97-pill err"></span>This device’s saved data is incomplete, so the app can’t open.</div>'
+        + '<p>Pick the option that has your real numbers:</p>'
+        + (hasBackup ? '<div class="s97-row"><button class="s97-btn p" data-a="rb">Restore last good data on this device</button></div>' : '')
+        + (enabled() ? '<div class="s97-row"><button class="s97-btn g" data-a="rc">Load the copy from the cloud</button></div>' : '')
+        + '<div class="s97-row"><button class="s97-btn d" data-a="reset">Reset to the starting sheet</button></div>'
+        + '<div class="s97-help">If your numbers are safe on another device, use the cloud/backup option. Only choose “Reset” if nothing else has your data.</div>';
+      return;
+    }
     var on = enabled();
     var head = '<button class="s97-x" aria-label="Close">✕</button><h3>Cloud Sync</h3>'
       + '<div class="s97-status"><span class="s97-pill '+(on?(status==="off"?"ok":status):"")+'"></span>'+statusText()+'</div>';
@@ -276,6 +299,12 @@
       if (!token||!code){ toast("Add your GitHub token and a Sync Code"); return; }
       doConnect(token, code, "");
     }
+    else if (a === "rb"){ var bk=get("ns97.sync.backup"); if(looksValidData(bk)){ put(DATA_KEY, bk); location.reload(); } else toast("No good backup on this device"); }
+    else if (a === "rc"){ toast("Loading from cloud…"); put(K.rev,"0");
+      remoteGet().then(function(row){ if(!row) throw new Error("nothing saved in the cloud yet");
+        return decryptData(cfg().code,row.blob).then(function(plain){ if(!looksValidData(plain)) throw new Error("the cloud copy is also incomplete"); put(DATA_KEY,plain); put(K.rev,String(Number(row.rev)||0)); location.reload(); }); })
+        .catch(function(e){ toast("Couldn’t load: "+String((e&&e.message)||e).slice(0,90)); }); }
+    else if (a === "reset"){ if(confirm("Start fresh on THIS device with the default sheet?\n\nOnly do this if your real data is safe on another device or a backup.")){ try{localStorage.removeItem(DATA_KEY);}catch(e){} location.reload(); } }
   }
   function doConnect(token, code, gistId, isLink){
     toast("Connecting…");
@@ -330,6 +359,8 @@
   // ---------- boot ----------
   function boot(){
     renderLauncher();
+    var d = get(DATA_KEY);
+    if (d != null && !looksValidData(d)) { corrupted = true; openPanel(); return; } // app can't render this — offer recovery
     if (enabled()){ setStatus("ok"); if (navigator.onLine) pull(); }
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
