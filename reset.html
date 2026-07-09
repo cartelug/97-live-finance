@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>97 LIVE — get the newest version</title>
+</head>
+<body style="margin:0;height:100vh;display:grid;place-items:center;background:#0A0D07;color:#F3F3E9;font-family:'Manrope',system-ui,sans-serif;text-align:center">
+<div>
+  <div style="font-size:34px;margin-bottom:10px">⚡</div>
+  <div id="m" style="font-size:16px;font-weight:700">Refreshing 97 LIVE to the newest version…</div>
+  <div style="font-size:12.5px;color:#8B917B;margin-top:8px">Your numbers are safe — this never touches your data.</div>
+</div>
+<script>
+/* Force this device onto the latest app version: unregister every service worker and clear every
+   app cache (NOT localStorage — the finance data and sync link are untouched), then load fresh. */
+(async function(){
+  try { if (navigator.serviceWorker) {
+    var regs = await navigator.serviceWorker.getRegistrations();
+    for (var i=0;i<regs.length;i++) { try { await regs[i].unregister(); } catch(e){} }
+  } } catch(e){}
+  try { if (window.caches) {
+    var keys = await caches.keys();
+    for (var j=0;j<keys.length;j++) { try { await caches.delete(keys[j]); } catch(e){} }
+  } } catch(e){}
+  setTimeout(function(){ location.replace("./index.html?fresh=" + Date.now()); }, 400);
+})();
+</script>
+</body>
+</html>

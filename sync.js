@@ -6,15 +6,17 @@
   "use strict";
   if (!window.crypto || !crypto.subtle) return; // needs a secure context (https/localhost)
 
+  var ENGINE = "v10"; // shown in the panel so a stale device is instantly visible
   var DATA_KEY = "ns97-finance-v1";
   var K = { token:"ns97.sync.token", gist:"ns97.sync.gist", code:"ns97.sync.code", on:"ns97.sync.on", rev:"ns97.sync.rev" };
-  var POLL_MS = 2500, DEBOUNCE_MS = 800; // fast, near-real-time; polls that find no change are free (ETag 304s)
+  var POLL_MS = 2000, DEBOUNCE_MS = 700; // safety-net polling; the live push channel is what makes it instant
 
   var enc = new TextEncoder(), dec = new TextDecoder();
   var _set = localStorage.setItem.bind(localStorage);
   function get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
   function put(k,v){ try { _set(k,v); } catch(e){} }
   function apiBase(){ return get("ns97.sync.api") || "https://api.github.com"; } // override is test-only
+  function pushBase(){ return get("ns97.sync.push") || "https://ntfy.sh"; }     // live-push relay (override is test-only)
 
   // ---------- device identity ----------
   // Each device carries a friendly name so you can always tell which one is "the main",
@@ -161,6 +163,13 @@
   var lastUploadedRev = 0, applying = false, uploadTimer = null, pendingReload = false, status = "off", corrupted = false, dirty = false;
   function setStatus(s){ status = s; renderLauncher(); renderPanel(); }
 
+  // Short fingerprint of (gist id + code): if two devices show different sheet numbers they are
+  // NOT on the same sheet — the single most common silent reason "my edit never showed up there".
+  var _sheetTag = "";
+  function sheetTag(){ var gid=get(K.gist)||"", c=cfg().code||"";
+    if (!gid && !c) { _sheetTag=""; return Promise.resolve(""); }
+    return sha256hex("tag|"+gid+"|"+c).then(function(h){ _sheetTag = h.slice(0,4).toUpperCase(); return _sheetTag; }); }
+
   // Ordering must NOT depend on device clocks — a phone whose clock trails the PC's would
   // otherwise stamp "older" revisions the PC rejects (one-way sync). So each new revision is
   // max(now, every rev we've seen) + 1: normally a real timestamp (good for "X min ago"),
@@ -185,7 +194,8 @@
       var rev = nextRev(cloudRev);
       return encryptData(c.code, plain).then(function(blob){
         return remotePut(blob, rev).then(function(){ lastUploadedRev = rev; put(K.rev, String(rev));
-          put("ns97.sync.lastat", String(rev)); put("ns97.sync.lastby", devName()); dirty = false; setStatus("ok"); });
+          put("ns97.sync.lastat", String(rev)); put("ns97.sync.lastby", devName()); dirty = false; setStatus("ok");
+          liveSend("upd"); }); // tell every open device to fetch right now
       });
     }).catch(function(){ setStatus("err"); });
   }
@@ -201,6 +211,7 @@
   function applyRemote(plain, rev){
     var cur = get(DATA_KEY); if (looksValidData(cur)) put("ns97.sync.backup", cur); // keep a rollback copy
     applying = true; put(DATA_KEY, plain); put(K.rev, String(rev)); applying = false;
+    put("ns97.sync.justpulled", get("ns97.sync.lastby") || "another device"); // toast after the reload
     setStatus("pulled");
     if (idle()) location.reload(); else pendingReload = true;
   }
@@ -230,6 +241,7 @@
     if (pendingReload && idle()) { pendingReload = false; location.reload(); return; }
     if (!enabled() || !navigator.onLine) return;
     put("ns97.sync.etag", ""); // the moment you look at the app, do one FULL fresh read — never a cached answer
+    liveConnect(); liveSend("hi");
     if (dirty) pushLocal().then(pull); else pull();
   }
   setInterval(function(){ if (enabled() && navigator.onLine){ if (dirty) pushLocal(); else pull(); } }, POLL_MS);
@@ -237,6 +249,77 @@
   window.addEventListener("focus", wake);
   window.addEventListener("pageshow", wake);
   document.addEventListener("visibilitychange", function(){ if (document.visibilityState === "visible") wake(); });
+
+  // ---------- LIVE layer: instant push + presence (like watching a Google Sheet) ----------
+  // A tiny pub/sub relay (ntfy.sh) carries only signals — {kind, device, time}. Never any data.
+  // When a device saves, it broadcasts "upd"; everyone else pulls the gist immediately (~1s
+  // end-to-end) instead of waiting for the next poll. While you type, "edit" heartbeats let other
+  // devices show "✍️ iPhone is editing…". If the relay is unreachable, nothing breaks — the 2s
+  // polling above is the guaranteed floor; the relay is pure acceleration.
+  var liveES = null, liveRetry = 1500, liveUp = false, peers = {}; // name -> {at, editing}
+  var _dbg = {msgs:0, open:0, err:0, sent:0};
+  try { window.__s97 = function(){ return {up:liveUp, dbg:_dbg, peers:JSON.parse(JSON.stringify(peers))}; }; } catch(e){}
+  function topicFor(code){ return sha256hex("ns97live|"+code).then(function(h){ return "ns97-"+h.slice(0,30); }); }
+  function liveSend(kind){
+    if (!enabled()) return;
+    topicFor(cfg().code).then(function(t){
+      try { _dbg.sent++; fetch(pushBase()+"/"+t, {method:"POST", cache:"no-store",
+        body: JSON.stringify({k:kind, by:devName(), at:Date.now()})}).catch(function(){}); } catch(e){}
+    });
+  }
+  function liveConnect(){
+    if (!enabled() || liveES || typeof EventSource === "undefined") return;
+    topicFor(cfg().code).then(function(t){
+      if (liveES || !enabled()) return;
+      try {
+        var es = new EventSource(pushBase()+"/"+t+"/sse");
+        liveES = es;
+        es.onopen = function(){ liveUp = true; liveRetry = 1500; _dbg.open++; renderPanel(); };
+        es.onerror = function(){ liveUp = false; _dbg.err++; try{es.close();}catch(e){} if (liveES===es) liveES=null;
+          setTimeout(liveConnect, liveRetry); liveRetry = Math.min(liveRetry*2, 30000); renderPanel(); };
+        es.onmessage = function(ev){
+          _dbg.msgs++;
+          try {
+            var o = JSON.parse(ev.data); if (!o || !o.message) return;
+            var m = JSON.parse(o.message); if (!m || !m.by || m.by === devName()) return;
+            peers[m.by] = { at: Date.now(), editing: m.k === "edit" };
+            renderLive();
+            if (m.k === "upd") { put("ns97.sync.etag",""); pull(); } // someone saved → fetch NOW
+          } catch(e){}
+        };
+      } catch(e){ liveES = null; }
+    });
+  }
+  function liveNames(fresh){ var out=[], now=Date.now(), n;
+    for (n in peers){ if (now - peers[n].at < (fresh||45000)) out.push(n); } return out; }
+  // "X is editing…" heartbeats while an app input has focus
+  var editBeat = null;
+  document.addEventListener("focusin", function(e){
+    var t = e.target; if (!t || !enabled()) return;
+    if (t.tagName!=="INPUT" && t.tagName!=="TEXTAREA" && !t.isContentEditable) return;
+    if (t.className && String(t.className).indexOf("s97-")===0) return; // not our own panel fields
+    liveSend("edit"); clearInterval(editBeat); editBeat = setInterval(function(){ liveSend("edit"); }, 2500);
+  });
+  document.addEventListener("focusout", function(){ clearInterval(editBeat); editBeat=null; if (enabled()) liveSend("hi"); });
+  // floating presence pill (shows even when the panel is closed)
+  var liveEl = null;
+  function renderLive(){
+    css();
+    var now = Date.now(), msg = "", n;
+    for (n in peers){ if (peers[n].editing && now - peers[n].at < 9000){ msg = "✍️ " + esc(n) + " is editing…"; break; } }
+    if (!msg){ for (n in peers){ if (now - peers[n].at < 6000 && n){ msg = "⚡ " + esc(n) + " is online"; break; } } }
+    if (!liveEl){ liveEl = document.createElement("div"); liveEl.className = "s97-livepill"; document.body.appendChild(liveEl); }
+    liveEl.innerHTML = msg; liveEl.style.display = msg ? "block" : "none";
+  }
+  setInterval(renderLive, 3000);
+  // after a pulled update reloads the page, confirm visibly where it came from
+  function pulledToast(){
+    var by = get("ns97.sync.justpulled"); if (!by) return;
+    put("ns97.sync.justpulled", "");
+    css(); var d = document.createElement("div"); d.className = "s97-toastpill";
+    d.textContent = "✓ Updated from " + by; document.body.appendChild(d);
+    setTimeout(function(){ d.style.opacity = "0"; }, 2600); setTimeout(function(){ d.remove(); }, 3400);
+  }
 
   // ---------- connect / disconnect ----------
   function connect(token, code, gistId, direction){
@@ -257,11 +340,12 @@
       return encryptData(code, plain).then(function(blob){
         var rev = nextRev(row && !row.__nm && row.rev != null ? (Number(row.rev)||0) : 0);
         return remotePut(blob, rev).then(function(){ lastUploadedRev = rev; put(K.rev, String(rev));
-          put("ns97.sync.lastat", String(rev)); put("ns97.sync.lastby", devName()); dirty = false; setStatus("ok"); });
+          put("ns97.sync.lastat", String(rev)); put("ns97.sync.lastby", devName()); dirty = false; setStatus("ok");
+          liveConnect(); liveSend("upd"); });
       });
     }).catch(function(e){ setStatus("err"); throw e; });
   }
-  function disconnect(){ put(K.on, "0"); setStatus("off"); }
+  function disconnect(){ put(K.on, "0"); setStatus("off"); if (liveES){ try{liveES.close();}catch(e){} liveES=null; liveUp=false; } }
 
   function makeLink(){ var c=cfg(); return "ns97sync:" + b64(enc.encode(JSON.stringify({t:c.token, g:get(K.gist)||"", c:c.code}))); }
   function parseLink(s){ s=String(s).trim(); if(s.indexOf("ns97sync:")!==0) throw new Error("not a link");
@@ -306,7 +390,12 @@
       ".s97-ren:active{transform:scale(.96)}",
       ".s97-last{font-size:12.5px;color:var(--tx2,#B7BCA6);margin:9px 2px 2px;display:flex;align-items:center;gap:7px}",
       ".s97-last b{color:var(--tx,#F3F3E9);font-weight:700}",
-      ".s97-last .s97-pill{width:7px;height:7px}"
+      ".s97-last .s97-pill{width:7px;height:7px}",
+      ".s97-meta{margin-top:14px;padding:9px 12px;border-radius:11px;background:var(--bg,#0A0D07);border:1px dashed var(--line2,rgba(228,238,205,.18));font-size:11.5px;color:var(--tx3,#8B917B);letter-spacing:.01em}",
+      ".s97-meta b{color:var(--usd,#35C6D4);font-weight:800;letter-spacing:.08em}",
+      ".s97-livepill{position:fixed;z-index:57;left:50%;transform:translateX(-50%);bottom:calc(136px + env(safe-area-inset-bottom));background:rgba(15,19,9,.92);backdrop-filter:blur(8px);border:1px solid var(--line2,rgba(228,238,205,.18));color:var(--tx,#F3F3E9);font-family:var(--fu,system-ui);font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:999px;box-shadow:0 10px 30px -10px rgba(0,0,0,.8);display:none;pointer-events:none;animation:s97fade .25s ease}",
+      ".s97-toastpill{position:fixed;z-index:58;left:50%;transform:translateX(-50%);top:calc(14px + env(safe-area-inset-top));background:linear-gradient(180deg,var(--pos,#62DBA2),var(--pos2,#2FA774));color:#0B1710;font-family:var(--fu,system-ui);font-size:13px;font-weight:800;padding:9px 16px;border-radius:999px;box-shadow:0 12px 32px -8px rgba(47,167,116,.55);transition:opacity .7s;animation:s97fade .3s ease}",
+      "@keyframes s97fade{from{opacity:0;transform:translateX(-50%) translateY(6px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}"
     ].join("\n");
     document.head.appendChild(s);
   }
@@ -358,15 +447,23 @@
         ? ('Last change: <b>' + (by ? (mine ? "this device" : esc(by)) : "another device") + '</b>'
             + (ago(at) ? ' · ' + esc(ago(at)) : ''))
         : 'No cloud changes recorded yet — make an edit to start the history.';
+      var online = liveNames(45000);
       frag = '<div class="s97-dev"><div><div class="s97-dev-lbl">You’re on</div>'
         + '<div class="s97-dev-name">' + esc(here) + '<span class="s97-here">This device</span></div></div>'
         + '<button class="s97-ren" data-a="rename">Rename</button></div>'
         + '<div class="s97-last"><span class="s97-pill '+(mine?"ok":"")+'"></span>' + lastLine + '</div>'
-        + '<p>Any change here shows on your other devices within a few seconds — and back again. Your numbers are encrypted before they leave the device.</p>'
-        + '<div class="s97-row"><button class="s97-btn p" data-a="now">Sync now</button>'
-        + '<button class="s97-btn g" data-a="copylink">Copy link for other device</button></div>'
-        + '<div class="s97-row"><button class="s97-btn d" data-a="disconnect">Disconnect this device</button></div>'
-        + '<div class="s97-help">Name your master device something clear (e.g. “Main PC”) so you can always tell which is which. Add another device: open 97 LIVE there → cloud button → paste this link.</div>';
+        + '<div class="s97-last"><span class="s97-pill '+(liveUp?"ok":"syncing")+'"></span>'
+        +   (liveUp ? 'Live channel <b>connected</b> — edits land instantly' : 'Live channel connecting… (safety check every 2s meanwhile)')
+        + '</div>'
+        + (online.length ? '<div class="s97-last"><span class="s97-pill ok"></span>Online now: <b>'+online.map(esc).join(', ')+'</b></div>' : '')
+        + '<p>Every change here appears on all linked devices in about a second — and back. Your numbers are encrypted before they leave the device.</p>'
+        + '<div class="s97-row"><button class="s97-btn p" data-a="copylink">Copy share link</button>'
+        + '<button class="s97-btn g" data-a="selftest">Test connection</button></div>'
+        + '<div class="s97-row"><button class="s97-btn g" data-a="now">Sync now</button>'
+        + '<button class="s97-btn d" data-a="disconnect">Disconnect</button></div>'
+        + '<div class="s97-meta">Sheet <b>#'+esc(_sheetTag||'····')+'</b> · engine '+ENGINE
+        +   ' — every linked device must show the SAME sheet number. Different number = it’s on a different sheet: re-join it with the share link.</div>'
+        + '<div class="s97-help">Add a device (yours or a teammate’s): send it the share link → open 97 LIVE there → cloud button → paste → done.</div>';
     } else {
       frag = '<p>Link your phone and PC so they always show the same numbers. Free, private (end-to-end encrypted), works offline.</p>'
         + '<label>Already set up another device? Paste its link:</label>'
@@ -390,8 +487,9 @@
     modal.innerHTML = '<div class="s97-body"></div>';
     back.appendChild(modal); document.body.appendChild(back);
     renderPanel();
+    sheetTag().then(function(){ renderPanel(); });
     // pull the latest cloud revision's author/time so "Last change" is current, not just the last poll
-    if (enabled() && navigator.onLine && !corrupted){ remoteGet().then(function(){ renderPanel(); }).catch(function(){}); }
+    if (enabled() && navigator.onLine && !corrupted){ put("ns97.sync.etag",""); remoteGet().then(function(){ renderPanel(); }).catch(function(){}); }
     back.addEventListener("mousedown", function(e){ if (e.target === back) closePanel(); });
     modal.addEventListener("click", onPanelClick);
   }
@@ -405,6 +503,27 @@
     if (a === "gen"){ var el=document.getElementById("s97-code"); if(el) el.value = randomCode(); }
     else if (a === "help"){ showHelp(); }
     else if (a === "now"){ pushLocal().then(pull); }
+    else if (a === "selftest"){
+      // Full proof in one tap: read the sheet, write a probe, read it back. No guessing.
+      toast("Testing — reading the shared sheet…");
+      var t0 = Date.now(); put("ns97.sync.etag","");
+      remoteGet().then(function(row){
+        if (!row || row.__nm) throw new Error("could not read the shared sheet");
+        toast("Read OK — now writing a test marker…");
+        var nonce = "probe-"+t0+"-"+Math.floor(Math.random()*1e6);
+        var files = {}; files["ns97-probe.txt"] = { content: nonce };
+        return ghFetch(apiBase()+"/gists/"+get(K.gist), {method:"PATCH", headers:ghHeaders(), body:JSON.stringify({files:files})})
+          .then(ok("TEST-WRITE"))
+          .then(function(){ return ghFetch(apiBase()+"/gists/"+get(K.gist), {headers:ghHeaders()}).then(ok("TEST-READ")); })
+          .then(function(r){ return r.json(); })
+          .then(function(g){
+            var got = g && g.files && g.files["ns97-probe.txt"] && g.files["ns97-probe.txt"].content;
+            if (got !== nonce) throw new Error("wrote a marker but read a different one back");
+            put("ns97.sync.etag","");
+            toast("✅ This device fully reaches the shared sheet — round-trip "+(((Date.now()-t0)/1000).toFixed(1))+"s");
+          });
+      }).catch(function(e){ toast("❌ "+String((e&&e.message)||e).slice(0,120)); });
+    }
     else if (a === "rename"){
       var v = prompt("Name this device — it shows on your other devices when this one makes a change:", devName());
       if (v !== null){ v = String(v).trim().slice(0,40); put("ns97.sync.dev", v);
@@ -485,7 +604,8 @@
     renderLauncher();
     var d = get(DATA_KEY);
     if (d != null && !looksValidData(d)) { corrupted = true; openPanel(); return; } // app can't render this — offer recovery
-    if (enabled()){ setStatus("ok"); put("ns97.sync.etag", ""); if (navigator.onLine) pull(); } // boot = full fresh read
+    pulledToast(); // "✓ Updated from iPhone" after an applied change reloaded the page
+    if (enabled()){ setStatus("ok"); put("ns97.sync.etag", ""); if (navigator.onLine){ pull(); liveConnect(); liveSend("hi"); } } // boot = full fresh read + open the live channel
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();
