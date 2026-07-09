@@ -116,6 +116,7 @@
         }
         put("ns97.sync.lastat", String(rev));
         put("ns97.sync.lastby", by);
+        if (rev > (Number(get("ns97.sync.maxrev"))||0)) put("ns97.sync.maxrev", String(rev)); // high-water mark for monotonic revs
         return { rev: rev, blob: rest, by: by };
       });
     });
@@ -135,18 +136,33 @@
   }
 
   // ---------- engine ----------
-  var lastUploadedRev = 0, applying = false, uploadTimer = null, pendingReload = false, status = "off", corrupted = false;
+  var lastUploadedRev = 0, applying = false, uploadTimer = null, pendingReload = false, status = "off", corrupted = false, dirty = false;
   function setStatus(s){ status = s; renderLauncher(); renderPanel(); }
+
+  // Ordering must NOT depend on device clocks — a phone whose clock trails the PC's would
+  // otherwise stamp "older" revisions the PC rejects (one-way sync). So each new revision is
+  // max(now, every rev we've seen) + 1: normally a real timestamp (good for "X min ago"),
+  // but always strictly greater than the latest cloud revision, so last-write-wins is symmetric.
+  function nextRev(cloudRev){
+    var floor = Math.max(Number(cloudRev)||0, Number(get("ns97.sync.maxrev"))||0, Number(get(K.rev))||0, lastUploadedRev||0);
+    var r = Date.now();
+    if (r <= floor) r = floor + 1;
+    put("ns97.sync.maxrev", String(r));
+    return r;
+  }
 
   function pushLocal(){
     if (!enabled() || applying) return Promise.resolve();
     var c = cfg(), plain = get(DATA_KEY);
     if (!looksValidData(plain)) return Promise.resolve(); // never upload an empty/partial snapshot
     setStatus("syncing");
-    return encryptData(c.code, plain).then(function(blob){
-      var rev = Date.now();
-      return remotePut(blob, rev).then(function(){ lastUploadedRev = rev; put(K.rev, String(rev));
-        put("ns97.sync.lastat", String(rev)); put("ns97.sync.lastby", devName()); setStatus("ok"); });
+    // Read the cloud's current revision first, then write strictly above it — clock-proof ordering.
+    return remoteGet().then(function(row){
+      var rev = nextRev(row ? (Number(row.rev)||0) : 0);
+      return encryptData(c.code, plain).then(function(blob){
+        return remotePut(blob, rev).then(function(){ lastUploadedRev = rev; put(K.rev, String(rev));
+          put("ns97.sync.lastat", String(rev)); put("ns97.sync.lastby", devName()); dirty = false; setStatus("ok"); });
+      });
     }).catch(function(){ setStatus("err"); });
   }
   function schedulePush(){ if(!enabled()) return; clearTimeout(uploadTimer); uploadTimer = setTimeout(pushLocal, DEBOUNCE_MS); }
@@ -179,14 +195,20 @@
     }).catch(function(){ setStatus("err"); });
   }
 
-  localStorage.setItem = function(k, v){ _set(k, v); if (k===DATA_KEY && !applying) schedulePush(); };
+  localStorage.setItem = function(k, v){ _set(k, v); if (k===DATA_KEY && !applying){ dirty = true; schedulePush(); } };
 
-  setInterval(function(){ if (enabled() && navigator.onLine) pull(); }, POLL_MS);
-  window.addEventListener("online", function(){ if (enabled()) { pull(); pushLocal(); } });
-  window.addEventListener("focus", function(){
+  // Phones freeze background apps, so a debounced push can be killed before it fires. On every
+  // way the app can come back to life, flush a pending edit FIRST (so it wins), then pull.
+  function wake(){
     if (pendingReload && idle()) { pendingReload = false; location.reload(); return; }
-    if (enabled() && navigator.onLine) pull();
-  });
+    if (!enabled() || !navigator.onLine) return;
+    if (dirty) pushLocal().then(pull); else pull();
+  }
+  setInterval(function(){ if (enabled() && navigator.onLine){ if (dirty) pushLocal(); else pull(); } }, POLL_MS);
+  window.addEventListener("online", wake);
+  window.addEventListener("focus", wake);
+  window.addEventListener("pageshow", wake);
+  document.addEventListener("visibilitychange", function(){ if (document.visibilityState === "visible") wake(); });
 
   // ---------- connect / disconnect ----------
   function connect(token, code, gistId, direction){
@@ -204,9 +226,9 @@
       var plain = get(DATA_KEY);
       if (!looksValidData(plain)) throw new Error("this device has no complete data to upload yet — open the app first");
       return encryptData(code, plain).then(function(blob){
-        var rev = Date.now();
+        var rev = nextRev(row ? (Number(row.rev)||0) : 0);
         return remotePut(blob, rev).then(function(){ lastUploadedRev = rev; put(K.rev, String(rev));
-          put("ns97.sync.lastat", String(rev)); put("ns97.sync.lastby", devName()); setStatus("ok"); });
+          put("ns97.sync.lastat", String(rev)); put("ns97.sync.lastby", devName()); dirty = false; setStatus("ok"); });
       });
     }).catch(function(e){ setStatus("err"); throw e; });
   }
