@@ -1,17 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#151B0E"/>
-      <stop offset="1" stop-color="#0A0D07"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#18A96C"/>
+      <stop offset="1" stop-color="#0A6540"/>
     </linearGradient>
-    <linearGradient id="mk" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#84EDBD"/>
-      <stop offset="1" stop-color="#2FA774"/>
+    <radialGradient id="hl" cx="0.32" cy="0.1" r="0.95">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.32"/>
+      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="base" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#EAF7EF" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#BFE9D3" stop-opacity="0.9"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="118" fill="url(#bg)"/>
-  <circle cx="256" cy="-52" r="248" fill="rgba(98,219,162,.10)"/>
-  <rect x="11" y="11" width="490" height="490" rx="110" fill="none" stroke="rgba(228,238,205,.16)" stroke-width="3"/>
-  <text x="256" y="352" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="268" text-anchor="middle" fill="url(#mk)" letter-spacing="-12">97</text>
-  <rect x="198" y="396" width="116" height="14" rx="7" fill="url(#mk)" opacity=".9"/>
+  <rect width="512" height="512" rx="126" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="126" fill="url(#hl)"/>
+  <rect x="9" y="9" width="494" height="494" rx="118" fill="none" stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="7"/>
+  <text x="250" y="356" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="266" text-anchor="middle" fill="#FFFFFF" letter-spacing="-12">97</text>
+  <rect x="196" y="398" width="120" height="15" rx="7.5" fill="url(#base)"/>
+  <circle cx="400" cy="118" r="17" fill="#EAF7EF"/>
+  <path d="M400 74v88M356 118h88" stroke="#EAF7EF" stroke-opacity="0.5" stroke-width="9" stroke-linecap="round"/>
 </svg>
