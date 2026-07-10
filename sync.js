@@ -5,16 +5,17 @@
 (function () {
   "use strict";
 
-  var ENGINE = "supabase-v1";
+  var ENGINE = "supabase-v2";
   var DATA_KEY = "ns97-finance-v1";
   var BASE_KEY = "ns97.cloud.base";
   var VERSION_KEY = "ns97.cloud.version";
   var DIRTY_KEY = "ns97.cloud.dirty";
+  var RELOAD_VERSION_KEY = "ns97.cloud.reload_version";
   var URL = "https://rytbeijznlqofstfrmwf.supabase.co";
   var PUBLISHABLE_KEY = "sb_publishable_M5P58fOgzRv5_28qZXmwYg_wiYVhMQ-";
   var SDK_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js";
   var SAVE_DELAY = 650;
-  var REPAIR_INTERVAL = 15000;
+  var REPAIR_INTERVAL = 30000;
   var MAX_RETRIES = 4;
 
   var nativeSet = Storage.prototype.setItem;
@@ -53,9 +54,17 @@
   function clone(v) {
     return v == null ? v : JSON.parse(JSON.stringify(v));
   }
+  // JSONB may return object keys in a different order. Compare canonical values, not raw JSON text.
+  function stableStringify(value) {
+    if (value === null || typeof value !== "object") return JSON.stringify(value);
+    if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
+    return "{" + Object.keys(value).sort().map(function (key) {
+      return JSON.stringify(key) + ":" + stableStringify(value[key]);
+    }).join(",") + "}";
+  }
   function equal(a, b) {
     if (a === b) return true;
-    try { return JSON.stringify(a) === JSON.stringify(b); } catch (_) { return false; }
+    try { return stableStringify(a) === stableStringify(b); } catch (_) { return false; }
   }
   function parseData(raw) {
     if (!raw) return null;
@@ -72,18 +81,25 @@
   function setLocal(data, reload) {
     if (!parseData(data)) throw new Error("Cloud data is incomplete");
     var current = get(DATA_KEY);
+    var currentData = parseData(current);
+    if (currentData && equal(currentData, data)) return false;
     if (current) put("ns97.cloud.device_backup", current);
     applying = true;
     put(DATA_KEY, JSON.stringify(data));
     applying = false;
-    if (reload) requestReload();
+    if (reload) requestReload(cloudVersion);
+    return true;
   }
   function idle() {
     if (document.querySelector(".backdrop") || document.getElementById("s97-cloud-modal")) return false;
     var a = document.activeElement;
     return !(a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable));
   }
-  function requestReload() {
+  function requestReload(version) {
+    // Reload at most once for a committed cloud version. This breaks reload feedback loops.
+    var v = Number(version || cloudVersion) || 0;
+    if (v && Number(get(RELOAD_VERSION_KEY)) === v) return;
+    if (v) put(RELOAD_VERSION_KEY, String(v));
     if (idle()) location.reload();
     else pendingReload = true;
   }
@@ -385,8 +401,9 @@
       }
       if (dirty || (cloudData && !equal(mine, cloudData))) {
         var merged = merge3(cloudData || parseData(get(BASE_KEY)) || {}, mine, row.data);
+        var changedLocal = !equal(merged, mine);
         rememberCloud(row);
-        if (!equal(merged, mine)) {
+        if (changedLocal) {
           applying = true;
           put(DATA_KEY, JSON.stringify(merged));
           applying = false;
@@ -394,11 +411,12 @@
         markDirty(!equal(merged, row.data));
         if (dirty) {
           return saveNow(0).then(function (ok) {
-            if (ok && !dirty) requestReload();
+            if (ok && changedLocal) requestReload(cloudVersion);
             return ok;
           });
         }
-        requestReload();
+        if (changedLocal) requestReload(row.version);
+        else setStatus("online");
         return true;
       }
       rememberCloud(row);
@@ -450,6 +468,7 @@
     var cachedBase = parseData(get(BASE_KEY));
     var cachedVersion = Number(get(VERSION_KEY)) || 0;
     var hadQueuedChanges = get(DIRTY_KEY) === "1";
+    var reloadAfterInit = false;
     if (cachedBase) {
       cloudData = clone(cachedBase);
       cloudVersion = cachedVersion;
@@ -471,6 +490,7 @@
               applying = true;
               put(DATA_KEY, JSON.stringify(merged));
               applying = false;
+              reloadAfterInit = true;
             }
             markDirty(cachedBase ? !equal(merged, existing.data) : false);
           });
@@ -481,7 +501,7 @@
       if (!mine) {
         rememberCloud(row);
         markDirty(false);
-        setLocal(row.data, true);
+        reloadAfterInit = setLocal(row.data, false) || reloadAfterInit;
         return;
       }
 
@@ -493,6 +513,7 @@
           applying = true;
           put(DATA_KEY, JSON.stringify(merged));
           applying = false;
+          reloadAfterInit = true;
         }
         markDirty(!equal(merged, row.data));
         return;
@@ -500,15 +521,19 @@
 
       rememberCloud(row);
       markDirty(false);
-      if (!equal(mine, row.data)) setLocal(row.data, true);
+      if (!equal(mine, row.data)) reloadAfterInit = setLocal(row.data, false) || reloadAfterInit;
     }).then(function () {
       ready = true;
       subscribe();
       if (dirty) {
         setStatus(navigator.onLine ? "saving" : "offline");
-        return saveNow(0).then(function (ok) { if (ok && !dirty) requestReload(); });
+        return saveNow(0).then(function (ok) {
+          if (ok && reloadAfterInit) requestReload(cloudVersion);
+          return ok;
+        });
       }
       setStatus("online");
+      if (reloadAfterInit) requestReload(cloudVersion);
     }).catch(function (err) {
       ready = true;
       var mine = localData();
@@ -518,8 +543,14 @@
   }
 
   Storage.prototype.setItem = function (key, value) {
+    var previous = (this === localStorage && key === DATA_KEY) ? get(DATA_KEY) : null;
     nativeSet.call(this, key, value);
-    if (this === localStorage && key === DATA_KEY && !applying) scheduleSave();
+    if (this === localStorage && key === DATA_KEY && !applying) {
+      var before = parseData(previous);
+      var after = parseData(value);
+      // The app writes its state during startup. Do not save when the value is semantically unchanged.
+      if (!before || !after || !equal(before, after)) scheduleSave();
+    }
   };
 
   function css() {
