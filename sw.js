@@ -2,7 +2,7 @@
    Network-first for the app shell so new versions actually reach every device;
    stale-while-revalidate for static assets; cache is the offline fallback only.
    Cross-origin requests (Supabase, fonts, AI APIs) are never intercepted. */
-const CACHE = "ns97-live-v19-type";
+const CACHE = "ns97-live-v20-font-only";
 const ASSETS = ["./", "./index.html", "./sync.js?v=11", "./experience-v2.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/favicon.svg"];
 
 const FAB_PATCH = `
@@ -53,16 +53,10 @@ const FAB_PATCH = `
 
 const TYPE_PATCH = `
 ;(function(){
-  if(window.__X97_TYPE_V3__)return;
-  window.__X97_TYPE_V3__=true;
+  if(window.__X97_TYPE_FONT_ONLY__)return;
+  window.__X97_TYPE_FONT_ONLY__=true;
 
   if(!document.getElementById("x97-sora-font")){
-    var pre=document.createElement("link");
-    pre.rel="preconnect";
-    pre.href="https://fonts.gstatic.com";
-    pre.crossOrigin="anonymous";
-    document.head.appendChild(pre);
-
     var font=document.createElement("link");
     font.id="x97-sora-font";
     font.rel="stylesheet";
@@ -70,10 +64,10 @@ const TYPE_PATCH = `
     document.head.appendChild(font);
   }
 
-  if(document.getElementById("x97-type-v3"))return;
+  if(document.getElementById("x97-type-font-only"))return;
   var style=document.createElement("style");
-  style.id="x97-type-v3";
-  style.textContent=':root{--fu:\'Inter\',ui-sans-serif,system-ui,-apple-system,\'Segoe UI\',Roboto,Arial,sans-serif!important;--fd:\'Sora\',\'Inter\',ui-sans-serif,system-ui,-apple-system,\'Segoe UI\',Roboto,Arial,sans-serif!important}html{font-synthesis:none;text-rendering:optimizeLegibility}body,.app,input,select,button,textarea{font-family:var(--fu)!important}h1,h2,h3,h4,.x97-title,.x97-section-title,.x97-month-title,.x97-item-title,.x97-facility-title,.x97-loan h3,.x97-sheet-head h2{font-family:var(--fd)!important;font-synthesis:none}.x97-title{font-weight:700!important;letter-spacing:-.045em!important}.x97-section-title{font-weight:700!important;letter-spacing:.075em!important}.x97-month-title,.x97-item-title,.x97-facility-title,.x97-loan h3{font-weight:700!important;letter-spacing:-.025em!important}.x97-sheet-head h2{font-weight:700!important;letter-spacing:-.035em!important}.disp,.tabnum,.x97-money,.x97-hero-value,.x97-row-value,.x97-item-amount,.x97-loan-amount,.x97-facility-limit b,.x97-summary .v,.x97-stat b{font-family:var(--fu)!important;font-variant-numeric:tabular-nums lining-nums!important;font-feature-settings:\'tnum\' 1,\'lnum\' 1!important;font-synthesis:none}.disp,.x97-hero-value,.x97-money{letter-spacing:-.04em!important}.x97-row-value,.x97-item-amount,.x97-facility-limit b,.x97-stat b{letter-spacing:-.025em!important}.navitem,.x97-btn,.x97-icon-btn,.x97-chip,.x97-pill,.x97-mini,.x97-input,.x97-select,.x97-textarea,.x97-sub,.x97-row-sub,.x97-eyebrow,.x97-hero-label,.x97-summary .k,.x97-summary .s{font-family:var(--fu)!important}';
+  style.id="x97-type-font-only";
+  style.textContent=':root{--fd:\'Sora\',\'Inter\',ui-sans-serif,system-ui,-apple-system,\'Segoe UI\',Roboto,Arial,sans-serif!important}.x97-title,.x97-section-title,.x97-month-title,.x97-item-title,.x97-facility-title,.x97-loan h3,.x97-sheet-head h2{font-family:var(--fd)!important}.disp.tabnum,.tabnum,.x97-money,.x97-hero-value,.x97-row-value,.x97-item-amount,.x97-loan-amount,.x97-facility-limit b,.x97-summary .v,.x97-stat b{font-family:var(--fu)!important}';
   document.head.appendChild(style);
 })();
 `;
