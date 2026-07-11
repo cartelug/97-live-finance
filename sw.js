@@ -2,7 +2,7 @@
    Network-first for the app shell so new versions actually reach every device;
    stale-while-revalidate for static assets; cache is the offline fallback only.
    Cross-origin requests (Supabase, fonts, AI APIs) are never intercepted. */
-const CACHE = "ns97-live-v20-font-only";
+const CACHE = "ns97-live-v18";
 const ASSETS = ["./", "./index.html", "./sync.js?v=11", "./experience-v2.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/favicon.svg"];
 
 const FAB_PATCH = `
@@ -50,28 +50,6 @@ const FAB_PATCH = `
 })();
 `;
 
-
-const TYPE_PATCH = `
-;(function(){
-  if(window.__X97_TYPE_FONT_ONLY__)return;
-  window.__X97_TYPE_FONT_ONLY__=true;
-
-  if(!document.getElementById("x97-sora-font")){
-    var font=document.createElement("link");
-    font.id="x97-sora-font";
-    font.rel="stylesheet";
-    font.href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&display=swap";
-    document.head.appendChild(font);
-  }
-
-  if(document.getElementById("x97-type-font-only"))return;
-  var style=document.createElement("style");
-  style.id="x97-type-font-only";
-  style.textContent=':root{--fd:\'Sora\',\'Inter\',ui-sans-serif,system-ui,-apple-system,\'Segoe UI\',Roboto,Arial,sans-serif!important}.x97-title,.x97-section-title,.x97-month-title,.x97-item-title,.x97-facility-title,.x97-loan h3,.x97-sheet-head h2{font-family:var(--fd)!important}.disp.tabnum,.tabnum,.x97-money,.x97-hero-value,.x97-row-value,.x97-item-amount,.x97-loan-amount,.x97-facility-limit b,.x97-summary .v,.x97-stat b{font-family:var(--fu)!important}';
-  document.head.appendChild(style);
-})();
-`;
-
 self.addEventListener("install", (e) => {
   self.skipWaiting();
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).catch(() => {}));
@@ -107,7 +85,7 @@ self.addEventListener("fetch", (e) => {
           const headers = new Headers(res.headers);
           headers.delete("content-length");
           headers.set("content-type", "application/javascript; charset=utf-8");
-          return new Response(text + FAB_PATCH + TYPE_PATCH, {
+          return new Response(text + FAB_PATCH, {
             status: res.status,
             statusText: res.statusText,
             headers
