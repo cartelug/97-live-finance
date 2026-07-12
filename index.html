@@ -16,7 +16,7 @@
 <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Audiowide&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Audiowide&display=swap" rel="stylesheet" />
 <style>
 :root{color-scheme:light;
 /* SURFACES — porcelain page, white cards, three elevation tiers (banking paper) */
@@ -45,10 +45,10 @@
 --ring:0 0 0 3px rgba(14,117,72,.18);
 --glow-pos:0 0 10px 1px rgba(14,117,72,.4);
 --grad-fab:radial-gradient(120% 120% at 30% 22%,#128A56,var(--pos2) 88%);
-/* TYPE — Helvetica (the iOS system face) carries the interface + headings; DM Sans gives the money numerals a clean geometric-fintech voice; Audiowide stays the 97 wordmark */
+/* TYPE — one Helvetica voice everywhere (the iOS system face); numbers differentiate through weight, tight tracking and tabular figures rather than a second family. Audiowide survives only in the 97 wordmark. */
 --fu:'Helvetica Neue',Helvetica,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
 --fd:var(--fu);
---fnum:'DM Sans','Helvetica Neue',Helvetica,Arial,sans-serif;
+--fnum:var(--fu);
 --fw:'Audiowide','Helvetica Neue',Helvetica,Arial,sans-serif}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg)}
@@ -63,8 +63,8 @@ animation:drift 36s ease-in-out infinite alternate}
 @keyframes drift{from{transform:translate3d(-3.5%,-2%,0) scale(1)}to{transform:translate3d(3.5%,3%,0) scale(1.09)}}
 .app{background:radial-gradient(120% 80% at 50% -5%,rgba(14,117,72,.05),transparent 55%),var(--bg);color:var(--tx);font-family:var(--fu);min-height:100vh;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 .wrap{max-width:520px;margin:0 auto;position:relative;min-height:100vh;background:radial-gradient(125% 68% at 50% -8%,rgba(14,117,72,.055),transparent 56%),radial-gradient(150% 90% at 100% 104%,rgba(11,114,133,.04),transparent 55%),var(--bg);padding-bottom:calc(148px + env(safe-area-inset-bottom))}
-/* NUMBERS — money + figures in Audiowide so the 97 numerals read as a digital display */
-.tabnum{font-family:var(--fnum);font-variant-numeric:tabular-nums;font-feature-settings:"tnum";letter-spacing:0}
+/* NUMBERS — Helvetica figures, set smart: tabular lining digits, tight tracking, weight carries the hierarchy */
+.tabnum{font-family:var(--fnum);font-variant-numeric:tabular-nums lining-nums;font-feature-settings:"tnum";letter-spacing:-.015em}
 /* DISPLAY — headings ride the Helvetica body voice; no font-family here so .tabnum's Audiowide wins on hero "disp tabnum" amounts */
 .disp{letter-spacing:-.018em}
 ::selection{background:rgba(14,117,72,.16);color:var(--tx)}
