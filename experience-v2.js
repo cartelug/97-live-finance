@@ -284,7 +284,7 @@
       .x97-section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 2px 10px}
       .x97-section-title{font-size:12px;text-transform:uppercase;letter-spacing:.1em;font-weight:800;color:var(--tx2)}
       .x97-link{border:0;background:transparent;color:var(--pos);font-size:12px;font-weight:750;padding:5px;display:inline-flex;align-items:center;gap:4px}
-      .x97-money{font-family:var(--fnum)!important;font-variant-numeric:tabular-nums lining-nums;font-feature-settings:"tnum";letter-spacing:0;font-weight:400}
+      .x97-money{font-family:var(--fnum)!important;font-variant-numeric:tabular-nums lining-nums;font-feature-settings:"tnum";letter-spacing:-.01em;font-weight:600}
       .x97-hero{padding:22px;background:linear-gradient(145deg,#fff 30%,#F7FBF8);position:relative;overflow:hidden}
       .x97-hero:after{content:"";position:absolute;width:220px;height:220px;border-radius:50%;right:-110px;top:-130px;background:radial-gradient(circle,rgba(14,117,72,.12),transparent 66%)}
       .x97-hero-label{font-size:11px;text-transform:uppercase;letter-spacing:.12em;font-weight:800;color:var(--tx3)}
