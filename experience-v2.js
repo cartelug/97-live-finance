@@ -141,6 +141,16 @@
     return d.toLocaleDateString(undefined, short ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
   }
 
+  function relDay(value) {
+    var d = parseLocalDate(value);
+    if (!d) return "";
+    var t = todayDate();
+    t.setHours(0, 0, 0, 0);
+    d.setHours(0, 0, 0, 0);
+    var diff = Math.round((d - t) / 86400000);
+    return diff === 0 ? "Today" : diff === 1 ? "Tomorrow" : diff < 0 ? -diff + "d ago" : "in " + diff + "d";
+  }
+
   function startOfMonth(date) {
     var d = date instanceof Date ? date : todayDate();
     return new Date(d.getFullYear(), d.getMonth(), 1, 12, 0, 0, 0);
@@ -235,6 +245,19 @@
     return '<svg aria-hidden="true" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' + (paths[name] || paths.more) + '</svg>';
   }
 
+  function brandFor(name) {
+    var n = String(name || "").toLowerCase();
+    if (n.indexOf("airtel") >= 0) return { key: "airtel", label: "Airtel" };
+    if (n.indexOf("mtn") >= 0 || n.indexOf("momo") >= 0) return { key: "mtn", label: "MTN" };
+    if (n.indexOf("equity") >= 0) return { key: "equity", label: "Equity" };
+    return null;
+  }
+  function accountIconBox(name) {
+    var b = brandFor(name);
+    if (b) return '<div class="x97-row-icon x97-brand ' + b.key + '" role="img" aria-label="' + attr(b.label) + '"></div>';
+    return '<div class="x97-row-icon good">' + icon("bank") + '</div>';
+  }
+
   function injectCSS() {
     if (document.getElementById("x97-v2-css")) return;
     var style = document.createElement("style");
@@ -313,6 +336,39 @@
       .x97-toast-wrap{position:fixed;z-index:2000;left:50%;bottom:calc(142px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(430px,calc(100% - 28px));pointer-events:none}.x97-toast{background:#171B12;color:#fff;border-radius:13px;padding:11px 13px;font-size:12px;font-weight:700;box-shadow:0 15px 35px rgba(23,27,18,.28);animation:x97-toast .25s ease both}.x97-toast.success{background:#0B6740}.x97-toast.error{background:#9E2D27}@keyframes x97-toast{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
       @media(min-width:760px){#x97-v2-root{padding:24px 24px 110px}.x97-grid-2{grid-template-columns:1fr 1fr}.x97-summary-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.x97-dashboard-main{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(300px,.85fr);gap:16px;align-items:start}.x97-dashboard-wide{grid-column:1/-1}.x97-sheet{border-radius:26px;margin:20px}.x97-back{align-items:center;padding:16px}.x97-fab{right:max(24px,calc(50% - 488px))}}
       @media(max-width:560px){.x97-top{align-items:center}.x97-title{font-size:26px}.x97-cloud{padding:7px 9px}.x97-cloud span{display:none}.x97-hero{padding:19px}.x97-hero-value{font-size:36px}.x97-fields-2{grid-template-columns:1fr}.x97-checks{grid-template-columns:1fr 1fr}.x97-fab{right:16px}.x97-item-actions{width:100%;margin-left:0}.x97-item-actions .x97-mini{flex:1}}
+
+      /* ===== Provider brand logos (MTN / Airtel / Equity) ===== */
+      .x97-network.airtel,.x97-network.mtn,.x97-network.equity,.x97-row-icon.x97-brand{background-color:#fff;background-repeat:no-repeat;background-position:center;color:transparent;font-size:0;border:1px solid var(--line);box-shadow:inset 0 1px 2px rgba(23,27,18,.06);overflow:hidden}
+      .x97-network.airtel,.x97-row-icon.x97-brand.airtel{background-image:url(./icons/brand/airtel.png);background-size:82%}
+      .x97-network.mtn,.x97-row-icon.x97-brand.mtn{background-image:url(./icons/brand/mtn.jpg);background-size:cover}
+      .x97-network.equity,.x97-row-icon.x97-brand.equity{background-image:url(./icons/brand/equity.png);background-size:80%}
+
+      /* ===== Home "Next 7 days" timeline ===== */
+      .x97-timeline{display:flex;flex-direction:column;margin-top:4px}
+      .x97-tl-row{display:flex;align-items:center;gap:13px;width:100%;padding:10px 6px;border:0;border-bottom:1px solid var(--line);background:transparent;text-align:left;border-radius:12px;transition:background .15s ease;cursor:pointer}
+      .x97-tl-row:last-child{border-bottom:0}
+      @media(hover:hover){.x97-tl-row:hover{background:var(--card2)}}
+      .x97-tl-row:active{background:var(--card2)}
+      .x97-tl-date{flex:0 0 auto;width:48px;height:54px;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--card2);border:1px solid var(--line)}
+      .x97-tl-day{font-size:21px;line-height:1;color:var(--tx)}
+      .x97-tl-mon{font-size:9px;font-weight:800;letter-spacing:.12em;color:var(--tx3);margin-top:3px}
+      .x97-tl-row.in .x97-tl-date{background:var(--posdim);border-color:transparent}
+      .x97-tl-row.in .x97-tl-day{color:var(--pos)}
+      .x97-tl-row.usd .x97-tl-date{background:var(--usddim);border-color:transparent}
+      .x97-tl-row.usd .x97-tl-day{color:var(--usd)}
+      .x97-tl-row.out .x97-tl-date{background:var(--negdim);border-color:transparent}
+      .x97-tl-row.out .x97-tl-day{color:var(--neg)}
+      .x97-tl-body{flex:1;min-width:0}
+      .x97-tl-title{font-size:13.5px;font-weight:650;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .x97-tl-sub{font-size:11px;color:var(--tx3);margin-top:4px;display:flex;align-items:center;gap:7px}
+      .x97-tl-dir{font-weight:800;font-size:9px;letter-spacing:.07em;padding:2px 7px;border-radius:99px}
+      .x97-tl-row.in .x97-tl-dir{color:var(--pos);background:var(--posdim)}
+      .x97-tl-row.usd .x97-tl-dir{color:var(--usd);background:var(--usddim)}
+      .x97-tl-row.out .x97-tl-dir{color:var(--neg);background:var(--negdim)}
+      .x97-tl-amt{flex:0 0 auto;font-size:14.5px;white-space:nowrap}
+      .x97-tl-row.in .x97-tl-amt{color:var(--pos)}
+      .x97-tl-row.usd .x97-tl-amt{color:var(--usd)}
+      .x97-tl-row.out .x97-tl-amt{color:var(--neg)}
     `;
     document.head.appendChild(style);
   }
@@ -603,14 +659,24 @@
     var out7 = events.filter(function (x) { return x.direction === "out"; }).reduce(function (s, x) { return s + x.amount; }, 0);
     var months = [0, 1, 2].map(function (offset) { var d = startOfMonth(todayDate()); d.setMonth(d.getMonth() + offset); return monthKey(d); });
     var accountRows = (doc.balances || []).map(function (b) {
-      return '<button class="x97-row" style="width:100%;border-left:0;border-right:0;border-top:0;background:transparent;text-align:left" data-x97-action="edit-account" data-id="' + attr(b.id) + '"><div class="x97-row-icon good">' + icon("bank") + '</div><div class="x97-row-main"><div class="x97-row-title">' + esc(b.account || "Account") + '</div><div class="x97-row-sub">' + esc(b.line || b.notes || "Tap to update balance") + '</div></div><div class="x97-row-value">' + money(b.balance, "UGX") + '</div></button>';
+      return '<button class="x97-row" style="width:100%;border-left:0;border-right:0;border-top:0;background:transparent;text-align:left" data-x97-action="edit-account" data-id="' + attr(b.id) + '">' + accountIconBox(b.account) + '<div class="x97-row-main"><div class="x97-row-title">' + esc(b.account || "Account") + '</div><div class="x97-row-sub">' + esc(b.line || b.notes || "Tap to update balance") + '</div></div><div class="x97-row-value">' + money(b.balance, "UGX") + '</div></button>';
     }).join("");
     var attentionRows = attention.length ? attention.map(function (x) {
       return '<button class="x97-row" style="width:100%;border-left:0;border-right:0;border-top:0;background:transparent;text-align:left" data-x97-nav="' + attr(x.nav) + '"><div class="x97-row-icon ' + esc(x.type) + '">' + icon("alert") + '</div><div class="x97-row-main"><div class="x97-row-title">' + esc(x.title) + '</div><div class="x97-row-sub">' + esc(x.sub) + '</div></div>' + icon("chevron") + '</button>';
     }).join("") : '<div class="x97-empty">' + icon("check", 25) + '<strong>Nothing urgent</strong><p>Your upcoming money, credit and budgets have no critical alerts.</p></div>';
-    var timelineRows = events.length ? events.slice(0, 6).map(function (x) {
-      return '<button class="x97-row" style="width:100%;border-left:0;border-right:0;border-top:0;background:transparent;text-align:left" data-x97-nav="' + attr(x.source === "upcoming" ? "upcoming" : x.source) + '"><div class="x97-row-icon ' + (x.direction === "in" ? (String(x.currency).toUpperCase() === "USD" ? "usd" : "good") : "bad") + '"><span style="font-size:10px;font-weight:900">' + esc(formatDate(x.date, true).toUpperCase()) + '</span></div><div class="x97-row-main"><div class="x97-row-title">' + esc(x.title) + '</div><div class="x97-row-sub">' + esc(x.direction === "in" ? "Expected in" : "Expected out") + '</div></div><div class="x97-row-value ' + (x.direction === "in" ? (String(x.currency).toUpperCase() === "USD" ? "x97-teal" : "x97-green") : "x97-red") + '">' + (x.direction === "in" ? "+" : "−") + money(x.amount, x.currency) + '</div></button>';
-    }).join("") : '<div class="x97-empty">' + icon("calendar", 25) + '<strong>No movement in the next 7 days</strong><p>Add dates to Upcoming or planned expenses to build this timeline.</p></div>';
+    var timelineRows = events.length ? '<div class="x97-timeline">' + events.slice(0, 6).map(function (x) {
+      var din = x.direction === "in";
+      var usd = String(x.currency).toUpperCase() === "USD";
+      var tone = din ? (usd ? "usd" : "in") : "out";
+      var dd = parseLocalDate(x.date);
+      var day = dd ? dd.getDate() : "";
+      var mon = dd ? dd.toLocaleDateString(undefined, { month: "short" }).toUpperCase() : "";
+      return '<button class="x97-tl-row ' + tone + '" data-x97-nav="' + attr(x.source === "upcoming" ? "upcoming" : x.source) + '">'
+        + '<div class="x97-tl-date"><span class="x97-tl-day x97-money">' + day + '</span><span class="x97-tl-mon">' + esc(mon) + '</span></div>'
+        + '<div class="x97-tl-body"><div class="x97-tl-title">' + esc(x.title) + '</div><div class="x97-tl-sub"><span class="x97-tl-dir">' + (din ? "IN" : "OUT") + '</span>' + esc(relDay(x.date)) + '</div></div>'
+        + '<div class="x97-tl-amt x97-money">' + (din ? "+" : "−") + money(x.amount, x.currency) + '</div>'
+        + '</button>';
+    }).join("") + '</div>' : '<div class="x97-empty">' + icon("calendar", 25) + '<strong>No movement in the next 7 days</strong><p>Add dates to Upcoming or planned expenses to build this timeline.</p></div>';
     var pipeline = months.map(function (key) {
       var m = monthSummary(doc, key);
       return '<button class="x97-month-card x97-card" style="text-align:left;width:100%;margin:0" data-x97-action="open-month" data-month="' + attr(key) + '"><div class="x97-month-title">' + esc(monthLabel(key, true)) + '</div><div class="x97-month-count">' + m.pending.length + ' pending · ' + m.attention + ' need attention</div><div style="margin-top:12px"><div class="x97-money" style="font-size:20px">' + money(m.ugx, "UGX", true) + '</div><div class="x97-row-sub x97-teal" style="margin-top:5px">' + money(m.usd, "USD", true) + '</div></div></button>';

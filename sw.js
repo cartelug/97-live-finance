@@ -2,8 +2,8 @@
    Network-first for the app shell so new versions actually reach every device;
    stale-while-revalidate for static assets; cache is the offline fallback only.
    Cross-origin requests (Supabase, fonts, AI APIs) are never intercepted. */
-const CACHE = "ns97-live-v20";
-const ASSETS = ["./", "./index.html", "./sync.js?v=12", "./experience-v2.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/favicon.svg", "./icons/mark-97.png"];
+const CACHE = "ns97-live-v21";
+const ASSETS = ["./", "./index.html", "./sync.js?v=12", "./experience-v2.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/favicon.svg", "./icons/mark-97.png", "./icons/brand/mtn.jpg", "./icons/brand/airtel.png", "./icons/brand/equity.png"];
 
 const FAB_PATCH = `
 ;(function(){
