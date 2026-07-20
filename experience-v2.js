@@ -25,6 +25,8 @@
   var unavailableOpen = false;
   var needsReactRefresh = false;
   var modeActive = false;
+  var remindExt = { ready: false, version: "", sending: false };
+  var remindState = { open: false, mode: "onetap", tone: "auto", useAI: false, selected: {}, drafts: {}, showAll: false, progress: {} };
 
   var state = {
     upcoming: {
@@ -240,7 +242,12 @@
       more: '<circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle>',
       trend: '<path d="m3 17 6-6 4 4 8-9"></path><path d="M15 6h6v6"></path>',
       list: '<path d="M8 6h13M8 12h13M8 18h13"></path><circle cx="4" cy="6" r="1"></circle><circle cx="4" cy="12" r="1"></circle><circle cx="4" cy="18" r="1"></circle>',
-      grid: '<rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect>'
+      grid: '<rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect>',
+      message: '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12Z"></path>',
+      phone: '<path d="M6.6 3H10l2 5-2.5 1.5a11 11 0 0 0 5 5L16 11l5 2v3.4a2 2 0 0 1-2.2 2A16 16 0 0 1 4.6 5.2 2 2 0 0 1 6.6 3Z"></path>',
+      shield: '<path d="M12 3l7 3v6c0 5-3.5 7.6-7 9-3.5-1.4-7-4-7-9V6l7-3Z"></path>',
+      bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"></path>',
+      send: '<path d="M22 2 11 13"></path><path d="M22 2 15 22l-4-9-9-4 20-7Z"></path>'
     };
     return '<svg aria-hidden="true" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' + (paths[name] || paths.more) + '</svg>';
   }
@@ -702,6 +709,7 @@
         '<section class="x97-card x97-hero"><div class="x97-hero-label">Available now</div><div class="x97-hero-value x97-money">' + money(a.cash, "UGX") + '</div><div class="x97-hero-meta"><div class="x97-stat"><span>Net position</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
         '<section><div class="x97-summary-grid"><div class="x97-card x97-summary"><div class="k">This month UGX</div><div class="v x97-money x97-green">' + money(a.ugxMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">This month USD</div><div class="v x97-money x97-teal">' + money(a.usdMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">Safe personal</div><div class="v x97-money ' + (a.expenses.personalSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.personalSafe, "", true) + '</div><div class="s">After plans</div></div><div class="x97-card x97-summary"><div class="k">Safe business</div><div class="v x97-money ' + (a.expenses.businessSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.businessSafe, "", true) + '</div><div class="s">After plans</div></div></div></section>' +
         '<section class="x97-section">' + sectionHead("Needs attention", "View Upcoming", "go-upcoming") + '<div class="x97-card x97-pad">' + attentionRows + '</div></section>' +
+        (function(){var cl=chaseList(doc);if(!cl.length)return "";var od=cl.filter(function(x){return timing(x).key==="overdue";}).length;return '<section class="x97-section">' + sectionHead("Payment reminders", "Open", "open-reminders") + '<button class="x97-card x97-pad" data-x97-action="open-reminders" style="width:100%;text-align:left;border:0;cursor:pointer;display:flex;align-items:center;gap:14px"><div class="x97-row-icon ' + (od?"bad":"warn") + '">' + icon("message") + '</div><div style="flex:1;min-width:0"><div class="x97-row-title">' + (od?od + " overdue to chase":cl.length + " due soon") + '</div><div class="x97-row-sub">Send WhatsApp reminders from a template' + (remindExt.ready?" · sender connected":"") + '</div></div>' + icon("chevron") + '</button></section>';})() +
         '<section class="x97-section">' + sectionHead("Next 7 days") + '<div class="x97-card x97-pad"><div class="x97-hero-meta" style="margin-bottom:4px"><div class="x97-stat"><span>Expected in</span><b class="x97-green">' + money(in7, "UGX") + '</b></div><div class="x97-stat"><span>Expected out</span><b class="x97-red">' + money(out7, "UGX") + '</b></div></div>' + timelineRows + '</div></section>' +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Accounts", "Add account", "add-account") + '<div class="x97-card x97-pad">' + (accountRows || '<div class="x97-empty"><strong>No accounts yet</strong><p>Add your bank, mobile money or cash balance.</p></div>') + '</div></section>' +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Incoming pipeline", "View all months", "go-upcoming-months") + '<div class="x97-grid x97-pipeline">' + pipeline + '</div></section>' +
@@ -957,6 +965,7 @@
       field("Category", '<select class="x97-select" name="category">' + categories.map(function(x){return option(x,x,item.category);}).join("") + '</select>') +
       field("Status", '<select class="x97-select" name="status">' + statuses.map(function(x){return option(x,x,item.status);}).join("") + '</select>') + '</div>' +
       '<div class="x97-fields-2">' + field("Amount", '<input class="x97-input" name="amount" inputmode="decimal" type="number" min="0" step="1" value="' + attr(item.amount) + '" placeholder="0">') + field("Currency", '<select class="x97-select" name="currency">' + option("UGX","UGX",item.currency) + option("USD","USD",item.currency) + '</select>') + '</div>' +
+      field("WhatsApp number", '<input class="x97-input" name="phone" inputmode="tel" value="' + attr(item.phone || "") + '" placeholder="e.g. 0772 123 456">', "Used to send payment reminders. Local (0772…) or full (+256772…) both work.") +
       field("Expected date", '<input class="x97-input" name="expectedBy" type="date" value="' + attr(item.expectedBy) + '"><div class="x97-chips" style="padding-top:7px"><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="0">Today</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="7">+7 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="30">+30 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-value="month-end">Month end</button></div>') +
       field("Note", '<textarea class="x97-textarea" name="note" maxlength="500" placeholder="Invoice, follow-up context, or next action">' + esc(item.note) + '</textarea>') + '</form>';
     var foot = (existing ? '<button class="x97-btn danger" data-x97-action="delete-upcoming" data-id="' + attr(item.id) + '">' + icon("trash") + ' Delete</button>' : '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button>') + '<button class="x97-btn primary" type="submit" form="x97-upcoming-form">' + icon("check") + (existing ? " Save changes" : " Add upcoming") + '</button>';
@@ -1049,8 +1058,356 @@
 
   function submitUpcoming(form) {
     var v=formValues(form), id=v.id||uid("fu");
-    updateDoc(function(doc){var i=doc.followups.findIndex(function(x){return String(x.id)===String(id);});var item={id:id,client:v.client.trim(),category:v.category,amount:roundMoney(v.amount),currency:v.currency,status:v.status,expectedBy:v.expectedBy,note:v.note.trim()};if(i>=0)doc.followups[i]=Object.assign({},doc.followups[i],item);else doc.followups.unshift(item);},"upcoming-save");
-    closeSheet();
+    updateDoc(function(doc){var i=doc.followups.findIndex(function(x){return String(x.id)===String(id);});var item={id:id,client:v.client.trim(),category:v.category,amount:roundMoney(v.amount),currency:v.currency,status:v.status,expectedBy:v.expectedBy,phone:(v.phone||"").trim(),note:v.note.trim()};if(i>=0)doc.followups[i]=Object.assign({},doc.followups[i],item);else doc.followups.unshift(item);},"upcoming-save");
+    closeSheet(); if(remindState.open) refreshRemind();
+  }
+
+  /* ============================ WhatsApp payment reminders ============================ */
+
+  function readAiCfg() {
+    try { var e = localStorage.getItem("ns97-ai-cfg-v1"); var t = e ? JSON.parse(e) : {}; return { apiKey: t.apiKey || "", model: t.model || "claude-haiku-4-5-20251001" }; }
+    catch (_) { return { apiKey: "", model: "claude-haiku-4-5-20251001" }; }
+  }
+
+  function firstName(value) { var s = String(value == null ? "" : value).trim(); if (!s) return "there"; var m = s.split(/[\s\-—,:/|]+/)[0]; return m || s; }
+  function prettyPhone(p) { return String(p == null ? "" : p).trim(); }
+
+  function waCountry(doc) { return String((doc.settings && doc.settings.countryCode) || "256").replace(/\D/g, "") || "256"; }
+  function waNumber(phone, doc) {
+    var raw = String(phone == null ? "" : phone).trim();
+    if (!raw) return "";
+    if (raw.charAt(0) === "+") return raw.replace(/\D/g, "");
+    var d = raw.replace(/\D/g, ""); if (!d) return "";
+    var cc = waCountry(doc);
+    if (d.indexOf(cc) === 0 && d.length >= cc.length + 8) return d;
+    if (d.charAt(0) === "0") return cc + d.slice(1);
+    if (d.length === 9) return cc + d;
+    return d;
+  }
+  function hasWa(item, doc) { return waNumber(item.phone, doc).length >= 10; }
+
+  function defaultTemplates() {
+    return [
+      { id: "t-friendly", name: "Friendly nudge", tone: "friendly", body: "Hi {name}, hope you're doing well! 🙏 Just a gentle reminder about {amount} for {project} (due {date}). Whenever you get a chance to sort it out, I'd really appreciate it. Thank you! — {you}" },
+      { id: "t-followup", name: "Follow-up", tone: "followup", body: "Hi {name}, following up on {amount} for {project} — it's now {days} days past the {date} due date. Could you let me know when I can expect payment? Happy to resend the details if that helps. Thanks — {you}" },
+      { id: "t-firm", name: "Firm final notice", tone: "firm", body: "Hi {name}, this is a final reminder that {amount} for {project} is now {days} days overdue (was due {date}). Please arrange payment at your earliest convenience, or reply with a date you can commit to. Thank you — {you}" }
+    ];
+  }
+  function allTemplates(doc) { var t = doc.settings && doc.settings.reminderTemplates; return (t && t.length) ? t : defaultTemplates(); }
+  function templateForTone(doc, tone) { var list = allTemplates(doc); var hit = list.find(function (x) { return x.tone === tone; }); return (hit || list[0]).body; }
+
+  function autoTone(item) { var t = timing(item); if (t.days != null && t.days < 0) { return Math.abs(t.days) > 14 ? "firm" : "followup"; } return "friendly"; }
+
+  function fillTemplate(body, item, doc) {
+    var cur = String(item.currency || "UGX").toUpperCase();
+    var t = timing(item); var late = (t.days != null && t.days < 0) ? Math.abs(t.days) : 0;
+    var map = {
+      "{name}": firstName(item.client),
+      "{project}": item.client || "the project",
+      "{amount}": num(item.amount) ? money(item.amount, cur) : "the outstanding amount",
+      "{currency}": cur,
+      "{date}": item.expectedBy ? formatDate(item.expectedBy, false) : "the agreed date",
+      "{days}": String(late),
+      "{you}": (doc.settings && doc.settings.senderName) || "97 LIVE"
+    };
+    return String(body).replace(/\{name\}|\{project\}|\{amount\}|\{currency\}|\{date\}|\{days\}|\{you\}/g, function (k) { return map[k]; });
+  }
+
+  function messageFor(item, doc) {
+    if (remindState.drafts[item.id] != null) return remindState.drafts[item.id];
+    var tone = remindState.tone === "auto" ? autoTone(item) : remindState.tone;
+    return fillTemplate(templateForTone(doc, tone), item, doc);
+  }
+
+  function chaseList(doc) {
+    return (doc.followups || []).filter(isOpenFollowup).filter(function (x) {
+      var t = timing(x); return t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7);
+    }).sort(function (a, b) {
+      var ta = timing(a), tb = timing(b);
+      function rank(t) { if (t.key === "overdue") return 0; if (t.key === "today") return 1; return 2; }
+      var r = rank(ta) - rank(tb); if (r) return r;
+      var da = ta.days == null ? 999 : ta.days, db = tb.days == null ? 999 : tb.days;
+      if (da !== db) return da - db;
+      return num(b.amount) - num(a.amount);
+    });
+  }
+  function chaseSendable(doc) { return chaseList(doc).filter(function (x) { return hasWa(x, doc); }); }
+  function selectedItems(doc) { return chaseList(doc).filter(function (x) { return remindState.selected[x.id]; }); }
+  function selectedSendable(doc) { return selectedItems(doc).filter(function (x) { return hasWa(x, doc); }); }
+
+  function safety(doc) {
+    var s = (doc.settings && doc.settings.waSafety) || {};
+    return {
+      dailyCap: num(s.dailyCap) || 40, minDelay: num(s.minDelay) || 45, maxDelay: num(s.maxDelay) || 120,
+      batchSize: num(s.batchSize) || 8, batchBreak: num(s.batchBreak) || 10,
+      quietStart: s.quietStart || "21:00", quietEnd: s.quietEnd || "08:00",
+      warmup: s.warmup !== false, knownOnly: !!s.knownOnly
+    };
+  }
+
+  function remindSentToday(doc) {
+    var now = new Date(); var key = now.getFullYear() + "-" + now.getMonth() + "-" + now.getDate();
+    return (doc.reminderLog || []).filter(function (r) { var d = new Date(r.at); return (d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate()) === key; }).length;
+  }
+
+  function markReminded(id, mode) {
+    updateDoc(function (doc) {
+      var x = (doc.followups || []).find(function (i) { return String(i.id) === String(id); });
+      if (x) { x.lastRemindedAt = new Date().toISOString(); x.reminderCount = num(x.reminderCount) + 1; }
+      doc.reminderLog = (doc.reminderLog || []).concat([{ at: new Date().toISOString(), id: String(id), mode: mode || "onetap" }]);
+      var cut = Date.now() - 7 * 86400000;
+      doc.reminderLog = doc.reminderLog.filter(function (r) { return new Date(r.at).getTime() > cut; });
+    }, "reminder-sent");
+  }
+
+  function relFromISO(iso) {
+    var d = new Date(iso).getTime(); if (!isFinite(d)) return "";
+    var s = Math.round((Date.now() - d) / 1000);
+    if (s < 60) return "just now"; if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago"; return Math.floor(s / 86400) + "d ago";
+  }
+  function progLabel(p) { return ({ queued: "Queued", sending: "Sending…", typing: "Typing…", sent: "Sent ✓", error: "Failed", skipped: "Skipped", paused: "Paused" })[p] || p; }
+  function safeJson(text) { try { return JSON.parse(text); } catch (_) {} var a = text.indexOf("{"), b = text.lastIndexOf("}"); if (a >= 0 && b > a) { try { return JSON.parse(text.slice(a, b + 1)); } catch (_) {} } return null; }
+
+  function openReminders() {
+    injectRemindCSS();
+    remindState.open = true; remindState.progress = {};
+    var doc = readDoc();
+    if (doc) chaseSendable(doc).forEach(function (x) { if (timing(x).key === "overdue" && !x.lastRemindedAt) remindState.selected[x.id] = true; });
+    var el = document.getElementById("x97-remind");
+    if (!el) { el = document.createElement("div"); el.id = "x97-remind"; el.className = "x97-remind-overlay"; document.body.appendChild(el); wireRemind(el); }
+    document.body.classList.add("x97-remind-lock");
+    refreshRemind();
+  }
+  function closeReminders() { remindState.open = false; var el = document.getElementById("x97-remind"); if (el) el.remove(); document.body.classList.remove("x97-remind-lock"); }
+  function refreshRemind() { var el = document.getElementById("x97-remind"); if (!el || !remindState.open) return; var doc = readDoc(); if (!doc) return; el.innerHTML = remindOverlayHTML(doc); }
+
+  function remindRow(item, doc) {
+    var t = timing(item), sel = !!remindState.selected[item.id], wa = hasWa(item, doc);
+    var cur = String(item.currency || "UGX").toUpperCase();
+    var prog = remindState.progress[item.id];
+    var phoneHTML = wa
+      ? '<span class="x97-pill">' + icon("phone", 12) + esc(prettyPhone(item.phone)) + '</span>'
+      : '<button type="button" class="x97-pill" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '" style="cursor:pointer;border:1px dashed var(--line2)">' + icon("plus", 12) + ' Add number</button>';
+    var reminded = item.lastRemindedAt ? '<span class="x97-pill good">' + icon("check", 12) + 'Reminded ' + esc(relFromISO(item.lastRemindedAt)) + '</span>' : '';
+    var progHTML = prog ? '<span class="x97-pill ' + (prog === "sent" ? "good" : prog === "error" ? "bad" : "warn") + '">' + esc(progLabel(prog)) + '</span>' : '';
+    return '<div class="x97-rm-item' + (sel ? ' on' : '') + (wa ? '' : ' nowa') + '" data-id="' + attr(item.id) + '">' +
+      '<div class="x97-rm-head"><label class="x97-rm-pick"><input type="checkbox" class="x97-rm-check" data-id="' + attr(item.id) + '" ' + (sel ? 'checked' : '') + (wa ? '' : ' disabled') + '></label>' +
+      '<div class="x97-rm-body"><div class="x97-rm-top"><span class="x97-rm-name">' + esc(item.client || "Untitled") + '</span><span class="x97-rm-amt x97-money">' + (num(item.amount) ? money(item.amount, cur) : "—") + '</span></div>' +
+      '<div class="x97-rm-tags"><span class="x97-pill ' + esc(t.cls) + '">' + icon("clock", 12) + esc(t.label) + '</span>' + phoneHTML + reminded + progHTML + '</div></div></div>' +
+      (sel && wa ? '<textarea class="x97-rm-msg" data-id="' + attr(item.id) + '" rows="4">' + esc(messageFor(item, doc)) + '</textarea>' : '') +
+      '</div>';
+  }
+
+  function remindOverlayHTML(doc) {
+    var list = chaseList(doc), sendableN = selectedSendable(doc).length;
+    var sent = remindSentToday(doc), cap = safety(doc).dailyCap;
+    var pct = Math.min(100, Math.round(sent / Math.max(1, cap) * 100));
+    var meterCls = sent >= cap ? "bad" : (sent >= cap * 0.8 ? "warn" : "ok");
+    var rows = list.length ? list.map(function (x) { return remindRow(x, doc); }).join("")
+      : '<div class="x97-empty" style="padding:34px 16px"><strong>Nothing to chase 🎉</strong><p>No receivables are overdue or due within 7 days. This list fills up automatically as dates pass.</p></div>';
+    var toneSel = '<select class="x97-rm-tone x97-select" style="min-height:38px;width:auto">' +
+      option("auto", "Tone: Auto", remindState.tone) + option("friendly", "Tone: Friendly", remindState.tone) +
+      option("followup", "Tone: Follow-up", remindState.tone) + option("firm", "Tone: Firm", remindState.tone) + '</select>';
+    var modeSeg = '<div class="x97-rm-seg"><button data-rm="mode-onetap" class="' + (remindState.mode === "onetap" ? "on" : "") + '">One-tap</button><button data-rm="mode-auto" class="' + (remindState.mode === "auto" ? "on" : "") + '">Auto</button></div>';
+    var aiToggle = '<label class="x97-rm-ai-wrap"><input type="checkbox" class="x97-rm-ai" ' + (remindState.useAI ? "checked" : "") + '>' + icon("bolt", 14) + ' AI-personalise' + (remindState.aiBusy ? ' …' : '') + '</label>';
+    var footPrimary;
+    if (remindState.mode === "auto") {
+      footPrimary = remindExt.ready
+        ? '<button class="x97-btn primary" data-rm="send-auto" ' + (sendableN ? '' : 'disabled') + '>' + icon("send") + ' Send automatically (' + sendableN + ')</button>'
+        : '<button class="x97-btn primary" disabled style="opacity:.55">Sender extension not detected</button>';
+    } else {
+      footPrimary = '<button class="x97-btn primary" data-rm="send-onetap" ' + (sendableN ? '' : 'disabled') + '>' + icon("message") + ' Open next in WhatsApp (' + sendableN + ')</button>';
+    }
+    var autoHint = (remindState.mode === "auto" && !remindExt.ready)
+      ? '<div class="x97-rm-hint">' + icon("shield", 14) + '<div>Auto mode needs the free <b>97 Sender</b> browser extension (Chrome/Edge). Install it, keep <b>web.whatsapp.com</b> open in a tab, and this turns on. Until then use <b>One-tap</b> — it works right now.</div></div>' : '';
+    return '<div class="x97-remind-panel">' +
+      '<header class="x97-rm-header"><div class="x97-rm-htop"><div><div class="x97-rm-title">' + icon("message", 18) + ' Payment reminders</div><div class="x97-rm-sub">' + list.length + ' to chase · ' + chaseSendable(doc).length + ' with a number</div></div><button class="x97-rm-close" data-rm="close">' + icon("close") + '</button></div>' +
+      '<div class="x97-rm-meter ' + meterCls + '"><div class="x97-rm-meter-bar" style="width:' + pct + '%"></div><span>Sent today ' + sent + ' / ' + cap + '</span><em class="' + (remindExt.ready ? "ok" : "") + '">' + (remindExt.ready ? "Sender connected" : "Sender off") + '</em></div></header>' +
+      '<div class="x97-rm-toolbar">' + toneSel + aiToggle + '<span class="x97-rm-spacer"></span>' + modeSeg + '<button class="x97-rm-tool" data-rm="templates">' + icon("edit", 14) + ' Templates</button><button class="x97-rm-tool" data-rm="safety">' + icon("shield", 14) + ' Safety</button></div>' +
+      '<div class="x97-rm-selrow"><button class="x97-rm-link" data-rm="select-all">Select all</button><button class="x97-rm-link" data-rm="select-none">Clear</button><span class="x97-rm-selcount">' + Object.keys(remindState.selected).length + ' selected</span></div>' +
+      autoHint + '<div class="x97-rm-list">' + rows + '</div>' +
+      '<footer class="x97-rm-footer">' + footPrimary + '</footer></div>';
+  }
+
+  function wireRemind(el) {
+    el.addEventListener("click", function (e) {
+      var seg = e.target.closest && e.target.closest("[data-rm]");
+      if (seg && el.contains(seg)) { onRemindAction(seg.dataset.rm); }
+    });
+    el.addEventListener("change", function (e) {
+      var t = e.target;
+      if (t.classList.contains("x97-rm-check")) { var id = t.dataset.id; if (t.checked) remindState.selected[id] = true; else delete remindState.selected[id]; refreshRemind(); return; }
+      if (t.classList.contains("x97-rm-tone")) { remindState.tone = t.value; refreshRemind(); return; }
+      if (t.classList.contains("x97-rm-ai")) { remindState.useAI = t.checked; if (t.checked) draftWithAI(readDoc()); else { remindState.drafts = {}; refreshRemind(); } return; }
+    });
+    el.addEventListener("input", function (e) { var t = e.target; if (t.classList.contains("x97-rm-msg")) remindState.drafts[t.dataset.id] = t.value; });
+  }
+
+  function onRemindAction(a) {
+    var doc = readDoc();
+    if (a === "close") return closeReminders();
+    if (a === "select-all") { chaseSendable(doc).forEach(function (x) { remindState.selected[x.id] = true; }); return refreshRemind(); }
+    if (a === "select-none") { remindState.selected = {}; return refreshRemind(); }
+    if (a === "mode-onetap") { remindState.mode = "onetap"; return refreshRemind(); }
+    if (a === "mode-auto") { remindState.mode = "auto"; return refreshRemind(); }
+    if (a === "templates") return openTemplateManager();
+    if (a === "safety") return openSafetySettings();
+    if (a === "send-onetap") return sendOneTapNext();
+    if (a === "send-auto") return sendAuto(doc);
+  }
+
+  function sendOneTapNext() {
+    var doc = readDoc(); if (!doc) return;
+    var list = selectedSendable(doc);
+    if (!list.length) { toast("Select someone with a WhatsApp number", "error"); return; }
+    var item = list[0];
+    var url = "https://wa.me/" + waNumber(item.phone, doc) + "?text=" + encodeURIComponent(messageFor(item, doc));
+    window.open(url, "_blank");
+    markReminded(item.id, "onetap");
+    delete remindState.selected[item.id];
+    remindState.progress[item.id] = "sent";
+    refreshRemind();
+  }
+
+  function sendAuto(doc) {
+    if (!remindExt.ready) { toast("Install the 97 Sender extension first", "error"); return; }
+    var jobs = selectedSendable(doc).map(function (item) { return { id: String(item.id), phone: waNumber(item.phone, doc), name: firstName(item.client), message: messageFor(item, doc) }; });
+    if (!jobs.length) { toast("Select at least one client with a number", "error"); return; }
+    jobs.forEach(function (j) { remindState.progress[j.id] = "queued"; });
+    remindExt.sending = true;
+    window.postMessage({ source: "x97-wa-app", type: "enqueue", jobs: jobs, safety: safety(doc) }, "*");
+    refreshRemind();
+    toast("Sending " + jobs.length + " reminder" + (jobs.length === 1 ? "" : "s") + " — keep WhatsApp Web open", "");
+  }
+
+  function draftWithAI(doc) {
+    doc = doc || readDoc(); if (!doc) return;
+    var cfg = readAiCfg();
+    if (!cfg.apiKey) { toast("Add your Anthropic key in Settings to draft with AI", "error"); remindState.useAI = false; return refreshRemind(); }
+    var items = selectedSendable(doc); if (!items.length) items = chaseSendable(doc);
+    items = items.slice(0, 25);
+    if (!items.length) { toast("Nothing to draft", "error"); return; }
+    remindState.aiBusy = true; refreshRemind();
+    toast("Drafting " + items.length + " message" + (items.length === 1 ? "" : "s") + " with AI…", "");
+    var sender = (doc.settings && doc.settings.senderName) || "97 LIVE";
+    var payload = items.map(function (x) { var t = timing(x); return { id: String(x.id), name: firstName(x.client), project: x.client || "", amount: num(x.amount) ? money(x.amount, String(x.currency || "UGX").toUpperCase()) : "the outstanding amount", due: x.expectedBy ? formatDate(x.expectedBy, false) : "the agreed date", daysOverdue: (t.days != null && t.days < 0) ? Math.abs(t.days) : 0, tone: autoTone(x) }; });
+    var sys = "You are the credit-control assistant for " + sender + ". Write short, warm, professional WhatsApp payment reminders in the sender's voice. One message per client. Vary the wording so no two are identical. Keep each to 2-4 sentences with a polite, specific ask. Use the client's first name. Use at most one emoji, sparingly. No markdown, no bullet points. Sign off as " + sender + ". Match the tone field: friendly = light gentle nudge; followup = clear check-in; firm = final but respectful.";
+    var user = "Return ONLY a JSON object mapping each id to its message string — no other text. Clients:\n" + JSON.stringify(payload);
+    fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "content-type": "application/json", "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }, body: JSON.stringify({ model: cfg.model, max_tokens: 1800, system: sys, messages: [{ role: "user", content: user }] }) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var text = (d && d.content && d.content[0] && d.content[0].text) || "";
+        var obj = safeJson(text); if (!obj) throw new Error("parse");
+        Object.keys(obj).forEach(function (id) { if (typeof obj[id] === "string") remindState.drafts[id] = obj[id].trim(); });
+        remindState.useAI = true; remindState.aiBusy = false; toast("AI drafts ready — edit any before sending", ""); refreshRemind();
+      })
+      .catch(function () { remindState.aiBusy = false; remindState.useAI = false; toast("AI draft failed — using templates instead", "error"); refreshRemind(); });
+  }
+
+  function openTemplateManager() {
+    var doc = readDoc(); var byTone = function (tone) { var list = allTemplates(doc); var hit = list.find(function (x) { return x.tone === tone; }); return hit ? hit.body : ""; };
+    var body = '<form id="x97-tpl-form" data-x97-form="reminder-templates">' +
+      '<div class="x97-help" style="margin-bottom:12px">Slots you can drop into any message: <b>{name}</b> · {project} · {amount} · {currency} · {date} · {days} · {you}</div>' +
+      field("Your sign-off name", '<input class="x97-input" name="senderName" value="' + attr((doc.settings && doc.settings.senderName) || "") + '" placeholder="e.g. Zah · 97 LIVE">') +
+      field("Country code", '<input class="x97-input" name="countryCode" inputmode="numeric" value="' + attr(waCountry(doc)) + '" placeholder="256">', "Digits only. 256 = Uganda. Local numbers starting with 0 are converted automatically.") +
+      field("Friendly nudge", '<textarea class="x97-textarea" name="friendly" rows="3">' + esc(byTone("friendly")) + '</textarea>') +
+      field("Follow-up", '<textarea class="x97-textarea" name="followup" rows="3">' + esc(byTone("followup")) + '</textarea>') +
+      field("Firm final notice", '<textarea class="x97-textarea" name="firm" rows="3">' + esc(byTone("firm")) + '</textarea>') + '</form>';
+    var foot = '<button class="x97-btn" data-x97-action="reset-templates">Reset defaults</button><button class="x97-btn primary" type="submit" form="x97-tpl-form">' + icon("check") + ' Save templates</button>';
+    openSheet("Reminder templates", body, foot);
+  }
+  function submitTemplates(form) {
+    var v = formValues(form), d = defaultTemplates();
+    updateDoc(function (doc) {
+      doc.settings = doc.settings || {};
+      doc.settings.senderName = (v.senderName || "").trim();
+      doc.settings.countryCode = (v.countryCode || "256").replace(/\D/g, "") || "256";
+      doc.settings.reminderTemplates = [
+        { id: "t-friendly", name: "Friendly nudge", tone: "friendly", body: (v.friendly || "").trim() || d[0].body },
+        { id: "t-followup", name: "Follow-up", tone: "followup", body: (v.followup || "").trim() || d[1].body },
+        { id: "t-firm", name: "Firm final notice", tone: "firm", body: (v.firm || "").trim() || d[2].body }
+      ];
+    }, "reminder-templates");
+    closeSheet(); if (remindState.open) refreshRemind();
+  }
+
+  function openSafetySettings() {
+    var doc = readDoc(); var s = safety(doc);
+    var body = '<form id="x97-safety-form" data-x97-form="wa-safety">' +
+      '<div class="x97-help" style="margin-bottom:12px">These keep automated sending looking human so your number stays safe. They apply to <b>Auto</b> mode.</div>' +
+      '<div class="x97-fields-2">' + field("Daily send cap", '<input class="x97-input" type="number" min="1" name="dailyCap" value="' + attr(s.dailyCap) + '">') + field("Warm-up ramp", '<select class="x97-select" name="warmup">' + option("true", "On — start slow", String(s.warmup)) + option("false", "Off", String(s.warmup)) + '</select>') + '</div>' +
+      '<div class="x97-fields-2">' + field("Min gap (seconds)", '<input class="x97-input" type="number" min="5" name="minDelay" value="' + attr(s.minDelay) + '">') + field("Max gap (seconds)", '<input class="x97-input" type="number" min="10" name="maxDelay" value="' + attr(s.maxDelay) + '">') + '</div>' +
+      '<div class="x97-fields-2">' + field("Batch size", '<input class="x97-input" type="number" min="1" name="batchSize" value="' + attr(s.batchSize) + '">') + field("Break after batch (min)", '<input class="x97-input" type="number" min="0" name="batchBreak" value="' + attr(s.batchBreak) + '">') + '</div>' +
+      '<div class="x97-fields-2">' + field("Quiet hours from", '<input class="x97-input" type="time" name="quietStart" value="' + attr(s.quietStart) + '">') + field("Quiet hours to", '<input class="x97-input" type="time" name="quietEnd" value="' + attr(s.quietEnd) + '">') + '</div>' +
+      field("Only known contacts", '<select class="x97-select" name="knownOnly">' + option("false", "No — send to any number", String(s.knownOnly)) + option("true", "Yes — safest, skip unsaved", String(s.knownOnly)) + '</select>') + '</form>';
+    var foot = '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button><button class="x97-btn primary" type="submit" form="x97-safety-form">' + icon("check") + ' Save safety settings</button>';
+    openSheet("Sending safety", body, foot);
+  }
+  function submitSafety(form) {
+    var v = formValues(form);
+    updateDoc(function (doc) { doc.settings = doc.settings || {}; doc.settings.waSafety = { dailyCap: num(v.dailyCap) || 40, minDelay: num(v.minDelay) || 45, maxDelay: num(v.maxDelay) || 120, batchSize: num(v.batchSize) || 8, batchBreak: num(v.batchBreak) || 10, quietStart: v.quietStart || "21:00", quietEnd: v.quietEnd || "08:00", warmup: v.warmup !== "false", knownOnly: v.knownOnly === "true" }; }, "wa-safety");
+    closeSheet(); if (remindState.open) refreshRemind();
+  }
+
+  function handleExtProgress(d) {
+    if (!d.id) return;
+    remindState.progress[d.id] = d.status;
+    if (d.status === "sent") { markReminded(d.id, "auto"); delete remindState.selected[d.id]; }
+    if (remindState.open) refreshRemind();
+  }
+  function initRemindBridge() {
+    window.addEventListener("message", function (ev) {
+      if (ev.source !== window) return;
+      var d = ev.data; if (!d || d.source !== "x97-wa-ext") return;
+      if (d.type === "ready") { remindExt.ready = true; remindExt.version = d.version || ""; if (remindState.open) refreshRemind(); }
+      else if (d.type === "progress") handleExtProgress(d);
+      else if (d.type === "done") { remindExt.sending = false; if (remindState.open) refreshRemind(); toast("Reminder run finished", ""); }
+      else if (d.type === "paused") { remindExt.sending = false; if (remindState.open) refreshRemind(); }
+    });
+    try { window.postMessage({ source: "x97-wa-app", type: "hello" }, "*"); } catch (_) {}
+  }
+
+  function injectRemindCSS() {
+    if (document.getElementById("x97-remind-css")) return;
+    var css = ".x97-remind-lock{overflow:hidden}" +
+      ".x97-remind-overlay{position:fixed;inset:0;z-index:120;background:rgba(6,10,14,.55);backdrop-filter:blur(4px);display:flex;align-items:flex-end;justify-content:center}" +
+      "@media(min-width:760px){.x97-remind-overlay{align-items:center;padding:24px}}" +
+      ".x97-remind-panel{background:var(--bg);width:100%;max-width:640px;max-height:94vh;border-radius:22px 22px 0 0;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 -12px 44px rgba(0,0,0,.34)}" +
+      "@media(min-width:760px){.x97-remind-panel{border-radius:22px;max-height:88vh}}" +
+      ".x97-rm-header{padding:15px 15px 12px;border-bottom:1px solid var(--line);background:var(--card)}" +
+      ".x97-rm-htop{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}" +
+      ".x97-rm-title{display:flex;align-items:center;gap:8px;font-size:17px;font-weight:850;color:var(--tx)}" +
+      ".x97-rm-sub{font-size:11.5px;color:var(--tx3);margin-top:3px}" +
+      ".x97-rm-close{background:var(--card2);border:1px solid var(--line);border-radius:11px;width:38px;height:38px;min-width:38px;display:flex;align-items:center;justify-content:center;color:var(--tx2);cursor:pointer}" +
+      ".x97-rm-meter{position:relative;margin-top:12px;height:26px;border-radius:9px;background:var(--card2);border:1px solid var(--line);overflow:hidden;display:flex;align-items:center}" +
+      ".x97-rm-meter span{position:relative;z-index:1;font-size:10px;font-weight:850;color:var(--tx);padding-left:10px;text-transform:uppercase;letter-spacing:.05em}" +
+      ".x97-rm-meter em{position:relative;z-index:1;margin-left:auto;padding-right:10px;font-style:normal;font-size:10px;font-weight:800;color:var(--tx3)}" +
+      ".x97-rm-meter em.ok{color:var(--pos)}" +
+      ".x97-rm-meter-bar{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,var(--pos),var(--pos2));opacity:.3}" +
+      ".x97-rm-meter.warn .x97-rm-meter-bar{background:var(--warn);opacity:.4}.x97-rm-meter.bad .x97-rm-meter-bar{background:var(--neg);opacity:.45}" +
+      ".x97-rm-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--line)}" +
+      ".x97-rm-spacer{flex:1 1 auto}" +
+      ".x97-rm-ai-wrap{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:750;color:var(--tx);cursor:pointer}.x97-rm-ai{accent-color:var(--pos);width:16px;height:16px}" +
+      ".x97-rm-seg{display:inline-flex;background:var(--card2);border:1px solid var(--line);border-radius:10px;overflow:hidden}" +
+      ".x97-rm-seg button{border:0;background:transparent;padding:7px 13px;font-size:12px;font-weight:800;color:var(--tx3);cursor:pointer}.x97-rm-seg button.on{background:var(--pos);color:#fff}" +
+      ".x97-rm-tool{display:inline-flex;align-items:center;gap:5px;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:11.5px;font-weight:750;color:var(--tx2);cursor:pointer}" +
+      ".x97-rm-selrow{display:flex;align-items:center;gap:14px;padding:9px 15px}" +
+      ".x97-rm-link{background:0;border:0;color:var(--pos);font-weight:800;font-size:12px;cursor:pointer;padding:0}" +
+      ".x97-rm-selcount{margin-left:auto;font-size:11px;color:var(--tx3);font-weight:700}" +
+      ".x97-rm-hint{margin:0 13px 10px;padding:11px 12px;background:var(--card2);border:1px solid var(--line2);border-radius:12px;font-size:11.5px;line-height:1.55;color:var(--tx2);display:flex;gap:8px;align-items:flex-start}" +
+      ".x97-rm-list{flex:1 1 auto;overflow-y:auto;padding:6px 12px 12px}" +
+      ".x97-rm-item{border:1px solid var(--line);border-radius:14px;padding:11px 12px;margin-bottom:9px;background:var(--card)}" +
+      ".x97-rm-item.on{border-color:var(--pos);box-shadow:var(--ring)}.x97-rm-item.nowa{opacity:.9}" +
+      ".x97-rm-head{display:flex;gap:11px;align-items:flex-start}.x97-rm-pick{padding-top:1px}.x97-rm-check{width:20px;height:20px;accent-color:var(--pos)}" +
+      ".x97-rm-body{flex:1;min-width:0}" +
+      ".x97-rm-top{display:flex;justify-content:space-between;gap:10px;align-items:baseline}" +
+      ".x97-rm-name{font-size:14px;font-weight:800;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+      ".x97-rm-amt{font-size:14px;font-weight:800;white-space:nowrap}" +
+      ".x97-rm-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}" +
+      ".x97-rm-msg{width:100%;margin-top:10px;border:1px solid var(--line2);border-radius:11px;background:var(--card2);color:var(--tx);padding:10px;font-size:12.5px;line-height:1.5;resize:vertical;min-height:74px;font-family:inherit}" +
+      ".x97-rm-footer{padding:12px 14px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--card)}.x97-rm-footer .x97-btn{width:100%;justify-content:center}";
+    var s = document.createElement("style"); s.id = "x97-remind-css"; s.textContent = css; document.head.appendChild(s);
   }
 
   function submitFilters(form) {
@@ -1079,7 +1436,7 @@
   }
 
   document.addEventListener("submit", function (e) {
-    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="filters")submitFilters(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);
+    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="filters")submitFilters(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);
   });
 
   document.addEventListener("input", function (e) {
@@ -1095,6 +1452,8 @@
     var navTarget=e.target.closest && e.target.closest("[data-x97-nav]");if(navTarget){var target=navTarget.dataset.x97Nav;var item=findNavItem(target);if(item)item.click();return;}
     var btn=e.target.closest && e.target.closest("[data-x97-action]");if(!btn)return;var action=btn.dataset.x97Action;
     if(action==="close-sheet"){closeSheet();return;}
+    if(action==="open-reminders"){openReminders();return;}
+    if(action==="reset-templates"){updateDoc(function(doc){if(doc.settings)doc.settings.reminderTemplates=null;},"reminder-templates-reset");closeSheet();openTemplateManager();return;}
     if(action==="add-upcoming"){openUpcomingForm();return;}
     if(action==="edit-upcoming"){e.stopPropagation();openUpcomingForm(btn.dataset.id);return;}
     if(action==="mark-paid"){e.stopPropagation();updateDoc(function(doc){var x=doc.followups.find(function(i){return String(i.id)===String(btn.dataset.id);});if(x)x.status="Paid";},"upcoming-paid");return;}
@@ -1139,7 +1498,7 @@
   }
 
   function boot() {
-    injectCSS();loadPrefs();resumeOriginalTab();
+    injectCSS();loadPrefs();resumeOriginalTab();initRemindBridge();
     var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
     var observer=new MutationObserver(function(mutations){
       var relevant=mutations.some(function(m){

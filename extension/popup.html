@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light dark; }
+  body { width: 268px; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #0e141b; color: #e8eef5; }
+  .head { padding: 14px 15px 10px; border-bottom: 1px solid #1f2a35; }
+  .head b { font-size: 14px; }
+  .head span { display: block; font-size: 11px; color: #7d8a97; margin-top: 2px; }
+  .body { padding: 13px 15px; }
+  .stat { display: flex; justify-content: space-between; font-size: 12.5px; padding: 5px 0; }
+  .stat b { font-variant-numeric: tabular-nums; }
+  .bar { height: 7px; border-radius: 6px; background: #1f2a35; overflow: hidden; margin: 8px 0 12px; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg,#17a468,#0e7548); }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  button { flex: 1; padding: 9px; border-radius: 9px; border: 1px solid #26333f; background: #121820; color: #e8eef5; font-weight: 700; font-size: 12px; cursor: pointer; }
+  button.stop { border-color: #5b2327; color: #ff8a8f; }
+  .pill { font-size: 11px; padding: 3px 8px; border-radius: 7px; background: #121820; border: 1px solid #26333f; color: #7d8a97; }
+  .pill.on { color: #17a468; border-color: #17a46855; }
+  .idle { font-size: 12px; color: #7d8a97; }
+</style>
+</head>
+<body>
+  <div class="head"><b>97 Sender</b><span>WhatsApp reminders for 97 LIVE</span></div>
+  <div class="body">
+    <div id="wa" class="pill">Checking WhatsApp Web…</div>
+    <div id="content" class="idle" style="margin-top:12px">Loading…</div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
