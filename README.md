@@ -115,11 +115,15 @@ is a full WhatsApp campaign sender:
   de-duplicates numbers, and saves them as a named **list**.
 - **Audiences** — send to any imported list, to **all contacts**, or to the
   built-in **Overdue clients** smart list (auto-built from your finances).
-- **Compose** — write one message with **merge variables** (`{{name}}`,
-  `{{company}}`, or any column you imported) and **spintax** — `{Hi|Hello|Hey}`
-  picks one at random per person so no two texts are identical (this is what
-  keeps bulk sends looking human). A live **preview** shows each recipient's
-  version.
+- **Compose** — a full message editor: a formatting toolbar (**bold**,
+  *italic*, ~~strike~~, monospace), an emoji picker, an **@value** menu to drop
+  in **merge variables** (`{{name}}`, `{{company}}`, or any imported column),
+  **spintax** — `{Hi|Hello|Hey}` picks one at random per person so no two texts
+  are identical — and a **Format test** preview showing each recipient's version.
+- **Templates** — save any message as a reusable template and load it into a new
+  campaign in one tap.
+- **Antiblock presets** — **Conservative / Balanced / Fast** set the send pace,
+  with a *Show detail* panel for country code, duplicate removal and timestamps.
 - **Send** — the same one-tap or Auto engine and the same safety rails.
 - **Reports** — per-recipient sent / failed / skipped, campaign history, and
   **Export CSV**.
