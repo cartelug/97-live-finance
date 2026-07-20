@@ -716,8 +716,7 @@
         '<section class="x97-card x97-hero"><div class="x97-hero-label">Available now</div><div class="x97-hero-value x97-money">' + money(a.cash, "UGX") + '</div><div class="x97-hero-meta"><div class="x97-stat"><span>Net position</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
         '<section><div class="x97-summary-grid"><div class="x97-card x97-summary"><div class="k">This month UGX</div><div class="v x97-money x97-green">' + money(a.ugxMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">This month USD</div><div class="v x97-money x97-teal">' + money(a.usdMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">Safe personal</div><div class="v x97-money ' + (a.expenses.personalSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.personalSafe, "", true) + '</div><div class="s">After plans</div></div><div class="x97-card x97-summary"><div class="k">Safe business</div><div class="v x97-money ' + (a.expenses.businessSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.businessSafe, "", true) + '</div><div class="s">After plans</div></div></div></section>' +
         '<section class="x97-section">' + sectionHead("Needs attention", "View Upcoming", "go-upcoming") + '<div class="x97-card x97-pad">' + attentionRows + '</div></section>' +
-        (function(){var cl=chaseList(doc);if(!cl.length)return "";var od=cl.filter(function(x){return timing(x).key==="overdue";}).length;return '<section class="x97-section">' + sectionHead("Payment reminders", "Open", "open-reminders") + '<button class="x97-card x97-pad" data-x97-action="open-reminders" style="width:100%;text-align:left;border:0;cursor:pointer;display:flex;align-items:center;gap:14px"><div class="x97-row-icon ' + (od?"bad":"warn") + '">' + icon("message") + '</div><div style="flex:1;min-width:0"><div class="x97-row-title">' + (od?od + " overdue to chase":cl.length + " due soon") + '</div><div class="x97-row-sub">Send WhatsApp reminders from a template' + (remindExt.ready?" · sender connected":"") + '</div></div>' + icon("chevron") + '</button></section>';})() +
-        '<section class="x97-section">' + sectionHead("Bulk messaging", "Open", "open-campaigns") + '<button class="x97-card x97-pad" data-x97-action="open-campaigns" style="width:100%;text-align:left;border:0;cursor:pointer;display:flex;align-items:center;gap:14px"><div class="x97-row-icon">' + icon("send") + '</div><div style="flex:1;min-width:0"><div class="x97-row-title">WhatsApp campaigns</div><div class="x97-row-sub">Import contacts (CSV) &amp; send custom bulk messages</div></div>' + icon("chevron") + '</button></section>' +
+        (function(){var s=messagingSummary(doc);var pillOd=s.overdue?'<span class="x97-pill bad">'+s.overdue+' overdue</span>':(s.dueSoon?'<span class="x97-pill warn">'+s.dueSoon+' due soon</span>':'<span class="x97-pill good">'+icon("check",11)+'All clear</span>');return '<section class="x97-section">' + sectionHead("Messaging", "Open", "open-messaging") + '<button class="x97-msg-card" data-x97-action="open-messaging"><div class="x97-msg-icon">' + icon("send") + '</div><div class="x97-msg-body"><div class="x97-msg-title">WhatsApp reminders &amp; campaigns</div><div class="x97-msg-sub">' + s.contacts + ' contacts · ' + s.campaigns + ' campaigns' + (remindExt.ready?' · sender connected':'') + '</div><div class="x97-msg-pills">' + pillOd + '</div></div>' + icon("chevron") + '</button></section>';})() +
         '<section class="x97-section">' + sectionHead("Next 7 days") + '<div class="x97-card x97-pad"><div class="x97-hero-meta" style="margin-bottom:4px"><div class="x97-stat"><span>Expected in</span><b class="x97-green">' + money(in7, "UGX") + '</b></div><div class="x97-stat"><span>Expected out</span><b class="x97-red">' + money(out7, "UGX") + '</b></div></div>' + timelineRows + '</div></section>' +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Accounts", "Add account", "add-account") + '<div class="x97-card x97-pad">' + (accountRows || '<div class="x97-empty"><strong>No accounts yet</strong><p>Add your bank, mobile money or cash balance.</p></div>') + '</div></section>' +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Incoming pipeline", "View all months", "go-upcoming-months") + '<div class="x97-grid x97-pipeline">' + pipeline + '</div></section>' +
@@ -1187,7 +1186,7 @@
     document.body.classList.add("x97-remind-lock");
     refreshRemind();
   }
-  function closeReminders() { remindState.open = false; var el = document.getElementById("x97-remind"); if (el) el.remove(); document.body.classList.remove("x97-remind-lock"); }
+  function closeReminders() { remindState.open = false; var el = document.getElementById("x97-remind"); if (el) el.remove(); if (!campaignState.open && !document.getElementById("x97-msg")) document.body.classList.remove("x97-remind-lock"); }
   function refreshRemind() { var el = document.getElementById("x97-remind"); if (!el || !remindState.open) return; var doc = readDoc(); if (!doc) return; el.innerHTML = remindOverlayHTML(doc); }
 
   function remindRow(item, doc) {
@@ -1230,7 +1229,7 @@
     var autoHint = (remindState.mode === "auto" && !remindExt.ready)
       ? '<div class="x97-rm-hint">' + icon("shield", 14) + '<div>Auto mode needs the free <b>97 Sender</b> browser extension (Chrome/Edge). Install it, keep <b>web.whatsapp.com</b> open in a tab, and this turns on. Until then use <b>One-tap</b> — it works right now.</div></div>' : '';
     return '<div class="x97-remind-panel">' +
-      '<header class="x97-rm-header"><div class="x97-rm-htop"><div><div class="x97-rm-title">' + icon("message", 18) + ' Payment reminders</div><div class="x97-rm-sub">' + list.length + ' to chase · ' + chaseSendable(doc).length + ' with a number</div></div><button class="x97-rm-close" data-rm="close">' + icon("close") + '</button></div>' +
+      '<header class="x97-rm-header"><div class="x97-rm-htop"><div><button class="x97-rm-link" data-rm="hub" style="margin-bottom:4px">‹ Messaging</button><div class="x97-rm-title">' + icon("message", 18) + ' Chase overdue</div><div class="x97-rm-sub">' + list.length + ' to chase · ' + chaseSendable(doc).length + ' with a number</div></div><button class="x97-rm-close" data-rm="close">' + icon("close") + '</button></div>' +
       '<div class="x97-rm-meter ' + meterCls + '"><div class="x97-rm-meter-bar" style="width:' + pct + '%"></div><span>Sent today ' + sent + ' / ' + cap + '</span><em class="' + (remindExt.ready ? "ok" : "") + '">' + (remindExt.ready ? "Sender connected" : "Sender off") + '</em></div></header>' +
       '<div class="x97-rm-toolbar">' + toneSel + aiToggle + '<span class="x97-rm-spacer"></span>' + modeSeg + '<button class="x97-rm-tool" data-rm="numbers">' + icon("phone", 14) + ' Numbers</button><button class="x97-rm-tool" data-rm="templates">' + icon("edit", 14) + ' Templates</button><button class="x97-rm-tool" data-rm="safety">' + icon("shield", 14) + ' Safety</button></div>' +
       '<div class="x97-rm-selrow"><button class="x97-rm-link" data-rm="select-all">Select all</button><button class="x97-rm-link" data-rm="select-none">Clear</button><span class="x97-rm-selcount">' + Object.keys(remindState.selected).length + ' selected</span></div>' +
@@ -1255,6 +1254,7 @@
   function onRemindAction(a) {
     var doc = readDoc();
     if (a === "close") return closeReminders();
+    if (a === "hub") { closeReminders(); openMessaging(); return; }
     if (a === "select-all") { chaseSendable(doc).forEach(function (x) { remindState.selected[x.id] = true; }); return refreshRemind(); }
     if (a === "select-none") { remindState.selected = {}; return refreshRemind(); }
     if (a === "mode-onetap") { remindState.mode = "onetap"; return refreshRemind(); }
@@ -1399,9 +1399,9 @@
     window.addEventListener("message", function (ev) {
       if (ev.source !== window) return;
       var d = ev.data; if (!d || d.source !== "x97-wa-ext") return;
-      if (d.type === "ready") { remindExt.ready = true; remindExt.version = d.version || ""; if (remindState.open) refreshRemind(); if (campaignState.open) refreshCamp(); }
+      if (d.type === "ready") { remindExt.ready = true; remindExt.version = d.version || ""; if (remindState.open) refreshRemind(); if (campaignState.open) refreshCamp(); refreshMsgHub(); }
       else if (d.type === "progress") handleExtProgress(d);
-      else if (d.type === "done") { remindExt.sending = false; if (campaignState.sending) { campaignState.sending = false; if (campaignState.open) refreshCamp(); toast("Campaign finished", ""); } else { if (remindState.open) refreshRemind(); toast("Reminder run finished", ""); } }
+      else if (d.type === "done") { remindExt.sending = false; if (campaignState.sending) { campaignState.sending = false; if (campaignState.open) refreshCamp(); toast("Campaign finished", ""); } else { if (remindState.open) refreshRemind(); toast("Reminder run finished", ""); } refreshMsgHub(); }
       else if (d.type === "paused") { remindExt.sending = false; if (remindState.open) refreshRemind(); if (campaignState.open) refreshCamp(); }
     });
     try { window.postMessage({ source: "x97-wa-app", type: "hello" }, "*"); } catch (_) {}
@@ -1451,6 +1451,113 @@
       ".x97-num-sub{font-size:11px;color:var(--tx3);margin-top:4px;display:flex;gap:7px;align-items:center}" +
       ".x97-num-input{max-width:172px}";
     var s = document.createElement("style"); s.id = "x97-remind-css"; s.textContent = css; document.head.appendChild(s);
+  }
+
+  /* ============================ Messaging hub ============================ */
+
+  function combinedSentToday(doc) {
+    var n = remindSentToday(doc);
+    var now = new Date(); var key = now.getFullYear() + "-" + now.getMonth() + "-" + now.getDate();
+    (doc.waCampaigns || []).forEach(function (c) { (c.log || []).forEach(function (e) { if (e.status !== "sent") return; var d = new Date(e.at); if ((d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate()) === key) n++; }); });
+    return n;
+  }
+
+  function messagingSummary(doc) {
+    var cl = chaseList(doc);
+    return {
+      overdue: cl.filter(function (x) { return timing(x).key === "overdue"; }).length,
+      dueSoon: cl.length,
+      contacts: campContacts(doc).length,
+      lists: campLists(doc).length,
+      campaigns: campCampaigns(doc).length,
+      sentToday: combinedSentToday(doc),
+      cap: safety(doc).dailyCap
+    };
+  }
+
+  function openMessaging() {
+    injectRemindCSS(); injectCampCSS(); injectMsgCSS();
+    var el = document.getElementById("x97-msg");
+    if (!el) { el = document.createElement("div"); el.id = "x97-msg"; el.className = "x97-remind-overlay"; document.body.appendChild(el); wireMsgHub(el); }
+    document.body.classList.add("x97-remind-lock");
+    refreshMsgHub();
+  }
+  function closeMessaging() { var el = document.getElementById("x97-msg"); if (el) el.remove(); if (!remindState.open && !campaignState.open) document.body.classList.remove("x97-remind-lock"); }
+  function refreshMsgHub() { var el = document.getElementById("x97-msg"); if (!el) return; var doc = readDoc(); if (!doc) return; el.innerHTML = msgHubHTML(doc); }
+
+  function msgTile(opts) {
+    return '<button class="x97-msg-tile" data-msg="' + attr(opts.action) + '">' +
+      '<div class="x97-msg-tile-icon' + (opts.tone ? " " + opts.tone : "") + '">' + icon(opts.icon, 20) + '</div>' +
+      '<div class="x97-msg-tile-body"><div class="x97-msg-tile-title">' + esc(opts.title) + '</div><div class="x97-msg-tile-sub">' + esc(opts.sub) + '</div></div>' +
+      (opts.badge != null ? '<span class="x97-msg-tile-badge' + (opts.badgeTone ? " " + opts.badgeTone : "") + '">' + esc(opts.badge) + '</span>' : icon("chevron", 16)) +
+      '</button>';
+  }
+
+  function msgHubHTML(doc) {
+    var s = messagingSummary(doc);
+    var pct = Math.min(100, Math.round(s.sentToday / Math.max(1, s.cap) * 100));
+    var meterCls = s.sentToday >= s.cap ? "bad" : (s.sentToday >= s.cap * 0.8 ? "warn" : "ok");
+    var campaigns = campCampaigns(doc).slice(0, 3);
+    var histHTML = campaigns.length ? campaigns.map(function (c) {
+      var st = c.stats || { sent: 0 };
+      return '<button class="x97-camp-hist" data-msg="report" data-id="' + attr(c.id) + '"><div style="flex:1;min-width:0"><div class="x97-rm-name">' + esc(c.name || "Untitled") + '</div><div class="x97-rm-sub">' + esc(audienceLabel(doc, c.audience)) + ' · ' + (st.sent || 0) + ' sent' + (st.failed ? ' · ' + st.failed + ' failed' : '') + '</div></div>' + icon("chevron") + '</button>';
+    }).join("") : "";
+    return '<div class="x97-remind-panel">' +
+      '<header class="x97-msg-header"><div class="x97-rm-htop"><div><div class="x97-rm-title">' + icon("send", 19) + ' Messaging</div><div class="x97-rm-sub">WhatsApp reminders &amp; bulk campaigns, all in one place</div></div><button class="x97-rm-close" data-msg="close">' + icon("close") + '</button></div>' +
+      '<div class="x97-msg-stats">' +
+        '<div class="x97-msg-stat"><b class="' + (s.overdue ? "x97-red" : "") + '">' + s.overdue + '</b><span>To chase</span></div>' +
+        '<div class="x97-msg-stat"><b>' + s.contacts + '</b><span>Contacts</span></div>' +
+        '<div class="x97-msg-stat"><b>' + s.campaigns + '</b><span>Campaigns</span></div>' +
+      '</div>' +
+      '<div class="x97-rm-meter ' + meterCls + '" style="margin-top:2px"><div class="x97-rm-meter-bar" style="width:' + pct + '%"></div><span>Sent today ' + s.sentToday + ' / ' + s.cap + '</span><em class="' + (remindExt.ready ? "ok" : "") + '">' + (remindExt.ready ? "Sender connected" : "Sender off") + '</em></div>' +
+      '</header>' +
+      '<div class="x97-rm-list">' +
+        '<div class="x97-camp-sec">Quick actions</div>' +
+        '<div class="x97-msg-tiles">' +
+          msgTile({ action: "chase", icon: "message", title: "Chase overdue", sub: s.overdue ? "Ready to send" : (s.dueSoon ? s.dueSoon + " due within 7 days" : "Nothing overdue right now"), badge: s.overdue || null, badgeTone: "bad", tone: s.overdue ? "bad" : "" }) +
+          msgTile({ action: "new-campaign", icon: "send", title: "New campaign", sub: "Message a list or import a CSV" }) +
+          msgTile({ action: "contacts", icon: "phone", title: "Contacts & lists", sub: s.contacts + " contacts · " + s.lists + " lists" }) +
+          msgTile({ action: "templates", icon: "edit", title: "Templates", sub: "Reusable messages, saved once" }) +
+        '</div>' +
+        (histHTML ? '<div class="x97-camp-sec" style="margin-top:18px">Recent campaigns</div>' + histHTML : '') +
+      '</div></div>';
+  }
+
+  function wireMsgHub(el) {
+    el.addEventListener("click", function (e) {
+      var b = e.target.closest && e.target.closest("[data-msg]"); if (!b || !el.contains(b)) return;
+      var a = b.dataset.msg;
+      if (a === "close") return closeMessaging();
+      if (a === "chase") { closeMessaging(); openReminders(); return; }
+      if (a === "new-campaign") { closeMessaging(); openCampaigns(true); return; }
+      if (a === "contacts") { closeMessaging(); openCampaigns(); return; }
+      if (a === "templates") return openTemplateManager();
+      if (a === "report") { closeMessaging(); openCampaigns(); onCampAction("report", { dataset: { id: b.dataset.id } }); return; }
+    });
+  }
+
+  function injectMsgCSS() {
+    if (document.getElementById("x97-msg-css")) return;
+    var css =
+      ".x97-msg-card{width:100%;text-align:left;border:0;cursor:pointer;display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}" +
+      ".x97-msg-icon{width:44px;height:44px;min-width:44px;border-radius:13px;display:flex;align-items:center;justify-content:center;background:linear-gradient(145deg,var(--pos),var(--pos2));color:#fff;box-shadow:0 6px 16px rgba(14,117,72,.28)}" +
+      ".x97-msg-body{flex:1;min-width:0}.x97-msg-title{font-size:14.5px;font-weight:800;color:var(--tx)}.x97-msg-sub{font-size:11.5px;color:var(--tx3);margin-top:2px}" +
+      ".x97-msg-pills{display:flex;gap:7px;margin-top:8px;flex-wrap:wrap}" +
+      ".x97-msg-header{padding:16px 15px 13px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(23,164,104,.08),transparent 70%),var(--card)}" +
+      ".x97-msg-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:13px 0 11px}" +
+      ".x97-msg-stat{background:var(--card2);border:1px solid var(--line);border-radius:13px;padding:11px 8px;text-align:center}" +
+      ".x97-msg-stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums;font-weight:800;color:var(--tx)}" +
+      ".x97-msg-stat span{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--tx3);font-weight:800}" +
+      ".x97-msg-tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px}" +
+      "@media(max-width:420px){.x97-msg-tiles{grid-template-columns:1fr}}" +
+      ".x97-msg-tile{display:flex;align-items:center;gap:11px;text-align:left;border:1px solid var(--line);background:var(--card);border-radius:15px;padding:13px;cursor:pointer;transition:border-color .15s,transform .1s}" +
+      ".x97-msg-tile:active{transform:scale(.98)}.x97-msg-tile:hover{border-color:var(--line2)}" +
+      ".x97-msg-tile-icon{width:38px;height:38px;min-width:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;background:var(--card2);color:var(--pos)}" +
+      ".x97-msg-tile-icon.bad{background:rgba(229,72,77,.12);color:var(--neg)}" +
+      ".x97-msg-tile-body{flex:1;min-width:0}.x97-msg-tile-title{font-size:13px;font-weight:800;color:var(--tx)}.x97-msg-tile-sub{font-size:10.5px;color:var(--tx3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+      ".x97-msg-tile-badge{min-width:22px;height:22px;border-radius:99px;background:var(--card2);color:var(--tx2);font-size:11px;font-weight:850;display:flex;align-items:center;justify-content:center;padding:0 6px}" +
+      ".x97-msg-tile-badge.bad{background:var(--neg);color:#fff}";
+    var s = document.createElement("style"); s.id = "x97-msg-css"; s.textContent = css; document.head.appendChild(s);
   }
 
   /* ============================ Bulk messaging / campaigns ============================ */
@@ -1671,15 +1778,16 @@
     downloadCSV((c.name || "campaign").replace(/[^\w]+/g, "-").toLowerCase() + "-report.csv", csv);
   }
 
-  function openCampaigns() {
+  function openCampaigns(startCompose) {
     injectRemindCSS(); injectCampCSS();
     campaignState.open = true; campaignState.view = "home"; campaignState.progress = {}; campaignState.sending = false;
     var el = document.getElementById("x97-camp");
     if (!el) { el = document.createElement("div"); el.id = "x97-camp"; el.className = "x97-remind-overlay"; document.body.appendChild(el); wireCamp(el); }
     document.body.classList.add("x97-remind-lock");
     refreshCamp();
+    if (startCompose) onCampAction("new");
   }
-  function closeCampaigns() { campaignState.open = false; var el = document.getElementById("x97-camp"); if (el) el.remove(); if (!remindState.open) document.body.classList.remove("x97-remind-lock"); }
+  function closeCampaigns() { campaignState.open = false; var el = document.getElementById("x97-camp"); if (el) el.remove(); if (!remindState.open && !document.getElementById("x97-msg")) document.body.classList.remove("x97-remind-lock"); }
   var campRefreshing = false;
   function refreshCamp() {
     if (campRefreshing) return;
@@ -1692,14 +1800,14 @@
 
   function campOverlayHTML(doc) {
     var v = campaignState.view;
-    var head = function (title, sub, back) {
-      return '<header class="x97-rm-header"><div class="x97-rm-htop"><div>' + (back ? '<button class="x97-rm-link" data-camp="' + back + '" style="margin-bottom:4px">‹ Back</button>' : '') + '<div class="x97-rm-title">' + icon("send", 18) + ' ' + esc(title) + '</div><div class="x97-rm-sub">' + esc(sub) + '</div></div><button class="x97-rm-close" data-camp="close">' + icon("close") + '</button></div></header>';
+    var head = function (title, sub, back, backLabel) {
+      return '<header class="x97-rm-header"><div class="x97-rm-htop"><div>' + (back ? '<button class="x97-rm-link" data-camp="' + back + '" style="margin-bottom:4px">‹ ' + esc(backLabel || "Back") + '</button>' : '') + '<div class="x97-rm-title">' + icon("send", 18) + ' ' + esc(title) + '</div><div class="x97-rm-sub">' + esc(sub) + '</div></div><button class="x97-rm-close" data-camp="close">' + icon("close") + '</button></div></header>';
     };
     var inner;
     if (v === "import") inner = head("Import contacts", "Paste a CSV or choose a file", "home") + campImportHTML(doc);
     else if (v === "compose") inner = head(campaignState.editId ? "Edit campaign" : "New campaign", "Compose and send", "home") + campComposeHTML(doc);
     else if (v === "report") inner = head(campaignState.name || "Campaign", "Delivery report", campaignState.sending ? "" : "home") + campReportHTML(doc);
-    else inner = head("Bulk messaging", campContacts(doc).length + " contacts · " + campLists(doc).length + " lists", "") + campHomeHTML(doc);
+    else inner = head("Campaigns", campContacts(doc).length + " contacts · " + campLists(doc).length + " lists", "hub", "Messaging") + campHomeHTML(doc);
     return '<div class="x97-remind-panel">' + inner + '</div>';
   }
 
@@ -1885,6 +1993,7 @@
   function onCampAction(a, node) {
     var doc = readDoc();
     if (a === "close") return closeCampaigns();
+    if (a === "hub") { closeCampaigns(); openMessaging(); return; }
     if (a === "home") { campaignState.view = "home"; campaignState.jobs = null; return refreshCamp(); }
     if (a === "import") { campaignState.view = "import"; return refreshCamp(); }
     if (a === "new") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: audienceContacts(doc, { type: "overdue" }).length ? "overdue" : "all", id: "" }; campaignState.previewIdx = 0; return refreshCamp(); }
@@ -2011,6 +2120,7 @@
     var navTarget=e.target.closest && e.target.closest("[data-x97-nav]");if(navTarget){var target=navTarget.dataset.x97Nav;var item=findNavItem(target);if(item)item.click();return;}
     var btn=e.target.closest && e.target.closest("[data-x97-action]");if(!btn)return;var action=btn.dataset.x97Action;
     if(action==="close-sheet"){closeSheet();return;}
+    if(action==="open-messaging"){openMessaging();return;}
     if(action==="open-reminders"){openReminders();return;}
     if(action==="open-campaigns"){openCampaigns();return;}
     if(action==="reset-templates"){updateDoc(function(doc){if(doc.settings)doc.settings.reminderTemplates=null;},"reminder-templates-reset");closeSheet();openTemplateManager();return;}
@@ -2058,7 +2168,7 @@
   }
 
   function boot() {
-    injectCSS();loadPrefs();resumeOriginalTab();initRemindBridge();
+    injectCSS();injectMsgCSS();loadPrefs();resumeOriginalTab();initRemindBridge();
     var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
     var observer=new MutationObserver(function(mutations){
       var relevant=mutations.some(function(m){
