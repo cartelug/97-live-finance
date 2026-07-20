@@ -1224,7 +1224,7 @@
     return '<div class="x97-remind-panel">' +
       '<header class="x97-rm-header"><div class="x97-rm-htop"><div><div class="x97-rm-title">' + icon("message", 18) + ' Payment reminders</div><div class="x97-rm-sub">' + list.length + ' to chase · ' + chaseSendable(doc).length + ' with a number</div></div><button class="x97-rm-close" data-rm="close">' + icon("close") + '</button></div>' +
       '<div class="x97-rm-meter ' + meterCls + '"><div class="x97-rm-meter-bar" style="width:' + pct + '%"></div><span>Sent today ' + sent + ' / ' + cap + '</span><em class="' + (remindExt.ready ? "ok" : "") + '">' + (remindExt.ready ? "Sender connected" : "Sender off") + '</em></div></header>' +
-      '<div class="x97-rm-toolbar">' + toneSel + aiToggle + '<span class="x97-rm-spacer"></span>' + modeSeg + '<button class="x97-rm-tool" data-rm="templates">' + icon("edit", 14) + ' Templates</button><button class="x97-rm-tool" data-rm="safety">' + icon("shield", 14) + ' Safety</button></div>' +
+      '<div class="x97-rm-toolbar">' + toneSel + aiToggle + '<span class="x97-rm-spacer"></span>' + modeSeg + '<button class="x97-rm-tool" data-rm="numbers">' + icon("phone", 14) + ' Numbers</button><button class="x97-rm-tool" data-rm="templates">' + icon("edit", 14) + ' Templates</button><button class="x97-rm-tool" data-rm="safety">' + icon("shield", 14) + ' Safety</button></div>' +
       '<div class="x97-rm-selrow"><button class="x97-rm-link" data-rm="select-all">Select all</button><button class="x97-rm-link" data-rm="select-none">Clear</button><span class="x97-rm-selcount">' + Object.keys(remindState.selected).length + ' selected</span></div>' +
       autoHint + '<div class="x97-rm-list">' + rows + '</div>' +
       '<footer class="x97-rm-footer">' + footPrimary + '</footer></div>';
@@ -1252,6 +1252,7 @@
     if (a === "mode-onetap") { remindState.mode = "onetap"; return refreshRemind(); }
     if (a === "mode-auto") { remindState.mode = "auto"; return refreshRemind(); }
     if (a === "templates") return openTemplateManager();
+    if (a === "numbers") return openNumbersManager();
     if (a === "safety") return openSafetySettings();
     if (a === "send-onetap") return sendOneTapNext();
     if (a === "send-auto") return sendAuto(doc);
@@ -1332,6 +1333,35 @@
     closeSheet(); if (remindState.open) refreshRemind();
   }
 
+  function openNumbersManager() {
+    injectRemindCSS();
+    var doc = readDoc();
+    var list = (doc.followups || []).filter(isOpenFollowup).slice().sort(function (a, b) {
+      var am = hasWa(a, doc) ? 1 : 0, bm = hasWa(b, doc) ? 1 : 0;
+      if (am !== bm) return am - bm;                       // missing numbers first
+      var ta = timing(a), tb = timing(b);
+      var da = ta.days == null ? 9999 : ta.days, db = tb.days == null ? 9999 : tb.days;
+      if (da !== db) return da - db;                        // most urgent next
+      return String(a.client || "").localeCompare(String(b.client || ""));
+    });
+    var missing = list.filter(function (x) { return !hasWa(x, doc); }).length;
+    var rows = list.map(function (x) {
+      var cur = String(x.currency || "UGX").toUpperCase(), t = timing(x);
+      return '<div class="x97-num-row"><div class="x97-num-meta"><div class="x97-num-name">' + esc(x.client || "Untitled") + '</div><div class="x97-num-sub"><span class="x97-pill ' + esc(t.cls) + '" style="padding:2px 6px">' + esc(t.label) + '</span>' + (num(x.amount) ? '<span>' + esc(money(x.amount, cur)) + '</span>' : '') + '</div></div><input class="x97-input x97-num-input" name="num_' + attr(x.id) + '" inputmode="tel" value="' + attr(x.phone || "") + '" placeholder="0772…"></div>';
+    }).join("");
+    if (!list.length) rows = '<div class="x97-empty" style="padding:22px"><strong>No open receivables</strong><p>Add upcoming payments first.</p></div>';
+    var body = '<form id="x97-numbers-form" data-x97-form="wa-numbers"><div class="x97-help" style="margin-bottom:12px">' + (missing ? '<b>' + missing + '</b> still need a number. ' : 'All clients have a number. ') + 'Local (0772…) or full (+256772…) both work.</div>' + rows + '</form>';
+    var foot = '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button><button class="x97-btn primary" type="submit" form="x97-numbers-form">' + icon("check") + ' Save numbers</button>';
+    openSheet("WhatsApp numbers", body, foot);
+  }
+  function submitNumbers(form) {
+    var v = formValues(form);
+    updateDoc(function (doc) {
+      (doc.followups || []).forEach(function (x) { var k = "num_" + x.id; if (Object.prototype.hasOwnProperty.call(v, k)) x.phone = String(v[k] || "").trim(); });
+    }, "wa-numbers");
+    closeSheet(); if (remindState.open) refreshRemind();
+  }
+
   function openSafetySettings() {
     var doc = readDoc(); var s = safety(doc);
     var body = '<form id="x97-safety-form" data-x97-form="wa-safety">' +
@@ -1406,7 +1436,11 @@
       ".x97-rm-amt{font-size:14px;font-weight:800;white-space:nowrap}" +
       ".x97-rm-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}" +
       ".x97-rm-msg{width:100%;margin-top:10px;border:1px solid var(--line2);border-radius:11px;background:var(--card2);color:var(--tx);padding:10px;font-size:12.5px;line-height:1.5;resize:vertical;min-height:74px;font-family:inherit}" +
-      ".x97-rm-footer{padding:12px 14px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--card)}.x97-rm-footer .x97-btn{width:100%;justify-content:center}";
+      ".x97-rm-footer{padding:12px 14px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--card)}.x97-rm-footer .x97-btn{width:100%;justify-content:center}" +
+      ".x97-num-row{display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}" +
+      ".x97-num-meta{flex:1;min-width:0}.x97-num-name{font-size:13px;font-weight:750;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+      ".x97-num-sub{font-size:11px;color:var(--tx3);margin-top:4px;display:flex;gap:7px;align-items:center}" +
+      ".x97-num-input{max-width:172px}";
     var s = document.createElement("style"); s.id = "x97-remind-css"; s.textContent = css; document.head.appendChild(s);
   }
 
@@ -1436,7 +1470,7 @@
   }
 
   document.addEventListener("submit", function (e) {
-    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="filters")submitFilters(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);
+    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="filters")submitFilters(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);else if(type==="wa-numbers")submitNumbers(form);
   });
 
   document.addEventListener("input", function (e) {
