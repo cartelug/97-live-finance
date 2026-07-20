@@ -27,6 +27,7 @@
   var modeActive = false;
   var remindExt = { ready: false, version: "", sending: false };
   var remindState = { open: false, mode: "onetap", tone: "auto", useAI: false, selected: {}, drafts: {}, showAll: false, progress: {} };
+  var campaignState = { open: false, view: "home", mode: "onetap", editId: null, audience: { type: "list", id: "" }, message: "", previewIdx: 0, progress: {}, sending: false, runId: null, oneTapIdx: 0 };
 
   var state = {
     upcoming: {
@@ -710,6 +711,7 @@
         '<section><div class="x97-summary-grid"><div class="x97-card x97-summary"><div class="k">This month UGX</div><div class="v x97-money x97-green">' + money(a.ugxMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">This month USD</div><div class="v x97-money x97-teal">' + money(a.usdMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">Safe personal</div><div class="v x97-money ' + (a.expenses.personalSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.personalSafe, "", true) + '</div><div class="s">After plans</div></div><div class="x97-card x97-summary"><div class="k">Safe business</div><div class="v x97-money ' + (a.expenses.businessSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.businessSafe, "", true) + '</div><div class="s">After plans</div></div></div></section>' +
         '<section class="x97-section">' + sectionHead("Needs attention", "View Upcoming", "go-upcoming") + '<div class="x97-card x97-pad">' + attentionRows + '</div></section>' +
         (function(){var cl=chaseList(doc);if(!cl.length)return "";var od=cl.filter(function(x){return timing(x).key==="overdue";}).length;return '<section class="x97-section">' + sectionHead("Payment reminders", "Open", "open-reminders") + '<button class="x97-card x97-pad" data-x97-action="open-reminders" style="width:100%;text-align:left;border:0;cursor:pointer;display:flex;align-items:center;gap:14px"><div class="x97-row-icon ' + (od?"bad":"warn") + '">' + icon("message") + '</div><div style="flex:1;min-width:0"><div class="x97-row-title">' + (od?od + " overdue to chase":cl.length + " due soon") + '</div><div class="x97-row-sub">Send WhatsApp reminders from a template' + (remindExt.ready?" · sender connected":"") + '</div></div>' + icon("chevron") + '</button></section>';})() +
+        '<section class="x97-section">' + sectionHead("Bulk messaging", "Open", "open-campaigns") + '<button class="x97-card x97-pad" data-x97-action="open-campaigns" style="width:100%;text-align:left;border:0;cursor:pointer;display:flex;align-items:center;gap:14px"><div class="x97-row-icon">' + icon("send") + '</div><div style="flex:1;min-width:0"><div class="x97-row-title">WhatsApp campaigns</div><div class="x97-row-sub">Import contacts (CSV) &amp; send custom bulk messages</div></div>' + icon("chevron") + '</button></section>' +
         '<section class="x97-section">' + sectionHead("Next 7 days") + '<div class="x97-card x97-pad"><div class="x97-hero-meta" style="margin-bottom:4px"><div class="x97-stat"><span>Expected in</span><b class="x97-green">' + money(in7, "UGX") + '</b></div><div class="x97-stat"><span>Expected out</span><b class="x97-red">' + money(out7, "UGX") + '</b></div></div>' + timelineRows + '</div></section>' +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Accounts", "Add account", "add-account") + '<div class="x97-card x97-pad">' + (accountRows || '<div class="x97-empty"><strong>No accounts yet</strong><p>Add your bank, mobile money or cash balance.</p></div>') + '</div></section>' +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Incoming pipeline", "View all months", "go-upcoming-months") + '<div class="x97-grid x97-pipeline">' + pipeline + '</div></section>' +
@@ -1382,6 +1384,7 @@
 
   function handleExtProgress(d) {
     if (!d.id) return;
+    if (campaignState.sending) { handleCampaignProgress(d); return; }
     remindState.progress[d.id] = d.status;
     if (d.status === "sent") { markReminded(d.id, "auto"); delete remindState.selected[d.id]; }
     if (remindState.open) refreshRemind();
@@ -1390,10 +1393,10 @@
     window.addEventListener("message", function (ev) {
       if (ev.source !== window) return;
       var d = ev.data; if (!d || d.source !== "x97-wa-ext") return;
-      if (d.type === "ready") { remindExt.ready = true; remindExt.version = d.version || ""; if (remindState.open) refreshRemind(); }
+      if (d.type === "ready") { remindExt.ready = true; remindExt.version = d.version || ""; if (remindState.open) refreshRemind(); if (campaignState.open) refreshCamp(); }
       else if (d.type === "progress") handleExtProgress(d);
-      else if (d.type === "done") { remindExt.sending = false; if (remindState.open) refreshRemind(); toast("Reminder run finished", ""); }
-      else if (d.type === "paused") { remindExt.sending = false; if (remindState.open) refreshRemind(); }
+      else if (d.type === "done") { remindExt.sending = false; if (campaignState.sending) { campaignState.sending = false; if (campaignState.open) refreshCamp(); toast("Campaign finished", ""); } else { if (remindState.open) refreshRemind(); toast("Reminder run finished", ""); } }
+      else if (d.type === "paused") { remindExt.sending = false; if (remindState.open) refreshRemind(); if (campaignState.open) refreshCamp(); }
     });
     try { window.postMessage({ source: "x97-wa-app", type: "hello" }, "*"); } catch (_) {}
   }
@@ -1444,6 +1447,395 @@
     var s = document.createElement("style"); s.id = "x97-remind-css"; s.textContent = css; document.head.appendChild(s);
   }
 
+  /* ============================ Bulk messaging / campaigns ============================ */
+
+  function campLists(doc) { return doc.waLists || []; }
+  function campContacts(doc) { return doc.waContacts || []; }
+  function campCampaigns(doc) { return doc.waCampaigns || []; }
+
+  function parseCSV(text) {
+    text = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n+$/, "");
+    if (!text.trim()) return { headers: [], rows: [] };
+    var first = text.split("\n")[0];
+    var delim = ",";
+    if (first.split("\t").length > first.split(",").length) delim = "\t";
+    else if (first.split(";").length > first.split(",").length) delim = ";";
+    var lines = [], cur = [], field = "", inQ = false;
+    for (var i = 0; i < text.length; i++) {
+      var c = text[i];
+      if (inQ) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; } else field += c; }
+      else if (c === '"') inQ = true;
+      else if (c === delim) { cur.push(field); field = ""; }
+      else if (c === "\n") { cur.push(field); lines.push(cur); cur = []; field = ""; }
+      else field += c;
+    }
+    cur.push(field); lines.push(cur);
+    var headers = (lines.shift() || []).map(function (h) { return String(h).trim(); });
+    var rows = lines.filter(function (l) { return l.some(function (v) { return String(v).trim(); }); }).map(function (l) {
+      var o = {}; headers.forEach(function (h, idx) { o[h] = (l[idx] == null ? "" : String(l[idx]).trim()); }); return o;
+    });
+    return { headers: headers, rows: rows };
+  }
+
+  function detectPhoneCol(headers, rows) {
+    var byName = headers.find(function (h) { return /phone|number|tel|whats|mobile|cell|contact|msisdn/i.test(h); });
+    if (byName) return byName;
+    var best = "", bestScore = 0;
+    headers.forEach(function (h) {
+      var digits = 0, n = 0;
+      rows.slice(0, 20).forEach(function (r) { var v = String(r[h] || ""); if (!v) return; n++; if (v.replace(/[^\d]/g, "").length >= 7) digits++; });
+      var score = n ? digits / n : 0;
+      if (score > bestScore) { bestScore = score; best = h; }
+    });
+    return bestScore >= 0.6 ? best : (headers[0] || "");
+  }
+  function detectNameCol(headers, phoneCol) {
+    var byName = headers.find(function (h) { return /name|client|customer|contact|company/i.test(h) && h !== phoneCol; });
+    if (byName) return byName;
+    return headers.find(function (h) { return h !== phoneCol; }) || headers[0] || "";
+  }
+
+  function resolveMessage(tpl, contact) {
+    var s = String(tpl || "");
+    s = s.replace(/\{([^{}|]*\|[^{}]*)\}/g, function (_, body) { var p = body.split("|"); return p[Math.floor(Math.random() * p.length)]; });
+    s = s.replace(/\{\{\s*([\w .\-]+?)\s*\}\}/g, function (_, key) {
+      var k = key.toLowerCase();
+      if (k === "name") return contact.name || "";
+      if (k === "phone") return contact.phone || "";
+      var f = contact.fields || {};
+      for (var fk in f) { if (fk.toLowerCase() === k) return f[fk] == null ? "" : String(f[fk]); }
+      return "";
+    });
+    return s;
+  }
+
+  function audienceContacts(doc, audience) {
+    if (!audience) return [];
+    if (audience.type === "overdue") {
+      return (doc.followups || []).filter(isOpenFollowup).filter(function (x) { var t = timing(x); return (t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7)) && hasWa(x, doc); }).map(function (x) {
+        var t = timing(x), cur = String(x.currency || "UGX").toUpperCase();
+        return { id: "od_" + x.id, name: x.client || "", phone: x.phone || "", fields: { amount: num(x.amount) ? money(x.amount, cur) : "", currency: cur, date: x.expectedBy ? formatDate(x.expectedBy, false) : "", days: (t.days != null && t.days < 0) ? String(Math.abs(t.days)) : "0", project: x.client || "" } };
+      });
+    }
+    var contacts = campContacts(doc);
+    if (audience.type === "all") return contacts.slice();
+    if (audience.type === "list") return contacts.filter(function (c) { return (c.lists || []).indexOf(audience.id) >= 0; });
+    return [];
+  }
+  function audienceLabel(doc, audience) {
+    if (!audience) return "No audience";
+    if (audience.type === "overdue") return "Overdue clients";
+    if (audience.type === "all") return "All contacts";
+    var l = campLists(doc).find(function (x) { return x.id === audience.id; });
+    return l ? l.name : "List";
+  }
+  function variableKeys(doc) {
+    var c = audienceContacts(doc, campaignState.audience)[0];
+    var keys = ["name", "phone"];
+    if (c && c.fields) Object.keys(c.fields).forEach(function (k) { if (k && keys.indexOf(k) < 0) keys.push(k); });
+    return keys;
+  }
+  function campaignJobs(doc) {
+    return audienceContacts(doc, campaignState.audience).map(function (c) {
+      var phone = waNumber(c.phone, doc);
+      return { id: c.id, cid: c.id, name: c.name, phone: phone, message: resolveMessage(campaignState.message, c), valid: phone.length >= 10 };
+    }).filter(function (j) { return j.valid; });
+  }
+
+  function persistCampaign() {
+    var id = campaignState.editId || uid("camp");
+    var rec = { id: id, name: (campaignState.name || "Untitled campaign").trim(), message: campaignState.message, audience: campaignState.audience, mode: campaignState.mode, createdAt: campaignState.createdAt || new Date().toISOString() };
+    updateDoc(function (doc) {
+      doc.waCampaigns = doc.waCampaigns || [];
+      var i = doc.waCampaigns.findIndex(function (c) { return c.id === id; });
+      if (i >= 0) doc.waCampaigns[i] = Object.assign({}, doc.waCampaigns[i], rec);
+      else doc.waCampaigns.unshift(Object.assign({ log: [], stats: { sent: 0, failed: 0, skipped: 0 } }, rec));
+    }, "camp-save");
+    campaignState.editId = id; campaignState.createdAt = rec.createdAt;
+    return id;
+  }
+  function logCampaignResult(campaignId, cid, status) {
+    updateDoc(function (doc) {
+      var c = (doc.waCampaigns || []).find(function (x) { return x.id === campaignId; });
+      if (!c) return;
+      c.log = c.log || []; c.stats = c.stats || { sent: 0, failed: 0, skipped: 0 };
+      var job = campaignState.jobsById && campaignState.jobsById[cid];
+      c.log = c.log.filter(function (e) { return e.cid !== cid; });
+      c.log.push({ cid: cid, name: job ? job.name : "", phone: job ? job.phone : "", status: status, at: new Date().toISOString() });
+      var s = { sent: 0, skipped: 0, failed: 0 };
+      c.log.forEach(function (e) { if (e.status === "sent") s.sent++; else if (e.status === "skipped") s.skipped++; else s.failed++; });
+      c.stats = s;
+    }, "camp-log");
+  }
+
+  function startCampaign(mode) {
+    var doc = readDoc();
+    if (!campaignState.message.trim()) { toast("Write a message first", "error"); return; }
+    var jobs = campaignJobs(doc);
+    if (!jobs.length) { toast("No valid numbers in this audience", "error"); return; }
+    var id = persistCampaign();
+    campaignState.runId = id; campaignState.jobs = jobs; campaignState.progress = {};
+    campaignState.jobsById = {}; jobs.forEach(function (j) { campaignState.jobsById[j.id] = j; });
+    campaignState.oneTapIdx = 0;
+    if (mode === "auto") {
+      if (!remindExt.ready) { toast("Install the 97 Sender extension for Auto", "error"); return; }
+      jobs.forEach(function (j) { campaignState.progress[j.id] = "queued"; });
+      campaignState.sending = true;
+      window.postMessage({ source: "x97-wa-app", type: "enqueue", jobs: jobs.map(function (j) { return { id: j.id, phone: j.phone, name: j.name, message: j.message }; }), safety: safety(doc) }, "*");
+      toast("Sending " + jobs.length + " — keep WhatsApp Web open", "");
+      campaignState.view = "report"; refreshCamp();
+    } else {
+      campaignState.view = "report"; refreshCamp();
+      sendCampaignOneTapNext();
+    }
+  }
+  function sendCampaignOneTapNext() {
+    var jobs = campaignState.jobs || [];
+    while (campaignState.oneTapIdx < jobs.length && campaignState.progress[jobs[campaignState.oneTapIdx].id] === "sent") campaignState.oneTapIdx++;
+    if (campaignState.oneTapIdx >= jobs.length) { toast("Campaign complete", ""); refreshCamp(); return; }
+    var job = jobs[campaignState.oneTapIdx];
+    window.open("https://wa.me/" + job.phone + "?text=" + encodeURIComponent(job.message), "_blank");
+    campaignState.progress[job.id] = "sent";
+    logCampaignResult(campaignState.runId, job.id, "sent");
+    campaignState.oneTapIdx++;
+    refreshCamp();
+  }
+  function handleCampaignProgress(d) {
+    campaignState.progress[d.id] = d.status;
+    if (d.status === "sent" || d.status === "skipped" || d.status === "error") logCampaignResult(campaignState.runId, d.id, d.status);
+    if (campaignState.open) refreshCamp();
+  }
+
+  function importContacts(parsed, nameCol, phoneCol, listName) {
+    var doc = readDoc(), added = 0, skipped = 0;
+    var listId = uid("list");
+    updateDoc(function (d) {
+      d.waLists = d.waLists || []; d.waContacts = d.waContacts || [];
+      d.waLists.unshift({ id: listId, name: (listName || "Imported list").trim(), createdAt: new Date().toISOString() });
+      var byPhone = {}; d.waContacts.forEach(function (c) { var k = waNumber(c.phone, d); if (k) byPhone[k] = c; });
+      parsed.rows.forEach(function (r) {
+        var phoneRaw = r[phoneCol] || ""; var norm = waNumber(phoneRaw, d);
+        if (norm.length < 10) { skipped++; return; }
+        var fields = {}; Object.keys(r).forEach(function (h) { if (h !== phoneCol) fields[h] = r[h]; });
+        var name = (r[nameCol] || "").trim() || phoneRaw;
+        var existing = byPhone[norm];
+        if (existing) { existing.lists = existing.lists || []; if (existing.lists.indexOf(listId) < 0) existing.lists.push(listId); existing.fields = Object.assign({}, fields, existing.fields); existing.name = existing.name || name; }
+        else { var nc = { id: uid("ct"), name: name, phone: phoneRaw, fields: fields, lists: [listId] }; d.waContacts.push(nc); byPhone[norm] = nc; }
+        added++;
+      });
+    }, "camp-import");
+    return { listId: listId, added: added, skipped: skipped };
+  }
+
+  function downloadCSV(filename, csv) {
+    try {
+      var blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a"); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+    } catch (_) { toast("Could not export", "error"); }
+  }
+  function exportCampaignCSV(id) {
+    var doc = readDoc(); var c = campCampaigns(doc).find(function (x) { return x.id === id; }); if (!c) return;
+    var rows = [["name", "phone", "status", "at"]].concat((c.log || []).map(function (e) { return [e.name, e.phone, e.status, e.at]; }));
+    var csv = rows.map(function (r) { return r.map(function (v) { v = String(v == null ? "" : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(","); }).join("\n");
+    downloadCSV((c.name || "campaign").replace(/[^\w]+/g, "-").toLowerCase() + "-report.csv", csv);
+  }
+
+  function openCampaigns() {
+    injectRemindCSS(); injectCampCSS();
+    campaignState.open = true; campaignState.view = "home"; campaignState.progress = {}; campaignState.sending = false;
+    var el = document.getElementById("x97-camp");
+    if (!el) { el = document.createElement("div"); el.id = "x97-camp"; el.className = "x97-remind-overlay"; document.body.appendChild(el); wireCamp(el); }
+    document.body.classList.add("x97-remind-lock");
+    refreshCamp();
+  }
+  function closeCampaigns() { campaignState.open = false; var el = document.getElementById("x97-camp"); if (el) el.remove(); if (!remindState.open) document.body.classList.remove("x97-remind-lock"); }
+  function refreshCamp() { var el = document.getElementById("x97-camp"); if (!el || !campaignState.open) return; var doc = readDoc(); if (!doc) return; el.innerHTML = campOverlayHTML(doc); }
+
+  function campOverlayHTML(doc) {
+    var v = campaignState.view;
+    var head = function (title, sub, back) {
+      return '<header class="x97-rm-header"><div class="x97-rm-htop"><div>' + (back ? '<button class="x97-rm-link" data-camp="' + back + '" style="margin-bottom:4px">‹ Back</button>' : '') + '<div class="x97-rm-title">' + icon("send", 18) + ' ' + esc(title) + '</div><div class="x97-rm-sub">' + esc(sub) + '</div></div><button class="x97-rm-close" data-camp="close">' + icon("close") + '</button></div></header>';
+    };
+    var inner;
+    if (v === "import") inner = head("Import contacts", "Paste a CSV or choose a file", "home") + campImportHTML(doc);
+    else if (v === "compose") inner = head(campaignState.editId ? "Edit campaign" : "New campaign", "Compose and send", "home") + campComposeHTML(doc);
+    else if (v === "report") inner = head(campaignState.name || "Campaign", "Delivery report", campaignState.sending ? "" : "home") + campReportHTML(doc);
+    else inner = head("Bulk messaging", campContacts(doc).length + " contacts · " + campLists(doc).length + " lists", "") + campHomeHTML(doc);
+    return '<div class="x97-remind-panel">' + inner + '</div>';
+  }
+
+  function campHomeHTML(doc) {
+    var lists = campLists(doc), campaigns = campCampaigns(doc);
+    var od = audienceContacts(doc, { type: "overdue" }).length;
+    var listRows = lists.map(function (l) {
+      var n = campContacts(doc).filter(function (c) { return (c.lists || []).indexOf(l.id) >= 0; }).length;
+      return '<div class="x97-camp-list"><div class="x97-camp-list-main" data-camp="use-list" data-id="' + attr(l.id) + '"><div class="x97-rm-name">' + esc(l.name) + '</div><div class="x97-rm-sub">' + n + ' contacts</div></div><button class="x97-rm-tool" data-camp="del-list" data-id="' + attr(l.id) + '">' + icon("trash", 13) + '</button></div>';
+    }).join("");
+    var histRows = campaigns.length ? campaigns.map(function (c) {
+      var st = c.stats || { sent: 0 }, total = (c.log || []).length;
+      return '<button class="x97-camp-hist" data-camp="report" data-id="' + attr(c.id) + '"><div style="flex:1;min-width:0"><div class="x97-rm-name">' + esc(c.name || "Untitled") + '</div><div class="x97-rm-sub">' + esc(audienceLabel(doc, c.audience)) + ' · ' + (st.sent || 0) + ' sent' + (st.failed ? ' · ' + st.failed + ' failed' : '') + '</div></div>' + icon("chevron") + '</button>';
+    }).join("") : '<div class="x97-rm-sub" style="padding:6px 2px">No campaigns yet.</div>';
+    return '<div class="x97-rm-list">' +
+      '<button class="x97-btn primary" data-camp="new" style="width:100%;justify-content:center;margin-bottom:14px">' + icon("plus") + ' New campaign</button>' +
+      '<div class="x97-camp-sec">Audiences</div>' +
+      '<div class="x97-camp-list"><div class="x97-camp-list-main" data-camp="use-overdue"><div class="x97-rm-name">Overdue clients</div><div class="x97-rm-sub">Auto-built from your finances · ' + od + ' with a number</div></div><span class="x97-pill">smart</span></div>' +
+      listRows +
+      '<button class="x97-rm-tool" data-camp="import" style="margin-top:8px">' + icon("plus", 13) + ' Import contacts (CSV)</button>' +
+      '<div class="x97-camp-sec" style="margin-top:18px">Campaigns</div>' + histRows +
+      '</div>';
+  }
+
+  function campImportHTML(doc) {
+    var parsed = campaignState.importText ? parseCSV(campaignState.importText) : { headers: [], rows: [] };
+    var mapping = "";
+    if (parsed.headers.length) {
+      var phoneCol = campaignState.phoneCol || detectPhoneCol(parsed.headers, parsed.rows);
+      var nameCol = campaignState.nameCol || detectNameCol(parsed.headers, phoneCol);
+      var valid = parsed.rows.filter(function (r) { return waNumber(r[phoneCol] || "", doc).length >= 10; }).length;
+      var opts = function (sel) { return parsed.headers.map(function (h) { return option(h, h, sel); }).join(""); };
+      mapping = '<div class="x97-camp-map"><div class="x97-fields-2">' +
+        field("Name column", '<select class="x97-select x97-camp-namecol">' + opts(nameCol) + '</select>') +
+        field("Phone column", '<select class="x97-select x97-camp-phonecol">' + opts(phoneCol) + '</select>') + '</div>' +
+        '<div class="x97-help"><b>' + parsed.rows.length + '</b> rows · <b>' + valid + '</b> valid WhatsApp numbers detected.</div></div>';
+    }
+    return '<div class="x97-rm-list">' +
+      field("List name", '<input class="x97-input x97-camp-listname" value="' + attr(campaignState.listName || "") + '" placeholder="e.g. October leads">') +
+      '<label class="x97-rm-tool" style="display:inline-flex;margin-bottom:8px;cursor:pointer">' + icon("plus", 13) + ' Choose CSV file<input type="file" class="x97-camp-file" accept=".csv,.tsv,.txt,text/csv" style="display:none"></label>' +
+      field("…or paste rows", '<textarea class="x97-textarea x97-camp-import" rows="6" placeholder="name,phone,amount&#10;Apollo,0772123456,500000">' + esc(campaignState.importText || "") + '</textarea>', "First row must be column headers. Comma, tab or semicolon separated.") +
+      mapping +
+      '<button class="x97-btn primary" data-camp="do-import" ' + (parsed.rows.length ? "" : "disabled") + ' style="width:100%;justify-content:center;margin-top:6px">' + icon("check") + ' Import ' + (parsed.rows.length ? parsed.rows.length + " contacts" : "") + '</button>' +
+      '</div>';
+  }
+
+  function campComposeHTML(doc) {
+    var contacts = audienceContacts(doc, campaignState.audience);
+    var valid = contacts.filter(function (c) { return waNumber(c.phone, doc).length >= 10; }).length;
+    var lists = campLists(doc);
+    var audVal = campaignState.audience.type + ":" + (campaignState.audience.id || "");
+    var audOpts = option("overdue:", "Overdue clients (" + audienceContacts(doc, { type: "overdue" }).length + ")", audVal) +
+      option("all:", "All contacts (" + campContacts(doc).length + ")", audVal) +
+      lists.map(function (l) { var n = campContacts(doc).filter(function (c) { return (c.lists || []).indexOf(l.id) >= 0; }).length; return option("list:" + l.id, l.name + " (" + n + ")", audVal); }).join("");
+    var vars = variableKeys(doc).map(function (k) { return '<button class="x97-camp-var" data-camp="var" data-var="' + attr(k) + '">{{' + esc(k) + '}}</button>'; }).join("");
+    var preview = "";
+    if (contacts.length) { var pc = contacts[campaignState.previewIdx % contacts.length]; preview = '<div class="x97-camp-preview"><div class="x97-rm-sub" style="margin-bottom:6px">Preview → ' + esc(pc.name || pc.phone) + ' <button class="x97-rm-link" data-camp="shuffle">shuffle ↻</button></div>' + esc(resolveMessage(campaignState.message, pc)) + '</div>'; }
+    var modeSeg = '<div class="x97-rm-seg"><button data-camp="mode-onetap" class="' + (campaignState.mode === "onetap" ? "on" : "") + '">One-tap</button><button data-camp="mode-auto" class="' + (campaignState.mode === "auto" ? "on" : "") + '">Auto</button></div>';
+    var sendBtn = campaignState.mode === "auto"
+      ? (remindExt.ready ? '<button class="x97-btn primary" data-camp="send" ' + (valid ? "" : "disabled") + '>' + icon("send") + ' Send automatically (' + valid + ')</button>' : '<button class="x97-btn primary" disabled style="opacity:.55">Sender not detected</button>')
+      : '<button class="x97-btn primary" data-camp="send" ' + (valid ? "" : "disabled") + '>' + icon("message") + ' Start sending (' + valid + ')</button>';
+    return '<div class="x97-rm-list">' +
+      field("Campaign name", '<input class="x97-input x97-camp-name" value="' + attr(campaignState.name || "") + '" placeholder="e.g. October promo">') +
+      field("Audience", '<select class="x97-select x97-camp-aud">' + audOpts + '</select>', valid + " of " + contacts.length + " have a valid WhatsApp number") +
+      '<div class="x97-field"><label>Message</label><div class="x97-camp-vars">' + vars + '</div><textarea class="x97-textarea x97-camp-msg" rows="5" placeholder="Hi {{name}}, …  ·  use {Hi|Hello|Hey} for variety">' + esc(campaignState.message) + '</textarea><div class="x97-help">Insert a variable with the chips. <b>{Hi|Hello|Hey}</b> picks one at random per person (keeps messages varied &amp; safe).</div></div>' +
+      preview +
+      '<div class="x97-rm-toolbar" style="border:0;padding:10px 0"><span class="x97-rm-sub">Send mode</span><span class="x97-rm-spacer"></span>' + modeSeg + '</div>' +
+      '<div style="display:flex;gap:8px"><button class="x97-btn" data-camp="save" style="flex:0 0 auto">Save draft</button>' + sendBtn + '</div>' +
+      '</div>';
+  }
+
+  function campReportHTML(doc) {
+    var c = campaignState.runId ? campCampaigns(doc).find(function (x) { return x.id === campaignState.runId; }) : (campaignState.editId ? campCampaigns(doc).find(function (x) { return x.id === campaignState.editId; }) : null);
+    var jobs = campaignState.jobs || [];
+    var st = (c && c.stats) || { sent: 0, failed: 0, skipped: 0 };
+    var total = jobs.length || (c ? (c.log || []).length : 0);
+    var progressing = campaignState.sending || (jobs.length && campaignState.oneTapIdx < jobs.length);
+    var rows;
+    if (jobs.length) {
+      rows = jobs.map(function (j) { var p = campaignState.progress[j.id]; return '<div class="x97-camp-logrow"><div style="flex:1;min-width:0"><div class="x97-rm-name">' + esc(j.name || j.phone) + '</div><div class="x97-rm-sub">' + esc(j.phone) + '</div></div><span class="x97-pill ' + (p === "sent" ? "good" : p === "error" ? "bad" : p ? "warn" : "") + '">' + esc(p ? progLabel(p) : "waiting") + '</span></div>'; }).join("");
+    } else if (c) {
+      rows = (c.log || []).map(function (e) { return '<div class="x97-camp-logrow"><div style="flex:1;min-width:0"><div class="x97-rm-name">' + esc(e.name || e.phone) + '</div><div class="x97-rm-sub">' + esc(e.phone) + '</div></div><span class="x97-pill ' + (e.status === "sent" ? "good" : e.status === "error" ? "bad" : "warn") + '">' + esc(progLabel(e.status)) + '</span></div>'; }).join("") || '<div class="x97-rm-sub">No sends logged yet.</div>';
+    } else rows = '<div class="x97-rm-sub">Nothing to show.</div>';
+    var tiles = '<div class="x97-camp-tiles"><div><b class="x97-green">' + (st.sent || 0) + '</b><span>Sent</span></div><div><b>' + total + '</b><span>Total</span></div><div><b class="' + (st.failed ? "x97-red" : "") + '">' + (st.failed || 0) + '</b><span>Failed</span></div><div><b>' + (st.skipped || 0) + '</b><span>Skipped</span></div></div>';
+    var actions = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">' +
+      (campaignState.mode !== "auto" && progressing ? '<button class="x97-btn primary" data-camp="onetap-next">' + icon("message") + ' Open next in WhatsApp</button>' : '') +
+      (c ? '<button class="x97-btn" data-camp="export" data-id="' + attr(c.id) + '">' + icon("arrow") + ' Export CSV</button>' : '') + '</div>';
+    return '<div class="x97-rm-list">' + tiles + actions + '<div class="x97-camp-sec" style="margin-top:16px">Recipients</div>' + rows + '</div>';
+  }
+
+  function insertVar(key) {
+    var ta = document.querySelector("#x97-camp .x97-camp-msg");
+    var token = "{{" + key + "}}";
+    if (ta) {
+      var s = ta.selectionStart || ta.value.length, e = ta.selectionEnd || ta.value.length;
+      ta.value = ta.value.slice(0, s) + token + ta.value.slice(e);
+      campaignState.message = ta.value;
+      ta.focus(); var pos = s + token.length; ta.setSelectionRange(pos, pos);
+    } else { campaignState.message += token; refreshCamp(); }
+  }
+
+  function wireCamp(el) {
+    el.addEventListener("click", function (e) {
+      var b = e.target.closest && e.target.closest("[data-camp]"); if (!b || !el.contains(b)) return;
+      onCampAction(b.dataset.camp, b);
+    });
+    el.addEventListener("input", function (e) {
+      var t = e.target;
+      if (t.classList.contains("x97-camp-msg")) { campaignState.message = t.value; var pv = el.querySelector(".x97-camp-preview"); if (pv) { var doc = readDoc(); var cs = audienceContacts(doc, campaignState.audience); if (cs.length) pv.lastChild.textContent = resolveMessage(campaignState.message, cs[campaignState.previewIdx % cs.length]); } return; }
+      if (t.classList.contains("x97-camp-name")) { campaignState.name = t.value; return; }
+      if (t.classList.contains("x97-camp-import")) { campaignState.importText = t.value; campaignState.nameCol = ""; campaignState.phoneCol = ""; refreshCamp(); return; }
+      if (t.classList.contains("x97-camp-listname")) { campaignState.listName = t.value; return; }
+    });
+    el.addEventListener("change", function (e) {
+      var t = e.target;
+      if (t.classList.contains("x97-camp-aud")) { var parts = t.value.split(":"); campaignState.audience = { type: parts[0], id: parts[1] || "" }; campaignState.previewIdx = 0; refreshCamp(); return; }
+      if (t.classList.contains("x97-camp-namecol")) { campaignState.nameCol = t.value; return; }
+      if (t.classList.contains("x97-camp-phonecol")) { campaignState.phoneCol = t.value; refreshCamp(); return; }
+      if (t.classList.contains("x97-camp-file")) {
+        var f = t.files && t.files[0]; if (!f) return;
+        var r = new FileReader(); r.onload = function () { campaignState.importText = String(r.result || ""); campaignState.nameCol = ""; campaignState.phoneCol = ""; if (!campaignState.listName) campaignState.listName = f.name.replace(/\.[^.]+$/, ""); refreshCamp(); }; r.readAsText(f); return;
+      }
+    });
+  }
+
+  function onCampAction(a, node) {
+    var doc = readDoc();
+    if (a === "close") return closeCampaigns();
+    if (a === "home") { campaignState.view = "home"; campaignState.jobs = null; return refreshCamp(); }
+    if (a === "import") { campaignState.view = "import"; return refreshCamp(); }
+    if (a === "new") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: audienceContacts(doc, { type: "overdue" }).length ? "overdue" : "all", id: "" }; campaignState.previewIdx = 0; return refreshCamp(); }
+    if (a === "use-list") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: "list", id: node.dataset.id }; campaignState.previewIdx = 0; return refreshCamp(); }
+    if (a === "use-overdue") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: "overdue", id: "" }; campaignState.previewIdx = 0; return refreshCamp(); }
+    if (a === "del-list") { if (confirm("Delete this list? Contacts stay, only the grouping is removed.")) { updateDoc(function (d) { d.waLists = (d.waLists || []).filter(function (l) { return l.id !== node.dataset.id; }); (d.waContacts || []).forEach(function (c) { c.lists = (c.lists || []).filter(function (id) { return id !== node.dataset.id; }); }); }, "camp-dellist"); refreshCamp(); } return; }
+    if (a === "var") return insertVar(node.dataset.var);
+    if (a === "shuffle") { campaignState.previewIdx++; return refreshCamp(); }
+    if (a === "mode-onetap") { campaignState.mode = "onetap"; return refreshCamp(); }
+    if (a === "mode-auto") { campaignState.mode = "auto"; return refreshCamp(); }
+    if (a === "save") { persistCampaign(); toast("Campaign saved", ""); campaignState.view = "home"; return refreshCamp(); }
+    if (a === "send") return startCampaign(campaignState.mode);
+    if (a === "onetap-next") return sendCampaignOneTapNext();
+    if (a === "report") { var c = campCampaigns(doc).find(function (x) { return x.id === node.dataset.id; }); if (c) { campaignState.runId = c.id; campaignState.editId = c.id; campaignState.name = c.name; campaignState.mode = c.mode || "onetap"; campaignState.jobs = null; campaignState.view = "report"; refreshCamp(); } return; }
+    if (a === "export") return exportCampaignCSV(node.dataset.id);
+    if (a === "do-import") {
+      var parsed = parseCSV(campaignState.importText || "");
+      if (!parsed.rows.length) { toast("Nothing to import", "error"); return; }
+      var phoneCol = campaignState.phoneCol || detectPhoneCol(parsed.headers, parsed.rows);
+      var nameCol = campaignState.nameCol || detectNameCol(parsed.headers, phoneCol);
+      var res = importContacts(parsed, nameCol, phoneCol, campaignState.listName || "Imported list");
+      toast(res.added + " imported" + (res.skipped ? ", " + res.skipped + " skipped (no number)" : ""), "");
+      campaignState.importText = ""; campaignState.listName = ""; campaignState.nameCol = ""; campaignState.phoneCol = "";
+      campaignState.view = "home"; refreshCamp();
+    }
+  }
+
+  function injectCampCSS() {
+    if (document.getElementById("x97-camp-css")) return;
+    var css =
+      ".x97-camp-sec{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:850;color:var(--tx3);margin:2px 2px 9px}" +
+      ".x97-camp-list{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:13px;padding:11px 12px;margin-bottom:8px;background:var(--card)}" +
+      ".x97-camp-list-main{flex:1;min-width:0;cursor:pointer}" +
+      ".x97-camp-hist{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:1px solid var(--line);border-radius:13px;padding:11px 12px;margin-bottom:8px;background:var(--card);color:var(--tx);cursor:pointer}" +
+      ".x97-camp-vars{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}" +
+      ".x97-camp-var{background:var(--card2);border:1px solid var(--line2);border-radius:8px;padding:5px 9px;font-size:11.5px;font-weight:750;color:var(--pos);cursor:pointer;font-family:inherit}" +
+      ".x97-camp-preview{background:var(--card2);border:1px dashed var(--line2);border-radius:12px;padding:12px;margin:4px 0 12px;font-size:12.5px;line-height:1.5;color:var(--tx);white-space:pre-wrap}" +
+      ".x97-camp-map{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}" +
+      ".x97-camp-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:6px}" +
+      ".x97-camp-tiles div{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:11px 6px;text-align:center}" +
+      ".x97-camp-tiles b{display:block;font-size:20px;font-variant-numeric:tabular-nums}.x97-camp-tiles span{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--tx3);font-weight:800}" +
+      ".x97-camp-logrow{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line)}";
+    var s = document.createElement("style"); s.id = "x97-camp-css"; s.textContent = css; document.head.appendChild(s);
+  }
+
   function submitFilters(form) {
     var v=formValues(form);state.upcoming.statuses=v.statuses||[];state.upcoming.currencies=v.currencies||[];state.upcoming.categories=v.categories||[];state.upcoming.from=v.from||"";state.upcoming.to=v.to||"";state.upcoming.minAmount=v.minAmount||"";state.upcoming.maxAmount=v.maxAmount||"";state.upcoming.sort=v.sort||"urgency";savePrefs();closeSheet();scheduleRender(0);
   }
@@ -1487,6 +1879,7 @@
     var btn=e.target.closest && e.target.closest("[data-x97-action]");if(!btn)return;var action=btn.dataset.x97Action;
     if(action==="close-sheet"){closeSheet();return;}
     if(action==="open-reminders"){openReminders();return;}
+    if(action==="open-campaigns"){openCampaigns();return;}
     if(action==="reset-templates"){updateDoc(function(doc){if(doc.settings)doc.settings.reminderTemplates=null;},"reminder-templates-reset");closeSheet();openTemplateManager();return;}
     if(action==="add-upcoming"){openUpcomingForm();return;}
     if(action==="edit-upcoming"){e.stopPropagation();openUpcomingForm(btn.dataset.id);return;}

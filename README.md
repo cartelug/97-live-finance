@@ -106,6 +106,24 @@ sends the whole queue for you at a **human pace** with safety rails:
 
 Tune all of these in the cockpit's **Safety** panel.
 
+### Bulk messaging / campaigns
+Beyond chasing overdue clients, the **Bulk messaging** card (on the dashboard)
+is a full WhatsApp campaign sender:
+
+- **Import contacts** — paste a CSV or choose a file. It auto-detects the name
+  and phone columns, keeps every other column as a custom field, formats and
+  de-duplicates numbers, and saves them as a named **list**.
+- **Audiences** — send to any imported list, to **all contacts**, or to the
+  built-in **Overdue clients** smart list (auto-built from your finances).
+- **Compose** — write one message with **merge variables** (`{{name}}`,
+  `{{company}}`, or any column you imported) and **spintax** — `{Hi|Hello|Hey}`
+  picks one at random per person so no two texts are identical (this is what
+  keeps bulk sends looking human). A live **preview** shows each recipient's
+  version.
+- **Send** — the same one-tap or Auto engine and the same safety rails.
+- **Reports** — per-recipient sent / failed / skipped, campaign history, and
+  **Export CSV**.
+
 ### Install 97 Sender (Chrome / Edge / Brave)
 1. Open `chrome://extensions`.
 2. Turn on **Developer mode** (top-right).
