@@ -73,10 +73,58 @@ computed locally and need **no key**.
 
 ---
 
-## 5. What it does — and doesn't
-It **tracks, forecasts and advises**. It does **not** move money, message clients,
-or connect to your mobile-money or bank accounts. You update balances and mark
-items paid; it does the maths, the alerts and the suggestions.
+## 5. Payment reminders (WhatsApp)
+When something is **overdue or due within 7 days**, the dashboard shows a
+**Payment reminders** card. Open it for a chase cockpit:
+
+- Everyone late, sorted most-urgent first, each with a "days overdue" pill.
+- **Templates** with slots (`{name} {amount} {date} {days} {project} {you}`) and
+  three tones — **Friendly → Follow-up → Firm** — picked automatically by how
+  late each payment is, or set by hand.
+- **AI-personalise** (optional): uses your Anthropic key (the same one as the
+  Copilot) to write each message individually in your voice, so no two are
+  identical. Falls back to templates if the key is missing or offline.
+- Add a **WhatsApp number** on each upcoming item (local `0772…` or full
+  `+256772…`; the country code lives in **Templates → Country code**).
+
+There are two ways to send:
+
+**One-tap (works immediately, nothing to install).** Tap *Open next in WhatsApp*
+— WhatsApp opens with the message pre-filled to that person, you press send, and
+it advances to the next. Every send is a real tap by you, so your number is safe.
+
+**Auto (hands-off).** Install the free **97 Sender** browser extension (below),
+keep **web.whatsapp.com** open in a tab, and choose *Send automatically*. It
+sends the whole queue for you at a **human pace** with safety rails:
+
+- randomised gaps between messages (default 45–120s, with jitter)
+- a **daily cap** and optional warm-up ramp
+- batch breaks (e.g. pause after every 8)
+- **quiet hours** (won't message late at night)
+- auto-skips numbers WhatsApp reports as invalid/unsaved
+- a **risk meter** showing today's count vs your cap
+
+Tune all of these in the cockpit's **Safety** panel.
+
+### Install 97 Sender (Chrome / Edge / Brave)
+1. Open `chrome://extensions`.
+2. Turn on **Developer mode** (top-right).
+3. Click **Load unpacked** and choose the **`extension/`** folder from this repo.
+4. Open **web.whatsapp.com** and link your phone (scan the QR) as usual.
+5. Back in 97 LIVE, open **Payment reminders** — it now says *Sender connected*.
+
+> The extension only sends the messages you queue, only while WhatsApp Web is
+> open, and stores nothing off your machine. Automated sending on a personal
+> number always carries some risk — the safety rails and human pacing are there
+> to keep it looking natural, but keep volumes sensible.
+
+---
+
+## 6. What it does — and doesn't
+It **tracks, forecasts, advises** and now **drafts and paces WhatsApp reminders**.
+It does **not** move money or connect to your mobile-money or bank accounts. You
+update balances and mark items paid; it does the maths, the alerts, the
+suggestions, and helps you chase what's owed.
 
 ---
 
