@@ -73,67 +73,61 @@ computed locally and need **no key**.
 
 ---
 
-## 5. Payment reminders (WhatsApp)
-When something is **overdue or due within 7 days**, the dashboard shows a
-**Payment reminders** card. Open it for a chase cockpit:
+## 5. Messaging (WhatsApp reminders & bulk campaigns)
+One **Messaging** card on the dashboard opens a single hub for everything
+WhatsApp — chasing overdue clients and sending bulk campaigns share the same
+engine, contacts and safety rails, so they live in one place:
 
-- Everyone late, sorted most-urgent first, each with a "days overdue" pill.
-- **Templates** with slots (`{name} {amount} {date} {days} {project} {you}`) and
-  three tones — **Friendly → Follow-up → Firm** — picked automatically by how
-  late each payment is, or set by hand.
-- **AI-personalise** (optional): uses your Anthropic key (the same one as the
-  Copilot) to write each message individually in your voice, so no two are
-  identical. Falls back to templates if the key is missing or offline.
-- Add a **WhatsApp number** on each upcoming item (local `0772…` or full
-  `+256772…`; the country code lives in **Templates → Country code**).
+- **Chase overdue** — everyone late, sorted most-urgent first, each with a
+  "days overdue" pill. **Templates** with slots
+  (`{name} {amount} {date} {days} {project} {you}`) and three tones —
+  **Friendly → Follow-up → Firm** — picked automatically by how late each
+  payment is, or set by hand. **AI-personalise** (optional) uses your Anthropic
+  key (the same one as the Copilot) to write each message individually in your
+  voice; falls back to templates if the key is missing or offline.
+- **New campaign** — a full message editor: a formatting toolbar (**bold**,
+  *italic*, ~~strike~~, monospace), an emoji picker, an **@value** menu for
+  **merge variables** (`{{name}}`, `{{company}}`, or any imported column),
+  **spintax** — `{Hi|Hello|Hey}` picks one at random per person so no two
+  texts are identical — and a **Format test** preview per recipient.
+- **Contacts & lists** — **import contacts** by pasting a CSV or choosing a
+  file. It auto-detects the name & phone columns, keeps every other column as
+  a custom field, formats and de-duplicates numbers, and saves them as a named
+  list. Send to any list, **all contacts**, the built-in **Overdue clients**
+  smart list, or type numbers in by hand.
+- **Templates** — save any message as a reusable template and load it into a
+  new campaign or reminder in one tap.
 
-There are two ways to send:
+Add a **WhatsApp number** on each upcoming item (local `0772…` or full
+`+256772…`; the country code lives in **Templates → Country code**).
 
-**One-tap (works immediately, nothing to install).** Tap *Open next in WhatsApp*
-— WhatsApp opens with the message pre-filled to that person, you press send, and
-it advances to the next. Every send is a real tap by you, so your number is safe.
+There are two ways to send — same for reminders and campaigns:
+
+**One-tap (works immediately, nothing to install).** Opens WhatsApp with the
+message pre-filled to that person, you press send, and it advances to the
+next. Every send is a real tap by you, so your number is safe.
 
 **Auto (hands-off).** Install the free **97 Sender** browser extension (below),
-keep **web.whatsapp.com** open in a tab, and choose *Send automatically*. It
-sends the whole queue for you at a **human pace** with safety rails:
+keep **web.whatsapp.com** open in a tab, and choose *Auto*. It sends the whole
+queue for you at a **human pace** with safety rails — **Antiblock** presets
+(**Conservative / Balanced / Fast**) plus:
 
-- randomised gaps between messages (default 45–120s, with jitter)
+- randomised gaps between messages, with jitter
 - a **daily cap** and optional warm-up ramp
 - batch breaks (e.g. pause after every 8)
 - **quiet hours** (won't message late at night)
 - auto-skips numbers WhatsApp reports as invalid/unsaved
-- a **risk meter** showing today's count vs your cap
+- a **risk meter** on the hub showing today's count vs your cap
 
-Tune all of these in the cockpit's **Safety** panel.
-
-### Bulk messaging / campaigns
-Beyond chasing overdue clients, the **Bulk messaging** card (on the dashboard)
-is a full WhatsApp campaign sender:
-
-- **Import contacts** — paste a CSV or choose a file. It auto-detects the name
-  and phone columns, keeps every other column as a custom field, formats and
-  de-duplicates numbers, and saves them as a named **list**.
-- **Audiences** — send to any imported list, to **all contacts**, or to the
-  built-in **Overdue clients** smart list (auto-built from your finances).
-- **Compose** — a full message editor: a formatting toolbar (**bold**,
-  *italic*, ~~strike~~, monospace), an emoji picker, an **@value** menu to drop
-  in **merge variables** (`{{name}}`, `{{company}}`, or any imported column),
-  **spintax** — `{Hi|Hello|Hey}` picks one at random per person so no two texts
-  are identical — and a **Format test** preview showing each recipient's version.
-- **Templates** — save any message as a reusable template and load it into a new
-  campaign in one tap.
-- **Antiblock presets** — **Conservative / Balanced / Fast** set the send pace,
-  with a *Show detail* panel for country code, duplicate removal and timestamps.
-- **Send** — the same one-tap or Auto engine and the same safety rails.
-- **Reports** — per-recipient sent / failed / skipped, campaign history, and
-  **Export CSV**.
+Every campaign gets a **report** — per-recipient sent / failed / skipped,
+campaign history on the hub, and **Export CSV**.
 
 ### Install 97 Sender (Chrome / Edge / Brave)
 1. Open `chrome://extensions`.
 2. Turn on **Developer mode** (top-right).
 3. Click **Load unpacked** and choose the **`extension/`** folder from this repo.
 4. Open **web.whatsapp.com** and link your phone (scan the QR) as usual.
-5. Back in 97 LIVE, open **Payment reminders** — it now says *Sender connected*.
+5. Back in 97 LIVE, open **Messaging** — the hub now says *Sender connected*.
 
 > The extension only sends the messages you queue, only while WhatsApp Web is
 > open, and stores nothing off your machine. Automated sending on a personal
