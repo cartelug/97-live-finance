@@ -27,7 +27,13 @@
   var modeActive = false;
   var remindExt = { ready: false, version: "", sending: false };
   var remindState = { open: false, mode: "onetap", tone: "auto", useAI: false, selected: {}, drafts: {}, showAll: false, progress: {} };
-  var campaignState = { open: false, view: "home", mode: "onetap", editId: null, audience: { type: "list", id: "" }, message: "", previewIdx: 0, progress: {}, sending: false, runId: null, oneTapIdx: 0 };
+  var campaignState = { open: false, view: "home", mode: "onetap", editId: null, audience: { type: "list", id: "" }, message: "", previewIdx: 0, progress: {}, sending: false, runId: null, oneTapIdx: 0, antiblock: "balanced", showDetail: false, showVars: false, showEmoji: false, showPreview: false, showTemplates: false, dupRemoval: true, timestamp: false, countryCode: "", manualNumbers: "" };
+  var ANTIBLOCK = {
+    conservative: { label: "Conservative", min: 60, max: 180, batch: 5, brk: 15, note: "Safest · 60–180s between sends" },
+    balanced: { label: "Balanced", min: 30, max: 90, batch: 8, brk: 10, note: "Recommended · 30–90s between sends" },
+    fast: { label: "Fast", min: 8, max: 25, batch: 15, brk: 5, note: "Quick · 8–25s between sends" }
+  };
+  var EMOJIS = ["😀","😁","😅","😂","🙂","😉","😍","😘","😎","🤩","🥳","🙏","👍","👌","👏","🙌","💪","🔥","✨","🎉","💯","✅","❗","❓","⚠️","💰","💸","🧾","📅","⏰","📌","📞","📱","💬","➡️","👉","❤️","🧡","💚","💙","🙏🏾","😊","😄","🤝","🎬","🎥","📸","🌟"];
 
   var state = {
     upcoming: {
@@ -1075,12 +1081,12 @@
   function prettyPhone(p) { return String(p == null ? "" : p).trim(); }
 
   function waCountry(doc) { return String((doc.settings && doc.settings.countryCode) || "256").replace(/\D/g, "") || "256"; }
-  function waNumber(phone, doc) {
+  function waNumber(phone, doc, ccOverride) {
     var raw = String(phone == null ? "" : phone).trim();
     if (!raw) return "";
     if (raw.charAt(0) === "+") return raw.replace(/\D/g, "");
     var d = raw.replace(/\D/g, ""); if (!d) return "";
-    var cc = waCountry(doc);
+    var cc = String(ccOverride || "").replace(/\D/g, "") || waCountry(doc);
     if (d.indexOf(cc) === 0 && d.length >= cc.length + 8) return d;
     if (d.charAt(0) === "0") return cc + d.slice(1);
     if (d.length === 9) return cc + d;
@@ -1517,11 +1523,31 @@
         return { id: "od_" + x.id, name: x.client || "", phone: x.phone || "", fields: { amount: num(x.amount) ? money(x.amount, cur) : "", currency: cur, date: x.expectedBy ? formatDate(x.expectedBy, false) : "", days: (t.days != null && t.days < 0) ? String(Math.abs(t.days)) : "0", project: x.client || "" } };
       });
     }
+    if (audience.type === "manual") {
+      return String(campaignState.manualNumbers || "").split(/[\n,;]+/).map(function (s) { return s.trim(); }).filter(Boolean).map(function (s, i) { return { id: "m_" + i + "_" + s.replace(/\D/g, ""), name: "", phone: s, fields: {} }; });
+    }
     var contacts = campContacts(doc);
     if (audience.type === "all") return contacts.slice();
     if (audience.type === "list") return contacts.filter(function (c) { return (c.lists || []).indexOf(audience.id) >= 0; });
     return [];
   }
+  function campSafety(doc) {
+    var p = ANTIBLOCK[campaignState.antiblock] || ANTIBLOCK.balanced;
+    return { dailyCap: (doc.settings && doc.settings.waSafety && num(doc.settings.waSafety.dailyCap)) || 200, minDelay: p.min, maxDelay: p.max, batchSize: p.batch, batchBreak: p.brk, quietStart: "", quietEnd: "", warmup: campaignState.antiblock !== "fast", knownOnly: false };
+  }
+  function stampMessage(msg) {
+    if (!campaignState.timestamp) return msg;
+    try { return msg + "\n\n" + new Date().toLocaleString(); } catch (_) { return msg; }
+  }
+  function renderWaFormat(text) {
+    var s = esc(text);
+    s = s.replace(/```([\s\S]+?)```/g, '<code>$1</code>');
+    s = s.replace(/(^|\s)\*(\S[^*]*?\S|\S)\*(?=\s|$)/g, '$1<b>$2</b>');
+    s = s.replace(/(^|\s)_(\S[^_]*?\S|\S)_(?=\s|$)/g, '$1<i>$2</i>');
+    s = s.replace(/(^|\s)~(\S[^~]*?\S|\S)~(?=\s|$)/g, '$1<s>$2</s>');
+    return s.replace(/\n/g, "<br>");
+  }
+  function campTemplates(doc) { return (doc.settings && doc.settings.waTemplates) || []; }
   function audienceLabel(doc, audience) {
     if (!audience) return "No audience";
     if (audience.type === "overdue") return "Overdue clients";
@@ -1536,10 +1562,13 @@
     return keys;
   }
   function campaignJobs(doc) {
-    return audienceContacts(doc, campaignState.audience).map(function (c) {
-      var phone = waNumber(c.phone, doc);
-      return { id: c.id, cid: c.id, name: c.name, phone: phone, message: resolveMessage(campaignState.message, c), valid: phone.length >= 10 };
+    var cc = campaignState.countryCode;
+    var jobs = audienceContacts(doc, campaignState.audience).map(function (c) {
+      var phone = waNumber(c.phone, doc, cc);
+      return { id: c.id, cid: c.id, name: c.name, phone: phone, message: stampMessage(resolveMessage(campaignState.message, c)), valid: phone.length >= 10 };
     }).filter(function (j) { return j.valid; });
+    if (campaignState.dupRemoval) { var seen = {}; jobs = jobs.filter(function (j) { if (seen[j.phone]) return false; seen[j.phone] = 1; return true; }); }
+    return jobs;
   }
 
   function persistCampaign() {
@@ -1581,7 +1610,7 @@
       if (!remindExt.ready) { toast("Install the 97 Sender extension for Auto", "error"); return; }
       jobs.forEach(function (j) { campaignState.progress[j.id] = "queued"; });
       campaignState.sending = true;
-      window.postMessage({ source: "x97-wa-app", type: "enqueue", jobs: jobs.map(function (j) { return { id: j.id, phone: j.phone, name: j.name, message: j.message }; }), safety: safety(doc) }, "*");
+      window.postMessage({ source: "x97-wa-app", type: "enqueue", jobs: jobs.map(function (j) { return { id: j.id, phone: j.phone, name: j.name, message: j.message }; }), safety: campSafety(doc) }, "*");
       toast("Sending " + jobs.length + " — keep WhatsApp Web open", "");
       campaignState.view = "report"; refreshCamp();
     } else {
@@ -1651,7 +1680,15 @@
     refreshCamp();
   }
   function closeCampaigns() { campaignState.open = false; var el = document.getElementById("x97-camp"); if (el) el.remove(); if (!remindState.open) document.body.classList.remove("x97-remind-lock"); }
-  function refreshCamp() { var el = document.getElementById("x97-camp"); if (!el || !campaignState.open) return; var doc = readDoc(); if (!doc) return; el.innerHTML = campOverlayHTML(doc); }
+  var campRefreshing = false;
+  function refreshCamp() {
+    if (campRefreshing) return;
+    var el = document.getElementById("x97-camp"); if (!el || !campaignState.open) return;
+    var doc = readDoc(); if (!doc) return;
+    var active = document.activeElement; if (active && el.contains(active) && active.blur) { try { active.blur(); } catch (_) {} }
+    campRefreshing = true;
+    try { el.innerHTML = campOverlayHTML(doc); } finally { campRefreshing = false; }
+  }
 
   function campOverlayHTML(doc) {
     var v = campaignState.view;
@@ -1711,26 +1748,70 @@
 
   function campComposeHTML(doc) {
     var contacts = audienceContacts(doc, campaignState.audience);
-    var valid = contacts.filter(function (c) { return waNumber(c.phone, doc).length >= 10; }).length;
+    var valid = campaignJobs(doc).length;
     var lists = campLists(doc);
     var audVal = campaignState.audience.type + ":" + (campaignState.audience.id || "");
     var audOpts = option("overdue:", "Overdue clients (" + audienceContacts(doc, { type: "overdue" }).length + ")", audVal) +
+      lists.map(function (l) { var n = campContacts(doc).filter(function (c) { return (c.lists || []).indexOf(l.id) >= 0; }).length; return option("list:" + l.id, l.name + " (" + n + ")", audVal); }).join("") +
       option("all:", "All contacts (" + campContacts(doc).length + ")", audVal) +
-      lists.map(function (l) { var n = campContacts(doc).filter(function (c) { return (c.lists || []).indexOf(l.id) >= 0; }).length; return option("list:" + l.id, l.name + " (" + n + ")", audVal); }).join("");
-    var vars = variableKeys(doc).map(function (k) { return '<button class="x97-camp-var" data-camp="var" data-var="' + attr(k) + '">{{' + esc(k) + '}}</button>'; }).join("");
+      option("manual:", "Type numbers manually", audVal);
+
+    /* ---- Message block ---- */
+    var tplMenu = campaignState.showTemplates ? '<div class="x97-ws-menu">' +
+      (campTemplates(doc).length ? campTemplates(doc).map(function (t) { return '<button class="x97-ws-menu-item" data-camp="load-tpl" data-id="' + attr(t.id) + '">' + esc(t.name) + '</button>'; }).join("") : '<div class="x97-ws-menu-empty">No saved templates yet</div>') +
+      '<button class="x97-ws-menu-item save" data-camp="save-tpl">＋ Save current as template</button></div>' : "";
+    var varMenu = campaignState.showVars ? '<div class="x97-ws-menu">' + variableKeys(doc).map(function (k) { return '<button class="x97-ws-menu-item" data-camp="var" data-var="' + attr(k) + '">{{' + esc(k) + '}}</button>'; }).join("") + '<button class="x97-ws-menu-item" data-camp="var" data-var="__spin">{Hi|Hello|Hey} spin</button></div>' : "";
+    var emojiMenu = campaignState.showEmoji ? '<div class="x97-ws-emoji">' + EMOJIS.map(function (e) { return '<button class="x97-ws-emoji-b" data-camp="emoji" data-e="' + attr(e) + '">' + e + '</button>'; }).join("") + '</div>' : "";
+    var toolbar = '<div class="x97-ws-tools">' +
+      '<button class="x97-ws-tool" data-camp="attach" title="Attach">' + icon("plus", 14) + ' Attachment</button>' +
+      '<div class="x97-ws-tw"><button class="x97-ws-tool ' + (campaignState.showTemplates ? "on" : "") + '" data-camp="tpl-menu">' + icon("edit", 14) + ' Templates ▾</button>' + tplMenu + '</div>' +
+      '<div class="x97-ws-tw"><button class="x97-ws-tool ' + (campaignState.showVars ? "on" : "") + '" data-camp="var-menu">@value ▾</button>' + varMenu + '</div>' +
+      '<button class="x97-ws-b" data-camp="fmt" data-m="*" title="Bold"><b>B</b></button>' +
+      '<button class="x97-ws-b" data-camp="fmt" data-m="_" title="Italic"><i>I</i></button>' +
+      '<button class="x97-ws-b" data-camp="fmt" data-m="~" title="Strikethrough"><s>S</s></button>' +
+      '<button class="x97-ws-b" data-camp="fmt" data-m="```" title="Monospace">&lt;/&gt;</button>' +
+      '<div class="x97-ws-tw"><button class="x97-ws-b ' + (campaignState.showEmoji ? "on" : "") + '" data-camp="emoji-menu" title="Emoji">😀</button>' + emojiMenu + '</div>' +
+      '<button class="x97-ws-tool ' + (campaignState.showPreview ? "on" : "") + '" data-camp="preview-toggle" style="margin-left:auto">' + icon("send", 13) + ' Format test</button>' +
+      '</div>';
     var preview = "";
-    if (contacts.length) { var pc = contacts[campaignState.previewIdx % contacts.length]; preview = '<div class="x97-camp-preview"><div class="x97-rm-sub" style="margin-bottom:6px">Preview → ' + esc(pc.name || pc.phone) + ' <button class="x97-rm-link" data-camp="shuffle">shuffle ↻</button></div>' + esc(resolveMessage(campaignState.message, pc)) + '</div>'; }
-    var modeSeg = '<div class="x97-rm-seg"><button data-camp="mode-onetap" class="' + (campaignState.mode === "onetap" ? "on" : "") + '">One-tap</button><button data-camp="mode-auto" class="' + (campaignState.mode === "auto" ? "on" : "") + '">Auto</button></div>';
+    if (campaignState.showPreview && contacts.length) {
+      var pc = contacts[campaignState.previewIdx % contacts.length];
+      preview = '<div class="x97-camp-preview"><div class="x97-rm-sub" style="margin-bottom:6px">Preview → <b>' + esc(pc.name || pc.phone) + '</b> <button class="x97-rm-link" data-camp="shuffle">shuffle ↻</button></div><div class="x97-ws-bubble">' + renderWaFormat(stampMessage(resolveMessage(campaignState.message, pc))) + '</div></div>';
+    }
+    var msgBlock = '<div class="x97-ws-card"><div class="x97-ws-h">' + icon("edit", 15) + ' Message</div>' + toolbar +
+      '<textarea class="x97-textarea x97-camp-msg" rows="5" placeholder="Enter message  ·  Hi {{name}}, …  ·  {Hi|Hello} adds variety">' + esc(campaignState.message) + '</textarea>' + preview + '</div>';
+
+    /* ---- Antiblock block ---- */
+    var ab = ANTIBLOCK[campaignState.antiblock] || ANTIBLOCK.balanced;
+    var seg = '<div class="x97-ws-seg">' + ["conservative", "balanced", "fast"].map(function (k) { return '<button data-camp="antiblock" data-k="' + k + '" class="' + (campaignState.antiblock === k ? "on" : "") + '">' + ANTIBLOCK[k].label + '</button>'; }).join("") + '</div>';
+    var detail = campaignState.showDetail ? '<div class="x97-ws-detail">' +
+      '<div class="x97-ws-note">' + ab.note + '</div>' +
+      field("Country code (for numbers without one)", '<input class="x97-input x97-camp-cc" inputmode="numeric" value="' + attr(campaignState.countryCode || waCountry(doc)) + '" placeholder="256">') +
+      '<label class="x97-ws-switch"><input type="checkbox" class="x97-camp-dup" ' + (campaignState.dupRemoval ? "checked" : "") + '><span><b>Duplicate removal</b><br>Skip repeated numbers to avoid double-messaging.</span></label>' +
+      '<label class="x97-ws-switch"><input type="checkbox" class="x97-camp-ts" ' + (campaignState.timestamp ? "checked" : "") + '><span><b>Add timestamp</b><br>Append the date &amp; time to each message.</span></label>' +
+      '</div>' : "";
+    var antiblock = '<div class="x97-ws-card"><div class="x97-ws-h"><span>' + icon("shield", 15) + ' Antiblock: <b>' + ab.label + '</b></span><button class="x97-rm-link" data-camp="detail-toggle">' + (campaignState.showDetail ? "Hide detail ▲" : "Show detail ▼") + '</button></div>' + seg + detail + '</div>';
+
+    /* ---- Phone Numbers block ---- */
+    var recipInner = campaignState.audience.type === "manual"
+      ? '<textarea class="x97-textarea x97-camp-manual" rows="4" placeholder="One number per line (with or without country code)&#10;0772123456&#10;+256700111222">' + esc(campaignState.manualNumbers || "") + '</textarea>'
+      : field("Send to", '<select class="x97-select x97-camp-aud">' + audOpts + '</select>');
+    var recipients = '<div class="x97-ws-card"><div class="x97-ws-h"><span>' + icon("phone", 15) + ' Phone Numbers</span><button class="x97-ws-tool" data-camp="import">' + icon("plus", 13) + ' Import Contacts</button></div>' +
+      (campaignState.audience.type === "manual" ? '<div class="x97-rm-sub" style="margin:0 0 8px"><button class="x97-rm-link" data-camp="use-saved">‹ use a saved list instead</button></div>' : "") +
+      recipInner +
+      '<div class="x97-ws-count"><b class="x97-green">' + valid + '</b> recipient' + (valid === 1 ? "" : "s") + ' will receive this' + (contacts.length > valid ? ' · ' + (contacts.length - valid) + ' skipped (no number or duplicate)' : '') + '</div></div>';
+
+    /* ---- Action bar ---- */
+    var modeSeg = '<div class="x97-ws-seg small"><button data-camp="mode-onetap" class="' + (campaignState.mode === "onetap" ? "on" : "") + '">One-tap</button><button data-camp="mode-auto" class="' + (campaignState.mode === "auto" ? "on" : "") + '">Auto</button></div>';
     var sendBtn = campaignState.mode === "auto"
-      ? (remindExt.ready ? '<button class="x97-btn primary" data-camp="send" ' + (valid ? "" : "disabled") + '>' + icon("send") + ' Send automatically (' + valid + ')</button>' : '<button class="x97-btn primary" disabled style="opacity:.55">Sender not detected</button>')
-      : '<button class="x97-btn primary" data-camp="send" ' + (valid ? "" : "disabled") + '>' + icon("message") + ' Start sending (' + valid + ')</button>';
+      ? (remindExt.ready ? '<button class="x97-btn primary" data-camp="send" ' + (valid ? "" : "disabled") + '>' + icon("send") + ' Send now (' + valid + ')</button>' : '<button class="x97-btn primary" disabled style="opacity:.55">Open WhatsApp Web first</button>')
+      : '<button class="x97-btn primary" data-camp="send" ' + (valid ? "" : "disabled") + '>' + icon("send") + ' Send now (' + valid + ')</button>';
+
     return '<div class="x97-rm-list">' +
       field("Campaign name", '<input class="x97-input x97-camp-name" value="' + attr(campaignState.name || "") + '" placeholder="e.g. October promo">') +
-      field("Audience", '<select class="x97-select x97-camp-aud">' + audOpts + '</select>', valid + " of " + contacts.length + " have a valid WhatsApp number") +
-      '<div class="x97-field"><label>Message</label><div class="x97-camp-vars">' + vars + '</div><textarea class="x97-textarea x97-camp-msg" rows="5" placeholder="Hi {{name}}, …  ·  use {Hi|Hello|Hey} for variety">' + esc(campaignState.message) + '</textarea><div class="x97-help">Insert a variable with the chips. <b>{Hi|Hello|Hey}</b> picks one at random per person (keeps messages varied &amp; safe).</div></div>' +
-      preview +
-      '<div class="x97-rm-toolbar" style="border:0;padding:10px 0"><span class="x97-rm-sub">Send mode</span><span class="x97-rm-spacer"></span>' + modeSeg + '</div>' +
-      '<div style="display:flex;gap:8px"><button class="x97-btn" data-camp="save" style="flex:0 0 auto">Save draft</button>' + sendBtn + '</div>' +
+      msgBlock + antiblock + recipients +
+      '<div class="x97-ws-modebar"><span class="x97-rm-sub">Send mode</span>' + modeSeg + '</div>' +
+      '<div class="x97-ws-actions"><button class="x97-btn" data-camp="reset-compose">' + icon("trash", 14) + ' Reset</button><button class="x97-btn" data-camp="save">' + icon("check", 14) + ' Save</button>' + sendBtn + '</div>' +
       '</div>';
   }
 
@@ -1753,15 +1834,22 @@
     return '<div class="x97-rm-list">' + tiles + actions + '<div class="x97-camp-sec" style="margin-top:16px">Recipients</div>' + rows + '</div>';
   }
 
-  function insertVar(key) {
+  function insertAtCursor(token) {
     var ta = document.querySelector("#x97-camp .x97-camp-msg");
-    var token = "{{" + key + "}}";
     if (ta) {
-      var s = ta.selectionStart || ta.value.length, e = ta.selectionEnd || ta.value.length;
+      var s = ta.selectionStart == null ? ta.value.length : ta.selectionStart, e = ta.selectionEnd == null ? ta.value.length : ta.selectionEnd;
       ta.value = ta.value.slice(0, s) + token + ta.value.slice(e);
-      campaignState.message = ta.value;
-      ta.focus(); var pos = s + token.length; ta.setSelectionRange(pos, pos);
+      campaignState.message = ta.value; ta.focus(); var pos = s + token.length; ta.setSelectionRange(pos, pos);
+      var bub = document.querySelector("#x97-camp .x97-ws-bubble"); if (bub) { var doc = readDoc(); var cs = audienceContacts(doc, campaignState.audience); if (cs.length) bub.innerHTML = renderWaFormat(stampMessage(resolveMessage(campaignState.message, cs[campaignState.previewIdx % cs.length]))); }
     } else { campaignState.message += token; refreshCamp(); }
+  }
+  function insertVar(key) { insertAtCursor(key === "__spin" ? "{Hi|Hello|Hey}" : "{{" + key + "}}"); }
+  function wrapSelection(marker) {
+    var ta = document.querySelector("#x97-camp .x97-camp-msg"); if (!ta) return;
+    var s = ta.selectionStart, e = ta.selectionEnd, sel = ta.value.slice(s, e) || "text";
+    ta.value = ta.value.slice(0, s) + marker + sel + marker + ta.value.slice(e);
+    campaignState.message = ta.value; ta.focus();
+    ta.setSelectionRange(s + marker.length, s + marker.length + sel.length);
   }
 
   function wireCamp(el) {
@@ -1771,8 +1859,10 @@
     });
     el.addEventListener("input", function (e) {
       var t = e.target;
-      if (t.classList.contains("x97-camp-msg")) { campaignState.message = t.value; var pv = el.querySelector(".x97-camp-preview"); if (pv) { var doc = readDoc(); var cs = audienceContacts(doc, campaignState.audience); if (cs.length) pv.lastChild.textContent = resolveMessage(campaignState.message, cs[campaignState.previewIdx % cs.length]); } return; }
+      if (t.classList.contains("x97-camp-msg")) { campaignState.message = t.value; var bub = el.querySelector(".x97-ws-bubble"); if (bub) { var doc = readDoc(); var cs = audienceContacts(doc, campaignState.audience); if (cs.length) bub.innerHTML = renderWaFormat(stampMessage(resolveMessage(campaignState.message, cs[campaignState.previewIdx % cs.length]))); } return; }
       if (t.classList.contains("x97-camp-name")) { campaignState.name = t.value; return; }
+      if (t.classList.contains("x97-camp-manual")) { campaignState.manualNumbers = t.value; return; }
+      if (t.classList.contains("x97-camp-cc")) { campaignState.countryCode = t.value; return; }
       if (t.classList.contains("x97-camp-import")) { campaignState.importText = t.value; campaignState.nameCol = ""; campaignState.phoneCol = ""; refreshCamp(); return; }
       if (t.classList.contains("x97-camp-listname")) { campaignState.listName = t.value; return; }
     });
@@ -1781,6 +1871,10 @@
       if (t.classList.contains("x97-camp-aud")) { var parts = t.value.split(":"); campaignState.audience = { type: parts[0], id: parts[1] || "" }; campaignState.previewIdx = 0; refreshCamp(); return; }
       if (t.classList.contains("x97-camp-namecol")) { campaignState.nameCol = t.value; return; }
       if (t.classList.contains("x97-camp-phonecol")) { campaignState.phoneCol = t.value; refreshCamp(); return; }
+      if (t.classList.contains("x97-camp-dup")) { campaignState.dupRemoval = t.checked; return; }
+      if (t.classList.contains("x97-camp-ts")) { campaignState.timestamp = t.checked; if (campaignState.showPreview) refreshCamp(); return; }
+      if (t.classList.contains("x97-camp-cc")) { campaignState.countryCode = t.value; refreshCamp(); return; }
+      if (t.classList.contains("x97-camp-manual")) { campaignState.manualNumbers = t.value; refreshCamp(); return; }
       if (t.classList.contains("x97-camp-file")) {
         var f = t.files && t.files[0]; if (!f) return;
         var r = new FileReader(); r.onload = function () { campaignState.importText = String(r.result || ""); campaignState.nameCol = ""; campaignState.phoneCol = ""; if (!campaignState.listName) campaignState.listName = f.name.replace(/\.[^.]+$/, ""); refreshCamp(); }; r.readAsText(f); return;
@@ -1797,10 +1891,23 @@
     if (a === "use-list") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: "list", id: node.dataset.id }; campaignState.previewIdx = 0; return refreshCamp(); }
     if (a === "use-overdue") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: "overdue", id: "" }; campaignState.previewIdx = 0; return refreshCamp(); }
     if (a === "del-list") { if (confirm("Delete this list? Contacts stay, only the grouping is removed.")) { updateDoc(function (d) { d.waLists = (d.waLists || []).filter(function (l) { return l.id !== node.dataset.id; }); (d.waContacts || []).forEach(function (c) { c.lists = (c.lists || []).filter(function (id) { return id !== node.dataset.id; }); }); }, "camp-dellist"); refreshCamp(); } return; }
-    if (a === "var") return insertVar(node.dataset.var);
+    if (a === "var") { insertVar(node.dataset.var); campaignState.showVars = false; return refreshCamp(); }
+    if (a === "emoji") return insertAtCursor(node.dataset.e);
+    if (a === "fmt") return wrapSelection(node.dataset.m);
     if (a === "shuffle") { campaignState.previewIdx++; return refreshCamp(); }
     if (a === "mode-onetap") { campaignState.mode = "onetap"; return refreshCamp(); }
     if (a === "mode-auto") { campaignState.mode = "auto"; return refreshCamp(); }
+    if (a === "antiblock") { campaignState.antiblock = node.dataset.k; return refreshCamp(); }
+    if (a === "detail-toggle") { campaignState.showDetail = !campaignState.showDetail; return refreshCamp(); }
+    if (a === "preview-toggle") { campaignState.showPreview = !campaignState.showPreview; return refreshCamp(); }
+    if (a === "tpl-menu") { campaignState.showTemplates = !campaignState.showTemplates; campaignState.showVars = false; campaignState.showEmoji = false; return refreshCamp(); }
+    if (a === "var-menu") { campaignState.showVars = !campaignState.showVars; campaignState.showTemplates = false; campaignState.showEmoji = false; return refreshCamp(); }
+    if (a === "emoji-menu") { campaignState.showEmoji = !campaignState.showEmoji; campaignState.showVars = false; campaignState.showTemplates = false; return refreshCamp(); }
+    if (a === "load-tpl") { var t = campTemplates(doc).find(function (x) { return x.id === node.dataset.id; }); if (t) { campaignState.message = t.body; } campaignState.showTemplates = false; return refreshCamp(); }
+    if (a === "save-tpl") { var nm = (prompt("Name this template:", campaignState.name || "My template") || "").trim(); if (nm) { updateDoc(function (d) { d.settings = d.settings || {}; d.settings.waTemplates = (d.settings.waTemplates || []).concat([{ id: uid("tpl"), name: nm, body: campaignState.message }]); }, "camp-tpl-save"); toast("Template saved", ""); } campaignState.showTemplates = false; return refreshCamp(); }
+    if (a === "attach") { toast("Media attachments are coming soon — text, variables & emoji send now", ""); return; }
+    if (a === "use-saved") { var ls = campLists(doc); campaignState.audience = ls.length ? { type: "list", id: ls[0].id } : { type: "overdue", id: "" }; return refreshCamp(); }
+    if (a === "reset-compose") { if (confirm("Clear this campaign's message and name?")) { campaignState.message = ""; campaignState.name = ""; campaignState.manualNumbers = ""; refreshCamp(); } return; }
     if (a === "save") { persistCampaign(); toast("Campaign saved", ""); campaignState.view = "home"; return refreshCamp(); }
     if (a === "send") return startCampaign(campaignState.mode);
     if (a === "onetap-next") return sendCampaignOneTapNext();
@@ -1832,7 +1939,33 @@
       ".x97-camp-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:6px}" +
       ".x97-camp-tiles div{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:11px 6px;text-align:center}" +
       ".x97-camp-tiles b{display:block;font-size:20px;font-variant-numeric:tabular-nums}.x97-camp-tiles span{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--tx3);font-weight:800}" +
-      ".x97-camp-logrow{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line)}";
+      ".x97-camp-logrow{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line)}" +
+      ".x97-ws-card{border:1px solid var(--line);border-radius:15px;background:var(--card);padding:13px;margin-bottom:12px}" +
+      ".x97-ws-h{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:14px;font-weight:800;color:var(--tx);margin-bottom:11px}" +
+      ".x97-ws-h span{display:inline-flex;align-items:center;gap:7px}" +
+      ".x97-ws-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:9px}" +
+      ".x97-ws-tw{position:relative}" +
+      ".x97-ws-tool{display:inline-flex;align-items:center;gap:4px;background:var(--card2);border:1px solid var(--line2);border-radius:9px;padding:6px 9px;font-size:11.5px;font-weight:750;color:var(--tx2);cursor:pointer}" +
+      ".x97-ws-tool.on{border-color:var(--pos);color:var(--pos)}" +
+      ".x97-ws-b{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;background:var(--card2);border:1px solid var(--line2);border-radius:9px;font-size:13px;color:var(--tx2);cursor:pointer;font-weight:700}" +
+      ".x97-ws-b.on{border-color:var(--pos);color:var(--pos)}" +
+      ".x97-ws-menu{position:absolute;top:calc(100% + 5px);left:0;z-index:5;background:var(--card);border:1px solid var(--line2);border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.35);padding:6px;min-width:170px;max-height:230px;overflow:auto}" +
+      ".x97-ws-menu-item{display:block;width:100%;text-align:left;background:0;border:0;border-radius:8px;padding:8px 10px;font-size:12.5px;color:var(--tx);cursor:pointer;font-family:inherit}" +
+      ".x97-ws-menu-item:hover{background:var(--card2)}.x97-ws-menu-item.save{color:var(--pos);font-weight:800;border-top:1px solid var(--line);margin-top:4px}" +
+      ".x97-ws-menu-empty{padding:8px 10px;font-size:11.5px;color:var(--tx3)}" +
+      ".x97-ws-emoji{position:absolute;top:calc(100% + 5px);left:0;z-index:5;background:var(--card);border:1px solid var(--line2);border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.35);padding:8px;width:242px;display:flex;flex-wrap:wrap;gap:2px}" +
+      ".x97-ws-emoji-b{width:30px;height:30px;border:0;background:0;border-radius:7px;font-size:17px;cursor:pointer;line-height:1}.x97-ws-emoji-b:hover{background:var(--card2)}" +
+      ".x97-ws-seg{display:flex;gap:7px}.x97-ws-seg.small{flex:0 0 auto}" +
+      ".x97-ws-seg button{flex:1;border:1px solid var(--line2);background:var(--card2);border-radius:99px;padding:8px 12px;font-size:12.5px;font-weight:800;color:var(--tx2);cursor:pointer}" +
+      ".x97-ws-seg button.on{background:var(--pos);border-color:var(--pos);color:#fff}" +
+      ".x97-ws-detail{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line2)}" +
+      ".x97-ws-note{font-size:11.5px;color:var(--tx3);margin-bottom:12px}" +
+      ".x97-ws-switch{display:flex;gap:10px;align-items:flex-start;padding:9px 0;font-size:12px;color:var(--tx2);line-height:1.45}.x97-ws-switch input{width:18px;height:18px;accent-color:var(--pos);margin-top:1px}.x97-ws-switch b{color:var(--tx)}" +
+      ".x97-ws-count{margin-top:10px;font-size:12px;color:var(--tx2);font-weight:700}" +
+      ".x97-ws-bubble{background:#173d2e;color:#e8f5ee;border-radius:12px;border-top-right-radius:4px;padding:10px 12px;font-size:13px;line-height:1.5;white-space:normal;word-break:break-word}" +
+      ".x97-ws-bubble code{font-family:ui-monospace,Menlo,monospace;font-size:12px}" +
+      ".x97-ws-modebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:2px 2px 12px}" +
+      ".x97-ws-actions{display:flex;gap:8px}.x97-ws-actions .x97-btn{flex:1;justify-content:center}.x97-ws-actions .x97-btn.primary{flex:2}";
     var s = document.createElement("style"); s.id = "x97-camp-css"; s.textContent = css; document.head.appendChild(s);
   }
 
