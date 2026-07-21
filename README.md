@@ -100,7 +100,22 @@ engine, contacts and safety rails, so they live in one place:
   new campaign or reminder in one tap.
 
 Add a **WhatsApp number** on each upcoming item (local `0772…` or full
-`+256772…`; the country code lives in **Templates → Country code**).
+`+256772…`; the country code lives in **Templates → Country code**) — or let
+**contact matching** do it for you:
+
+### Contact matching
+Once you've imported contacts (CSV or Google), open **Numbers** (from Chase
+overdue) or **Match against overdue clients** (from Contacts & lists). It
+fuzzy-matches each finance client's name against your imported contacts:
+
+- **Confident match** (e.g. "Apollo Studios — Scene 3" ↔ contact "Apollo
+  Studios") → the number is **filled in automatically** — just review and Save.
+- **Ambiguous match** (e.g. "John" could be "John Doe" or "John Smith") →
+  **you're asked to pick** from the candidates, or type the number yourself.
+- **No match found** → a plain number field, same as before.
+
+Nothing is guessed silently — only sure matches get filled in for you; the app
+puts the rest in front of you to decide.
 
 There are two ways to send — same for reminders and campaigns:
 
