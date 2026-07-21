@@ -117,6 +117,12 @@ fuzzy-matches each finance client's name against your imported contacts:
 Nothing is guessed silently — only sure matches get filled in for you; the app
 puts the rest in front of you to decide.
 
+The same matching also happens **live while you're adding or editing an
+upcoming payment**: the WhatsApp number field sits right under the client
+name, and as you type, matching contacts appear as tap-to-fill chips below
+it — so a new client can get its number attached in the same moment you add
+them, no separate step needed.
+
 There are two ways to send — same for reminders and campaigns:
 
 **One-tap (works immediately, nothing to install).** Opens WhatsApp with the
