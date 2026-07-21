@@ -119,9 +119,17 @@ puts the rest in front of you to decide.
 
 The same matching also happens **live while you're adding or editing an
 upcoming payment**: the WhatsApp number field sits right under the client
-name, and as you type, matching contacts appear as tap-to-fill chips below
-it — so a new client can get its number attached in the same moment you add
-them, no separate step needed.
+name, showing the best textual match up front. There's also a **search box**
+right below it — type *any* name, nickname, or part of a number (e.g. "Isaac's
+neighbor", "Tata", a surname) to search **every** imported contact, not just
+ones that look similar to the client's name. This covers the informal labels
+people actually save contacts under. The **Numbers** screen works the same way,
+per client.
+
+The **Add/Edit upcoming** form is also progressive: only Client name, WhatsApp
+number, and Amount show at first — Category, Status, Expected date, and Note
+collapse under **"More details"** (one tap to expand; automatically expanded
+when editing an existing item, so nothing looks hidden).
 
 There are two ways to send — same for reminders and campaigns:
 
