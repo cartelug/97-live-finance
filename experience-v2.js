@@ -341,6 +341,7 @@
       .x97-badge-count{position:absolute;right:-4px;top:-5px;min-width:18px;height:18px;padding:0 5px;border-radius:99px;background:var(--pos);color:#fff;font-size:10px;display:grid;place-items:center;border:2px solid var(--bg)}
       .x97-chips{display:flex;gap:7px;overflow-x:auto;padding:2px 1px 9px;scrollbar-width:none}.x97-chips::-webkit-scrollbar{display:none}
       .x97-chip{white-space:nowrap;height:34px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--tx2);padding:0 12px;font-size:11.5px;font-weight:750;display:inline-flex;align-items:center;gap:6px}.x97-chip.on{background:var(--posdim);border-color:rgba(14,117,72,.25);color:var(--pos)}.x97-chip.alert.on{background:var(--negdim);border-color:rgba(181,53,46,.22);color:var(--neg)}
+      .x97-contact-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.x97-contact-chips:empty{margin-top:0}.x97-contact-chip{height:auto;padding:6px 10px;border-style:dashed}.x97-contact-chip.on{border-style:solid}
       .x97-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}.x97-filter-tag{border:0;background:var(--card2);color:var(--tx2);border-radius:999px;padding:6px 9px;font-size:10.5px;font-weight:700;display:inline-flex;align-items:center;gap:4px}
       .x97-count{font-size:11px;color:var(--tx3);margin:5px 2px 10px}
       .x97-group{margin:18px 0 9px;display:flex;justify-content:space-between;align-items:center}.x97-group b{display:inline-flex;align-items:center;gap:8px;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--tx)}.x97-group b::before{content:"";width:4px;height:12px;border-radius:99px;background:linear-gradient(180deg,#17A468,var(--pos2))}.x97-group span{font-size:10.5px;color:var(--tx3)}
@@ -961,22 +962,47 @@
 
   function field(label, input, help) { return '<div class="x97-field"><label>' + esc(label) + '</label>' + input + (help ? '<div class="x97-help">' + esc(help) + '</div>' : '') + '</div>'; }
 
+  function contactSuggestHTML(clientName, doc, currentPhone) {
+    var contacts = campContacts(doc);
+    if (!contacts.length || !clientName || clientName.trim().length < 2) return "";
+    var matches = bestContactMatches(clientName, contacts, 3);
+    if (!matches.length) return "";
+    return '<div class="x97-contact-chips">' + matches.map(function (m) {
+      var on = currentPhone && waNumber(currentPhone, doc) === waNumber(m.contact.phone, doc);
+      return '<button type="button" class="x97-chip x97-contact-chip' + (on ? " on" : "") + '" data-phone="' + attr(m.contact.phone) + '">' + icon("phone", 11) + ' ' + esc(m.contact.name) + ' · ' + esc(m.contact.phone) + '</button>';
+    }).join("") + "</div>";
+  }
+
   function openUpcomingForm(id) {
     var doc = readDoc(), existing = id ? (doc.followups || []).find(function(x){return String(x.id)===String(id);}) : null;
-    var item = existing ? clone(existing) : { id:"", client:"", category:"One Time", amount:"", currency:"UGX", status:"Pending", expectedBy:"", note:"" };
+    var item = existing ? clone(existing) : { id:"", client:"", category:"One Time", amount:"", currency:"UGX", status:"Pending", expectedBy:"", phone:"", note:"" };
     var categories = Array.from(new Set([].concat(doc.settings.categories || [], (doc.followups || []).map(function(x){return x.category;}), ["Design","One Time","Retainer"]).filter(Boolean))).sort();
     var statuses = Array.from(new Set([].concat(doc.settings.fuStatuses || [], ["Pending","Paid","Cancelled"]).filter(Boolean)));
     var body = '<form id="x97-upcoming-form" data-x97-form="upcoming"><input type="hidden" name="id" value="' + attr(item.id) + '">' +
-      field("Client / project", '<input class="x97-input" name="client" required maxlength="160" value="' + attr(item.client) + '" placeholder="e.g. Apollo — Scene 3">') +
+      field("Client / project", '<input class="x97-input" name="client" required maxlength="160" placeholder="e.g. Apollo — Scene 3" value="' + attr(item.client) + '">') +
+      field("WhatsApp number", '<input class="x97-input" name="phone" inputmode="tel" value="' + attr(item.phone || "") + '" placeholder="e.g. 0772 123 456">' + '<div id="x97-contact-suggest">' + contactSuggestHTML(item.client, doc, item.phone) + '</div>', "Used for payment reminders. Local (0772…) or full (+256772…) both work.") +
       '<div class="x97-fields-2">' +
       field("Category", '<select class="x97-select" name="category">' + categories.map(function(x){return option(x,x,item.category);}).join("") + '</select>') +
       field("Status", '<select class="x97-select" name="status">' + statuses.map(function(x){return option(x,x,item.status);}).join("") + '</select>') + '</div>' +
       '<div class="x97-fields-2">' + field("Amount", '<input class="x97-input" name="amount" inputmode="decimal" type="number" min="0" step="1" value="' + attr(item.amount) + '" placeholder="0">') + field("Currency", '<select class="x97-select" name="currency">' + option("UGX","UGX",item.currency) + option("USD","USD",item.currency) + '</select>') + '</div>' +
-      field("WhatsApp number", '<input class="x97-input" name="phone" inputmode="tel" value="' + attr(item.phone || "") + '" placeholder="e.g. 0772 123 456">', "Used to send payment reminders. Local (0772…) or full (+256772…) both work.") +
       field("Expected date", '<input class="x97-input" name="expectedBy" type="date" value="' + attr(item.expectedBy) + '"><div class="x97-chips" style="padding-top:7px"><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="0">Today</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="7">+7 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="30">+30 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-value="month-end">Month end</button></div>') +
       field("Note", '<textarea class="x97-textarea" name="note" maxlength="500" placeholder="Invoice, follow-up context, or next action">' + esc(item.note) + '</textarea>') + '</form>';
     var foot = (existing ? '<button class="x97-btn danger" data-x97-action="delete-upcoming" data-id="' + attr(item.id) + '">' + icon("trash") + ' Delete</button>' : '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button>') + '<button class="x97-btn primary" type="submit" form="x97-upcoming-form">' + icon("check") + (existing ? " Save changes" : " Add upcoming") + '</button>';
-    openSheet(existing ? "Edit upcoming" : "Add upcoming", body, foot);
+    openSheet(existing ? "Edit upcoming" : "Add upcoming", body, foot, { afterOpen: function (back) {
+      var clientInput = back.querySelector('input[name="client"]'), phoneInput = back.querySelector('input[name="phone"]'), box = back.querySelector("#x97-contact-suggest");
+      if (!clientInput || !phoneInput || !box) return;
+      var timer = null;
+      clientInput.addEventListener("input", function () {
+        clearTimeout(timer);
+        timer = setTimeout(function () { box.innerHTML = contactSuggestHTML(clientInput.value, readDoc(), phoneInput.value); }, 150);
+      });
+      phoneInput.addEventListener("input", function () { box.innerHTML = contactSuggestHTML(clientInput.value, readDoc(), phoneInput.value); });
+      back.addEventListener("click", function (e) {
+        var chip = e.target.closest && e.target.closest(".x97-contact-chip"); if (!chip) return;
+        phoneInput.value = chip.dataset.phone;
+        box.innerHTML = contactSuggestHTML(clientInput.value, readDoc(), phoneInput.value);
+      });
+    } });
   }
 
   function openFilters(doc) {
