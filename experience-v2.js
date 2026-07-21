@@ -1341,9 +1341,41 @@
     closeSheet(); if (remindState.open) refreshRemind();
   }
 
+  /* ---- Contact matching: fuzzy-match finance clients against imported contacts ---- */
+
+  function normalizeForMatch(s) { return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim(); }
+  function primaryNamePart(raw) { var s = String(raw == null ? "" : raw); var seg = s.split(/[—–\-:|]/)[0]; return (seg && seg.trim()) || s.trim(); }
+  function nameTokens(raw) { return normalizeForMatch(primaryNamePart(raw)).split(" ").filter(function (w) { return w.length > 1; }); }
+  function nameSimilarity(a, b) {
+    var na = normalizeForMatch(primaryNamePart(a)), nb = normalizeForMatch(primaryNamePart(b));
+    if (!na || !nb) return 0;
+    if (na === nb) return 1;
+    if (na.length >= 3 && nb.length >= 3 && (na.indexOf(nb) >= 0 || nb.indexOf(na) >= 0)) return 0.9;
+    var ta = nameTokens(a), tb = nameTokens(b);
+    if (!ta.length || !tb.length) return 0;
+    var setB = {}; tb.forEach(function (t) { setB[t] = true; });
+    var inter = ta.filter(function (t) { return setB[t]; }).length;
+    if (!inter) return 0;
+    return (2 * inter) / (ta.length + tb.length);
+  }
+  var MATCH_AUTO = 0.82, MATCH_SUGGEST = 0.4;
+  function bestContactMatches(clientName, contacts, limit) {
+    var scored = contacts.map(function (c) { return { contact: c, score: nameSimilarity(clientName, c.name) }; })
+      .filter(function (x) { return x.score >= MATCH_SUGGEST; })
+      .sort(function (a, b) { return b.score - a.score; });
+    return scored.slice(0, limit || 4);
+  }
+  function classifyMatches(matches) {
+    if (!matches.length) return "none";
+    var top = matches[0].score, second = matches[1] ? matches[1].score : 0;
+    if (top >= MATCH_AUTO && (top - second) >= 0.12) return "auto";
+    return "review";
+  }
+
   function openNumbersManager() {
     injectRemindCSS();
     var doc = readDoc();
+    var contacts = campContacts(doc);
     var list = (doc.followups || []).filter(isOpenFollowup).slice().sort(function (a, b) {
       var am = hasWa(a, doc) ? 1 : 0, bm = hasWa(b, doc) ? 1 : 0;
       if (am !== bm) return am - bm;                       // missing numbers first
@@ -1353,14 +1385,37 @@
       return String(a.client || "").localeCompare(String(b.client || ""));
     });
     var missing = list.filter(function (x) { return !hasWa(x, doc); }).length;
+    var autoCount = 0, reviewCount = 0;
     var rows = list.map(function (x) {
       var cur = String(x.currency || "UGX").toUpperCase(), t = timing(x);
-      return '<div class="x97-num-row"><div class="x97-num-meta"><div class="x97-num-name">' + esc(x.client || "Untitled") + '</div><div class="x97-num-sub"><span class="x97-pill ' + esc(t.cls) + '" style="padding:2px 6px">' + esc(t.label) + '</span>' + (num(x.amount) ? '<span>' + esc(money(x.amount, cur)) + '</span>' : '') + '</div></div><input class="x97-input x97-num-input" name="num_' + attr(x.id) + '" inputmode="tel" value="' + attr(x.phone || "") + '" placeholder="0772…"></div>';
+      var suggest = "";
+      if (!hasWa(x, doc) && contacts.length) {
+        var matches = bestContactMatches(x.client, contacts, 4);
+        var cls = classifyMatches(matches);
+        if (cls === "auto") autoCount++; else if (matches.length) reviewCount++;
+        if (matches.length) {
+          var opts = matches.map(function (m, i) {
+            return '<option value="' + attr(m.contact.phone) + '"' + (cls === "auto" && i === 0 ? " selected" : "") + '>' + esc(m.contact.name) + " · " + esc(m.contact.phone) + " (" + Math.round(m.score * 100) + "% match)</option>";
+          }).join("") + '<option value="__manual__"' + (cls === "auto" ? "" : " selected") + '>Type a number manually…</option>';
+          suggest = '<select class="x97-select x97-num-suggest" data-target="num_' + attr(x.id) + '">' + opts + '</select>' +
+            (cls === "auto" ? '<div class="x97-num-auto">' + icon("check", 11) + ' Auto-matched — check it\'s right, then Save</div>' : '<div class="x97-num-review">' + icon("phone", 11) + ' Possible matches found — pick one or type the number</div>');
+          if (cls === "auto") x = Object.assign({}, x, { phone: matches[0].contact.phone });
+        }
+      }
+      return '<div class="x97-num-row"><div class="x97-num-meta"><div class="x97-num-name">' + esc(x.client || "Untitled") + '</div><div class="x97-num-sub"><span class="x97-pill ' + esc(t.cls) + '" style="padding:2px 6px">' + esc(t.label) + '</span>' + (num(x.amount) ? '<span>' + esc(money(x.amount, cur)) + '</span>' : '') + '</div>' + suggest + '</div><input class="x97-input x97-num-input" name="num_' + attr(x.id) + '" inputmode="tel" value="' + attr(x.phone || "") + '" placeholder="0772…"></div>';
     }).join("");
     if (!list.length) rows = '<div class="x97-empty" style="padding:22px"><strong>No open receivables</strong><p>Add upcoming payments first.</p></div>';
-    var body = '<form id="x97-numbers-form" data-x97-form="wa-numbers"><div class="x97-help" style="margin-bottom:12px">' + (missing ? '<b>' + missing + '</b> still need a number. ' : 'All clients have a number. ') + 'Local (0772…) or full (+256772…) both work.</div>' + rows + '</form>';
+    var matchNote = contacts.length ? ('<div class="x97-help" style="margin-bottom:6px">Matched against your ' + contacts.length + ' imported contacts — ' + (autoCount ? '<b>' + autoCount + '</b> filled in automatically, ' : '') + (reviewCount ? '<b>' + reviewCount + '</b> need you to pick one' : (autoCount ? 'nothing else needs a pick' : 'no confident matches for the rest')) + '.</div>') : "";
+    var body = '<form id="x97-numbers-form" data-x97-form="wa-numbers">' + matchNote + '<div class="x97-help" style="margin-bottom:12px">' + (missing ? '<b>' + missing + '</b> still need a number. ' : 'All clients have a number. ') + 'Local (0772…) or full (+256772…) both work.</div>' + rows + '</form>';
     var foot = '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button><button class="x97-btn primary" type="submit" form="x97-numbers-form">' + icon("check") + ' Save numbers</button>';
-    openSheet("WhatsApp numbers", body, foot);
+    openSheet("WhatsApp numbers", body, foot, { afterOpen: function (back) {
+      back.addEventListener("change", function (e) {
+        var sel = e.target.closest && e.target.closest(".x97-num-suggest"); if (!sel) return;
+        var input = back.querySelector('input[name="' + sel.dataset.target + '"]'); if (!input) return;
+        input.value = sel.value === "__manual__" ? "" : sel.value;
+        if (sel.value === "__manual__") input.focus();
+      });
+    } });
   }
   function submitNumbers(form) {
     var v = formValues(form);
@@ -1449,7 +1504,10 @@
       ".x97-num-row{display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}" +
       ".x97-num-meta{flex:1;min-width:0}.x97-num-name{font-size:13px;font-weight:750;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
       ".x97-num-sub{font-size:11px;color:var(--tx3);margin-top:4px;display:flex;gap:7px;align-items:center}" +
-      ".x97-num-input{max-width:172px}";
+      ".x97-num-input{max-width:172px}" +
+      ".x97-num-row{flex-wrap:wrap}.x97-num-suggest{width:100%;margin-top:6px;font-size:11.5px;min-height:34px}" +
+      ".x97-num-auto{width:100%;font-size:10.5px;color:var(--pos);font-weight:750;display:flex;align-items:center;gap:4px;margin-top:4px}" +
+      ".x97-num-review{width:100%;font-size:10.5px;color:var(--warn);font-weight:750;display:flex;align-items:center;gap:4px;margin-top:4px}";
     var s = document.createElement("style"); s.id = "x97-remind-css"; s.textContent = css; document.head.appendChild(s);
   }
 
@@ -1904,7 +1962,7 @@
       '<div class="x97-camp-sec">Audiences</div>' +
       '<div class="x97-camp-list"><div class="x97-camp-list-main" data-camp="use-overdue"><div class="x97-rm-name">Overdue clients</div><div class="x97-rm-sub">Auto-built from your finances · ' + od + ' with a number</div></div><span class="x97-pill">smart</span></div>' +
       listRows +
-      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="x97-rm-tool" data-camp="import">' + icon("plus", 13) + ' Import contacts (CSV)</button><button class="x97-rm-tool" data-camp="google-connect"><span class="x97-google-g">G</span> Connect Google Contacts</button></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="x97-rm-tool" data-camp="import">' + icon("plus", 13) + ' Import contacts (CSV)</button><button class="x97-rm-tool" data-camp="google-connect"><span class="x97-google-g">G</span> Connect Google Contacts</button>' + (campContacts(doc).length ? '<button class="x97-rm-tool" data-camp="match-numbers">' + icon("phone", 13) + ' Match against overdue clients</button>' : '') + '</div>' +
       '<div class="x97-camp-sec" style="margin-top:18px">Campaigns</div>' + histRows +
       '</div>';
   }
@@ -2074,6 +2132,7 @@
     if (a === "home") { campaignState.view = "home"; campaignState.jobs = null; return refreshCamp(); }
     if (a === "import") { campaignState.view = "import"; return refreshCamp(); }
     if (a === "google-connect") return connectGoogleContacts();
+    if (a === "match-numbers") return openNumbersManager();
     if (a === "new") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: audienceContacts(doc, { type: "overdue" }).length ? "overdue" : "all", id: "" }; campaignState.previewIdx = 0; return refreshCamp(); }
     if (a === "use-list") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: "list", id: node.dataset.id }; campaignState.previewIdx = 0; return refreshCamp(); }
     if (a === "use-overdue") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: "overdue", id: "" }; campaignState.previewIdx = 0; return refreshCamp(); }
