@@ -259,6 +259,10 @@
     return '<svg aria-hidden="true" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' + (paths[name] || paths.more) + '</svg>';
   }
 
+  function brandMark(size, cls) {
+    return '<img src="icons/mark-97.png" width="' + (size || 18) + '" height="' + (size || 18) + '" alt="" class="x97-brand-mark' + (cls ? " " + cls : "") + '">';
+  }
+
   function brandFor(name) {
     var n = String(name || "").toLowerCase();
     if (n.indexOf("airtel") >= 0) return { key: "airtel", label: "Airtel" };
@@ -1255,7 +1259,7 @@
     var pct = Math.min(100, Math.round(sent / Math.max(1, cap) * 100));
     var meterCls = sent >= cap ? "bad" : (sent >= cap * 0.8 ? "warn" : "ok");
     var rows = list.length ? list.map(function (x) { return remindRow(x, doc); }).join("")
-      : '<div class="x97-empty" style="padding:34px 16px"><strong>Nothing to chase 🎉</strong><p>No receivables are overdue or due within 7 days. This list fills up automatically as dates pass.</p></div>';
+      : '<div class="x97-empty x97-brand-empty" style="padding:34px 16px">' + brandMark(40, "x97-brand-watermark") + '<strong>Nothing to chase 🎉</strong><p>No receivables are overdue or due within 7 days. This list fills up automatically as dates pass.</p></div>';
     var toneSel = '<select class="x97-rm-tone x97-select" style="min-height:38px;width:auto">' +
       option("auto", "Tone: Auto", remindState.tone) + option("friendly", "Tone: Friendly", remindState.tone) +
       option("followup", "Tone: Follow-up", remindState.tone) + option("firm", "Tone: Firm", remindState.tone) + '</select>';
@@ -1272,7 +1276,7 @@
     var autoHint = (remindState.mode === "auto" && !remindExt.ready)
       ? '<div class="x97-rm-hint">' + icon("shield", 14) + '<div>Auto mode needs the free <b>97 Sender</b> browser extension (Chrome/Edge). Install it, keep <b>web.whatsapp.com</b> open in a tab, and this turns on. Until then use <b>One-tap</b> — it works right now.</div></div>' : '';
     return '<div class="x97-remind-panel">' +
-      '<header class="x97-rm-header"><div class="x97-rm-htop"><div><button class="x97-rm-link" data-rm="hub" style="margin-bottom:4px">‹ Messaging</button><div class="x97-rm-title">' + icon("message", 18) + ' Chase overdue</div><div class="x97-rm-sub">' + list.length + ' to chase · ' + chaseSendable(doc).length + ' with a number</div></div><button class="x97-rm-close" data-rm="close">' + icon("close") + '</button></div>' +
+      '<header class="x97-rm-header"><div class="x97-rm-htop"><div><button class="x97-rm-link" data-rm="hub" style="margin-bottom:4px">‹ Messaging</button><div class="x97-rm-title">' + brandMark(16) + icon("message", 18) + ' Chase overdue</div><div class="x97-rm-sub">' + list.length + ' to chase · ' + chaseSendable(doc).length + ' with a number</div></div><button class="x97-rm-close" data-rm="close">' + icon("close") + '</button></div>' +
       '<div class="x97-rm-meter ' + meterCls + '"><div class="x97-rm-meter-bar" style="width:' + pct + '%"></div><span>Sent today ' + sent + ' / ' + cap + '</span><em class="' + (remindExt.ready ? "ok" : "") + '">' + (remindExt.ready ? "Sender connected" : "Sender off") + '</em></div></header>' +
       '<div class="x97-rm-toolbar">' + toneSel + aiToggle + '<span class="x97-rm-spacer"></span>' + modeSeg + '<button class="x97-rm-tool" data-rm="numbers">' + icon("phone", 14) + ' Numbers</button><button class="x97-rm-tool" data-rm="templates">' + icon("edit", 14) + ' Templates</button><button class="x97-rm-tool" data-rm="safety">' + icon("shield", 14) + ' Safety</button></div>' +
       '<div class="x97-rm-selrow"><button class="x97-rm-link" data-rm="select-all">Select all</button><button class="x97-rm-link" data-rm="select-none">Clear</button><span class="x97-rm-selcount">' + Object.keys(remindState.selected).length + ' selected</span></div>' +
@@ -1633,7 +1637,18 @@
       ".x97-num-row{flex-wrap:wrap}.x97-num-search{width:100%;margin-top:6px;font-size:11.5px}" +
       ".x97-num-picker:empty{margin-top:0}" +
       ".x97-num-auto{width:100%;font-size:10.5px;color:var(--pos);font-weight:750;display:flex;align-items:center;gap:4px;margin-top:4px}" +
-      ".x97-num-review{width:100%;font-size:10.5px;color:var(--warn);font-weight:750;display:flex;align-items:center;gap:4px;margin-top:4px}";
+      ".x97-num-review{width:100%;font-size:10.5px;color:var(--warn);font-weight:750;display:flex;align-items:center;gap:4px;margin-top:4px}" +
+      "@keyframes x97PanelUp{from{transform:translateY(28px);opacity:0}to{transform:translateY(0);opacity:1}}" +
+      ".x97-remind-panel{animation:x97PanelUp .38s cubic-bezier(.3,1.22,.42,1)}" +
+      "@keyframes x97PillPop{0%{transform:scale(.7)}60%{transform:scale(1.08)}100%{transform:scale(1)}}" +
+      ".x97-rm-tags .x97-pill.good,.x97-camp-logrow .x97-pill.good{animation:x97PillPop .3s cubic-bezier(.34,1.56,.64,1)}" +
+      ".x97-rm-tool,.x97-ws-tool,.x97-ws-b,.x97-camp-hist{transition:transform .1s}" +
+      ".x97-rm-tool:active,.x97-ws-tool:active,.x97-ws-b:active,.x97-camp-hist:active{transform:scale(.96)}" +
+      ".x97-brand-mark{border-radius:6px;display:inline-block;vertical-align:middle;object-fit:contain;flex:none}" +
+      ".x97-brand-empty{display:flex;flex-direction:column;align-items:center}" +
+      ".x97-brand-watermark{opacity:.55;margin-bottom:8px}" +
+      ".x97-ws-signoff{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:10px;color:var(--tx3);font-weight:700}" +
+      "@media(prefers-reduced-motion:reduce){.x97-remind-panel,.x97-rm-tags .x97-pill.good,.x97-camp-logrow .x97-pill.good{animation:none}.x97-rm-tool,.x97-ws-tool,.x97-ws-b,.x97-camp-hist{transition:none}}";
     var s = document.createElement("style"); s.id = "x97-remind-css"; s.textContent = css; document.head.appendChild(s);
   }
 
@@ -1687,7 +1702,7 @@
       return '<button class="x97-camp-hist" data-msg="report" data-id="' + attr(c.id) + '"><div style="flex:1;min-width:0"><div class="x97-rm-name">' + esc(c.name || "Untitled") + '</div><div class="x97-rm-sub">' + esc(audienceLabel(doc, c.audience)) + ' · ' + (st.sent || 0) + ' sent' + (st.failed ? ' · ' + st.failed + ' failed' : '') + '</div></div>' + icon("chevron") + '</button>';
     }).join("") : "";
     return '<div class="x97-remind-panel">' +
-      '<header class="x97-msg-header"><div class="x97-rm-htop"><div><div class="x97-rm-title">' + icon("send", 19) + ' Messaging</div><div class="x97-rm-sub">WhatsApp reminders &amp; bulk campaigns, all in one place</div></div><button class="x97-rm-close" data-msg="close">' + icon("close") + '</button></div>' +
+      '<header class="x97-msg-header"><div class="x97-rm-htop"><div><div class="x97-rm-title">' + brandMark(20) + ' Messaging</div><div class="x97-rm-sub">WhatsApp reminders &amp; bulk campaigns, all in one place</div></div><button class="x97-rm-close" data-msg="close">' + icon("close") + '</button></div>' +
       '<div class="x97-msg-stats">' +
         '<div class="x97-msg-stat"><b class="' + (s.overdue ? "x97-red" : "") + '">' + s.overdue + '</b><span>To chase</span></div>' +
         '<div class="x97-msg-stat"><b>' + s.contacts + '</b><span>Contacts</span></div>' +
@@ -1740,7 +1755,14 @@
       ".x97-msg-tile-icon.bad{background:rgba(229,72,77,.12);color:var(--neg)}" +
       ".x97-msg-tile-body{flex:1;min-width:0}.x97-msg-tile-title{font-size:13px;font-weight:800;color:var(--tx)}.x97-msg-tile-sub{font-size:10.5px;color:var(--tx3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
       ".x97-msg-tile-badge{min-width:22px;height:22px;border-radius:99px;background:var(--card2);color:var(--tx2);font-size:11px;font-weight:850;display:flex;align-items:center;justify-content:center;padding:0 6px}" +
-      ".x97-msg-tile-badge.bad{background:var(--neg);color:#fff}";
+      ".x97-msg-tile-badge.bad{background:var(--neg);color:#fff}" +
+      "@keyframes x97TileIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}" +
+      ".x97-msg-tile{animation:x97TileIn .32s cubic-bezier(.22,1,.36,1) backwards}" +
+      ".x97-msg-tile:nth-child(1){animation-delay:.03s}.x97-msg-tile:nth-child(2){animation-delay:.07s}.x97-msg-tile:nth-child(3){animation-delay:.11s}.x97-msg-tile:nth-child(4){animation-delay:.15s}" +
+      "@keyframes x97StatIn{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}" +
+      ".x97-msg-stat{animation:x97StatIn .3s cubic-bezier(.22,1,.36,1) backwards}" +
+      ".x97-msg-stat:nth-child(1){animation-delay:0s}.x97-msg-stat:nth-child(2){animation-delay:.04s}.x97-msg-stat:nth-child(3){animation-delay:.08s}" +
+      "@media(prefers-reduced-motion:reduce){.x97-msg-tile,.x97-msg-stat{animation:none}}";
     var s = document.createElement("style"); s.id = "x97-msg-css"; s.textContent = css; document.head.appendChild(s);
   }
 
@@ -1985,7 +2007,7 @@
   function campOverlayHTML(doc) {
     var v = campaignState.view;
     var head = function (title, sub, back, backLabel) {
-      return '<header class="x97-rm-header"><div class="x97-rm-htop"><div>' + (back ? '<button class="x97-rm-link" data-camp="' + back + '" style="margin-bottom:4px">‹ ' + esc(backLabel || "Back") + '</button>' : '') + '<div class="x97-rm-title">' + icon("send", 18) + ' ' + esc(title) + '</div><div class="x97-rm-sub">' + esc(sub) + '</div></div><button class="x97-rm-close" data-camp="close">' + icon("close") + '</button></div></header>';
+      return '<header class="x97-rm-header"><div class="x97-rm-htop"><div>' + (back ? '<button class="x97-rm-link" data-camp="' + back + '" style="margin-bottom:4px">‹ ' + esc(backLabel || "Back") + '</button>' : '') + '<div class="x97-rm-title">' + brandMark(16) + ' ' + esc(title) + '</div><div class="x97-rm-sub">' + esc(sub) + '</div></div><button class="x97-rm-close" data-camp="close">' + icon("close") + '</button></div></header>';
     };
     var inner;
     if (v === "import") inner = head("Import contacts", "Paste a CSV or choose a file", "home") + campImportHTML(doc);
@@ -2082,7 +2104,7 @@
     var histRows = campaigns.length ? campaigns.map(function (c) {
       var st = c.stats || { sent: 0 }, total = (c.log || []).length;
       return '<button class="x97-camp-hist" data-camp="report" data-id="' + attr(c.id) + '"><div style="flex:1;min-width:0"><div class="x97-rm-name">' + esc(c.name || "Untitled") + '</div><div class="x97-rm-sub">' + esc(audienceLabel(doc, c.audience)) + ' · ' + (st.sent || 0) + ' sent' + (st.failed ? ' · ' + st.failed + ' failed' : '') + '</div></div>' + icon("chevron") + '</button>';
-    }).join("") : '<div class="x97-rm-sub" style="padding:6px 2px">No campaigns yet.</div>';
+    }).join("") : '<div class="x97-empty x97-brand-empty" style="padding:18px 6px">' + brandMark(32, "x97-brand-watermark") + '<div class="x97-rm-sub">No campaigns yet.</div></div>';
     return '<div class="x97-rm-list">' +
       '<button class="x97-btn primary" data-camp="new" style="width:100%;justify-content:center;margin-bottom:14px">' + icon("plus") + ' New campaign</button>' +
       '<div class="x97-camp-sec">Audiences</div>' +
@@ -2145,7 +2167,7 @@
     var preview = "";
     if (campaignState.showPreview && contacts.length) {
       var pc = contacts[campaignState.previewIdx % contacts.length];
-      preview = '<div class="x97-camp-preview"><div class="x97-rm-sub" style="margin-bottom:6px">Preview → <b>' + esc(pc.name || pc.phone) + '</b> <button class="x97-rm-link" data-camp="shuffle">shuffle ↻</button></div><div class="x97-ws-bubble">' + renderWaFormat(stampMessage(resolveMessage(campaignState.message, pc))) + '</div></div>';
+      preview = '<div class="x97-camp-preview"><div class="x97-rm-sub" style="margin-bottom:6px">Preview → <b>' + esc(pc.name || pc.phone) + '</b> <button class="x97-rm-link" data-camp="shuffle">shuffle ↻</button></div><div class="x97-ws-bubble">' + renderWaFormat(stampMessage(resolveMessage(campaignState.message, pc))) + '</div><div class="x97-ws-signoff">' + brandMark(13) + ' Sent via 97 LIVE Messaging</div></div>';
     }
     var msgBlock = '<div class="x97-ws-card"><div class="x97-ws-h">' + icon("edit", 15) + ' Message</div>' + toolbar +
       '<textarea class="x97-textarea x97-camp-msg" rows="5" placeholder="Enter message  ·  Hi {{name}}, …  ·  {Hi|Hello} adds variety">' + esc(campaignState.message) + '</textarea>' + preview + '</div>';
@@ -2327,6 +2349,7 @@
       ".x97-ws-menu-item:hover{background:var(--card2)}.x97-ws-menu-item.save{color:var(--pos);font-weight:800;border-top:1px solid var(--line);margin-top:4px}" +
       ".x97-ws-menu-empty{padding:8px 10px;font-size:11.5px;color:var(--tx3)}" +
       ".x97-ws-emoji{position:absolute;top:calc(100% + 5px);left:0;z-index:5;background:var(--card);border:1px solid var(--line2);border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.35);padding:8px;width:242px;display:flex;flex-wrap:wrap;gap:2px}" +
+      "@media(max-width:759px){.x97-ws-menu,.x97-ws-emoji{position:fixed;left:12px;right:12px;bottom:12px;top:auto;width:auto;max-width:none;max-height:50vh}}" +
       ".x97-ws-emoji-b{width:30px;height:30px;border:0;background:0;border-radius:7px;font-size:17px;cursor:pointer;line-height:1}.x97-ws-emoji-b:hover{background:var(--card2)}" +
       ".x97-ws-seg{display:flex;gap:7px}.x97-ws-seg.small{flex:0 0 auto}" +
       ".x97-ws-seg button{flex:1;border:1px solid var(--line2);background:var(--card2);border-radius:99px;padding:8px 12px;font-size:12.5px;font-weight:800;color:var(--tx2);cursor:pointer}" +
