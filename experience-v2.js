@@ -342,6 +342,7 @@
       .x97-chips{display:flex;gap:7px;overflow-x:auto;padding:2px 1px 9px;scrollbar-width:none}.x97-chips::-webkit-scrollbar{display:none}
       .x97-chip{white-space:nowrap;height:34px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--tx2);padding:0 12px;font-size:11.5px;font-weight:750;display:inline-flex;align-items:center;gap:6px}.x97-chip.on{background:var(--posdim);border-color:rgba(14,117,72,.25);color:var(--pos)}.x97-chip.alert.on{background:var(--negdim);border-color:rgba(181,53,46,.22);color:var(--neg)}
       .x97-contact-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.x97-contact-chips:empty{margin-top:0}.x97-contact-chip{height:auto;padding:6px 10px;border-style:dashed}.x97-contact-chip.on{border-style:solid}
+      .x97-contact-chips.scroll{max-height:220px;overflow-y:auto;padding-right:2px;align-content:flex-start}
       .x97-more{margin-top:6px;border-top:1px dashed var(--line2);padding-top:12px}
       .x97-more-summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:800;color:var(--pos);user-select:none}
       .x97-more-summary::-webkit-details-marker{display:none}.x97-more-summary::marker{content:""}
@@ -972,12 +973,15 @@
   function contactPickerHTML(query, doc, hintName, currentPhone) {
     var contacts = campContacts(doc);
     if (!contacts.length) return "";
-    var list = searchAllContacts(query, contacts, hintName, 8);
+    var res = searchAllContacts(query, contacts, hintName, 20);
+    var list = res.list, total = res.total;
     if (!list.length) return query ? '<div class="x97-help" style="margin-top:6px">No contacts match "' + esc(query) + '"</div>' : "";
-    return '<div class="x97-contact-chips">' + list.map(function (c) {
+    var chips = '<div class="x97-contact-chips' + (list.length > 8 ? ' scroll' : '') + '">' + list.map(function (c) {
       var on = currentPhone && waNumber(currentPhone, doc) === waNumber(c.phone, doc);
       return '<button type="button" class="x97-chip x97-contact-chip' + (on ? " on" : "") + '" data-phone="' + attr(c.phone) + '">' + icon("phone", 11) + ' ' + esc(c.name) + ' · ' + esc(c.phone) + '</button>';
     }).join("") + "</div>";
+    var more = total > list.length ? '<div class="x97-help" style="margin-top:6px">Showing ' + list.length + ' of ' + total + ' matches — add another word (e.g. a surname) to narrow it down.</div>' : "";
+    return chips + more;
   }
 
   function openUpcomingForm(id) {
@@ -1411,31 +1415,75 @@
     return "review";
   }
 
+  function editDistance(a, b, maxD) {
+    var al = a.length, bl = b.length;
+    if (Math.abs(al - bl) > maxD) return maxD + 1;
+    var d = []; for (var i = 0; i <= al; i++) { d[i] = [i]; }
+    for (var j = 0; j <= bl; j++) d[0][j] = j;
+    for (i = 1; i <= al; i++) {
+      var rowMin = maxD + 1;
+      for (j = 1; j <= bl; j++) {
+        var cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        var val = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+        if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) val = Math.min(val, d[i - 2][j - 2] + 1);
+        d[i][j] = val;
+        if (val < rowMin) rowMin = val;
+      }
+      if (rowMin > maxD) return maxD + 1;
+    }
+    return d[al][bl];
+  }
+  function tokenHitsWord(token, word) {
+    if (word.indexOf(token) >= 0) return "exact";
+    if (token.length >= 3) {
+      var maxD = token.length <= 4 ? 1 : (token.length <= 7 ? 2 : 3);
+      if (editDistance(token, word, maxD) <= maxD) return "fuzzy";
+    }
+    return null;
+  }
+
   function searchAllContacts(query, contacts, hintName, limit) {
-    limit = limit || 8;
+    limit = limit || 20;
     var q = normalizeForMatch(query);
-    if (!q) return bestContactMatches(hintName, contacts, limit).map(function (m) { return m.contact; });
+    if (!q) return { list: bestContactMatches(hintName, contacts, limit).map(function (m) { return m.contact; }), total: 0 };
+    var qTokens = q.split(" ").filter(Boolean);
     var qDigits = query.replace(/\D/g, "");
     var scored = contacts.map(function (c) {
       var name = normalizeForMatch(c.name);
+      var nameWords = name.split(" ").filter(Boolean);
       var phoneDigits = String(c.phone || "").replace(/\D/g, "");
+      // Every word typed matches somewhere in the name (any order, and tolerant of a small typo like a
+      // transposed pair of letters) — so it never fails just because of word order, extra words in
+      // between (e.g. a middle name), or a slipped keystroke.
+      var exactAll = qTokens.length > 0, fuzzyAll = qTokens.length > 0;
+      qTokens.forEach(function (t) {
+        var hits = nameWords.map(function (w) { return tokenHitsWord(t, w); });
+        if (hits.indexOf("exact") < 0) exactAll = false;
+        if (hits.indexOf("exact") < 0 && hits.indexOf("fuzzy") < 0) fuzzyAll = false;
+      });
       var rank = 99;
-      if (name.indexOf(q) === 0) rank = 0;
-      else if (name.indexOf(q) >= 0) rank = 1;
-      else if (qDigits.length >= 3 && phoneDigits.indexOf(qDigits) >= 0) rank = 2;
+      if (name === q) rank = -1;
+      else if (name.indexOf(q) === 0) rank = 0;
+      else if (exactAll) rank = 1;
+      else if (fuzzyAll) rank = 2;
+      else if (name.indexOf(q) >= 0) rank = 3;
+      else if (qDigits.length >= 3 && phoneDigits.indexOf(qDigits) >= 0) rank = 4;
       return { contact: c, rank: rank };
     }).filter(function (x) { return x.rank < 99; })
       .sort(function (a, b) { return a.rank - b.rank || a.contact.name.localeCompare(b.contact.name); });
-    return scored.slice(0, limit).map(function (x) { return x.contact; });
+    return { list: scored.slice(0, limit).map(function (x) { return x.contact; }), total: scored.length };
   }
 
   function numRowPickerHTML(query, contacts, hintName, currentPhone, doc, targetName) {
-    var list = searchAllContacts(query, contacts, hintName, 6);
+    var res = searchAllContacts(query, contacts, hintName, 20);
+    var list = res.list, total = res.total;
     if (!list.length) return query ? '<div class="x97-help" style="margin-top:6px">No contacts match "' + esc(query) + '"</div>' : "";
-    return '<div class="x97-contact-chips">' + list.map(function (c) {
+    var chips = '<div class="x97-contact-chips' + (list.length > 6 ? ' scroll' : '') + '">' + list.map(function (c) {
       var on = currentPhone && waNumber(currentPhone, doc) === waNumber(c.phone, doc);
       return '<button type="button" class="x97-chip x97-contact-chip' + (on ? " on" : "") + '" data-phone="' + attr(c.phone) + '" data-target="' + attr(targetName) + '">' + icon("phone", 11) + ' ' + esc(c.name) + ' · ' + esc(c.phone) + '</button>';
     }).join("") + "</div>";
+    var more = total > list.length ? '<div class="x97-help" style="margin-top:6px">Showing ' + list.length + ' of ' + total + ' — add a surname to narrow it down.</div>' : "";
+    return chips + more;
   }
 
   function openNumbersManager() {
