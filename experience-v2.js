@@ -1811,6 +1811,83 @@
     return '<div class="x97-remind-panel">' + inner + '</div>';
   }
 
+  /* ---- Google Contacts import (client-side OAuth, no server) ---- */
+
+  var GOOGLE_SCOPE = "https://www.googleapis.com/auth/contacts.readonly";
+  var googleTokenClient = null;
+
+  function loadGIS() {
+    return new Promise(function (resolve, reject) {
+      if (window.google && window.google.accounts && window.google.accounts.oauth2) return resolve();
+      var existing = document.getElementById("x97-gis-script");
+      if (existing) { existing.addEventListener("load", function () { resolve(); }); existing.addEventListener("error", reject); return; }
+      var s = document.createElement("script");
+      s.id = "x97-gis-script"; s.src = "https://accounts.google.com/gsi/client"; s.async = true; s.defer = true;
+      s.onload = function () { resolve(); }; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  function fetchGoogleContacts(accessToken) {
+    var all = [];
+    function page(pageToken) {
+      var url = "https://people.googleapis.com/v1/people/me/connections?personFields=names,phoneNumbers&pageSize=1000" + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : "");
+      return fetch(url, { headers: { Authorization: "Bearer " + accessToken } }).then(function (r) {
+        return r.json().then(function (data) {
+          if (!r.ok) throw new Error((data.error && data.error.message) || ("Google API error " + r.status));
+          (data.connections || []).forEach(function (p) {
+            var name = (p.names && p.names[0] && p.names[0].displayName) || "";
+            (p.phoneNumbers || []).forEach(function (ph) { if (ph.value) all.push({ name: name, phone: ph.value }); });
+          });
+          return data.nextPageToken ? page(data.nextPageToken) : all;
+        });
+      });
+    }
+    return page("");
+  }
+
+  function connectGoogleContacts() {
+    var doc = readDoc();
+    var clientId = (doc.settings && doc.settings.googleClientId) || "";
+    if (!clientId) return openGoogleSetup();
+    toast("Opening Google sign-in…", "");
+    loadGIS().then(function () {
+      googleTokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: GOOGLE_SCOPE,
+        callback: function (resp) {
+          if (!resp || resp.error) { toast("Google sign-in was cancelled or failed" + (resp && resp.error ? " (" + resp.error + ")" : ""), "error"); return; }
+          toast("Fetching your Google contacts…", "");
+          fetchGoogleContacts(resp.access_token).then(function (contacts) {
+            if (!contacts.length) { toast("No phone numbers found in your Google contacts", "error"); return; }
+            var parsed = { headers: ["name", "phone"], rows: contacts };
+            var res = importContacts(parsed, "name", "phone", "Google Contacts");
+            toast(res.added + " imported from Google" + (res.skipped ? ", " + res.skipped + " skipped (no number)" : ""), "");
+            if (campaignState.open) refreshCamp();
+            refreshMsgHub();
+          }).catch(function (err) { toast("Could not read Google contacts: " + err.message, "error"); });
+        }
+      });
+      googleTokenClient.requestAccessToken({ prompt: "" });
+    }).catch(function () { toast("Could not load Google sign-in — check your connection", "error"); });
+  }
+
+  function openGoogleSetup() {
+    var doc = readDoc();
+    var body = '<div class="x97-help" style="margin-bottom:12px">Connects your real Google Contacts (name + phone) into a list here. This needs a free, one-time <b>Google API Client ID</b> for your own copy of the app — same idea as the Anthropic key for the AI Copilot. See the setup guide, then paste the Client ID below.</div>' +
+      '<form id="x97-google-form" data-x97-form="google-setup">' +
+      field("Google OAuth Client ID", '<input class="x97-input" name="clientId" value="' + attr((doc.settings && doc.settings.googleClientId) || "") + '" placeholder="xxxxxxxxxxxx.apps.googleusercontent.com">', "Ends in .apps.googleusercontent.com — from Google Cloud Console → Credentials.") +
+      '</form>';
+    var foot = '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button><button class="x97-btn primary" type="submit" form="x97-google-form">' + icon("check") + ' Save &amp; connect</button>';
+    openSheet("Connect Google Contacts", body, foot);
+  }
+  function submitGoogleSetup(form) {
+    var v = formValues(form), clientId = (v.clientId || "").trim();
+    updateDoc(function (doc) { doc.settings = doc.settings || {}; doc.settings.googleClientId = clientId; }, "google-setup");
+    closeSheet();
+    if (clientId) connectGoogleContacts();
+  }
+
   function campHomeHTML(doc) {
     var lists = campLists(doc), campaigns = campCampaigns(doc);
     var od = audienceContacts(doc, { type: "overdue" }).length;
@@ -1827,7 +1904,7 @@
       '<div class="x97-camp-sec">Audiences</div>' +
       '<div class="x97-camp-list"><div class="x97-camp-list-main" data-camp="use-overdue"><div class="x97-rm-name">Overdue clients</div><div class="x97-rm-sub">Auto-built from your finances · ' + od + ' with a number</div></div><span class="x97-pill">smart</span></div>' +
       listRows +
-      '<button class="x97-rm-tool" data-camp="import" style="margin-top:8px">' + icon("plus", 13) + ' Import contacts (CSV)</button>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="x97-rm-tool" data-camp="import">' + icon("plus", 13) + ' Import contacts (CSV)</button><button class="x97-rm-tool" data-camp="google-connect"><span class="x97-google-g">G</span> Connect Google Contacts</button></div>' +
       '<div class="x97-camp-sec" style="margin-top:18px">Campaigns</div>' + histRows +
       '</div>';
   }
@@ -1996,6 +2073,7 @@
     if (a === "hub") { closeCampaigns(); openMessaging(); return; }
     if (a === "home") { campaignState.view = "home"; campaignState.jobs = null; return refreshCamp(); }
     if (a === "import") { campaignState.view = "import"; return refreshCamp(); }
+    if (a === "google-connect") return connectGoogleContacts();
     if (a === "new") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: audienceContacts(doc, { type: "overdue" }).length ? "overdue" : "all", id: "" }; campaignState.previewIdx = 0; return refreshCamp(); }
     if (a === "use-list") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: "list", id: node.dataset.id }; campaignState.previewIdx = 0; return refreshCamp(); }
     if (a === "use-overdue") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: "overdue", id: "" }; campaignState.previewIdx = 0; return refreshCamp(); }
@@ -2049,6 +2127,7 @@
       ".x97-camp-tiles div{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:11px 6px;text-align:center}" +
       ".x97-camp-tiles b{display:block;font-size:20px;font-variant-numeric:tabular-nums}.x97-camp-tiles span{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--tx3);font-weight:800}" +
       ".x97-camp-logrow{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line)}" +
+      ".x97-google-g{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#fff;color:#4285F4;font-size:10px;font-weight:900;font-family:Georgia,serif;margin-right:2px}" +
       ".x97-ws-card{border:1px solid var(--line);border-radius:15px;background:var(--card);padding:13px;margin-bottom:12px}" +
       ".x97-ws-h{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:14px;font-weight:800;color:var(--tx);margin-bottom:11px}" +
       ".x97-ws-h span{display:inline-flex;align-items:center;gap:7px}" +
@@ -2104,7 +2183,7 @@
   }
 
   document.addEventListener("submit", function (e) {
-    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="filters")submitFilters(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);else if(type==="wa-numbers")submitNumbers(form);
+    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="filters")submitFilters(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);else if(type==="wa-numbers")submitNumbers(form);else if(type==="google-setup")submitGoogleSetup(form);
   });
 
   document.addEventListener("input", function (e) {
