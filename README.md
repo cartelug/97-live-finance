@@ -91,10 +91,11 @@ engine, contacts and safety rails, so they live in one place:
   **spintax** — `{Hi|Hello|Hey}` picks one at random per person so no two
   texts are identical — and a **Format test** preview per recipient.
 - **Contacts & lists** — **import contacts** by pasting a CSV or choosing a
-  file. It auto-detects the name & phone columns, keeps every other column as
-  a custom field, formats and de-duplicates numbers, and saves them as a named
-  list. Send to any list, **all contacts**, the built-in **Overdue clients**
-  smart list, or type numbers in by hand.
+  file, or **Connect Google Contacts** to pull your real phone contacts in
+  directly (see below). Either way it auto-detects/normalises names & phone
+  numbers, de-duplicates, and saves them as a named list. Send to any list,
+  **all contacts**, the built-in **Overdue clients** smart list, or type
+  numbers in by hand.
 - **Templates** — save any message as a reusable template and load it into a
   new campaign or reminder in one tap.
 
@@ -121,6 +122,34 @@ queue for you at a **human pace** with safety rails — **Antiblock** presets
 
 Every campaign gets a **report** — per-recipient sent / failed / skipped,
 campaign history on the hub, and **Export CSV**.
+
+### Connect Google Contacts (optional)
+Messaging → **Contacts & lists** → **Connect Google Contacts** pulls the names
+and phone numbers from your real Google/Android contacts straight into a list,
+so you don't have to build a CSV by hand.
+
+This needs a free, one-time **Google API Client ID** for your own copy of the
+app — the same "bring your own key" pattern as the AI Copilot's Anthropic key.
+Nothing is shared with anyone else; the request goes **directly from your
+browser to Google**, there is no middle server, and only a name + phone number
+is read (read-only access — nothing can be changed or deleted in your Google
+account).
+
+**One-time setup (~3 minutes):**
+1. Go to **console.cloud.google.com** and create a project (or use an existing one).
+2. **APIs & Services → Library** → search **"Google People API"** → **Enable**.
+3. **APIs & Services → OAuth consent screen** → User type **External** → fill in
+   the app name and your email → under **Test users**, add your own Google
+   account email (this keeps it private to you, no Google review needed).
+4. **APIs & Services → Credentials → Create Credentials → OAuth client ID** →
+   Application type **Web application** → under **Authorized JavaScript
+   origins** add `https://<your-username>.github.io` (your hosted URL, no
+   path, no trailing slash) → **Create**.
+5. Copy the **Client ID** (ends in `.apps.googleusercontent.com`) and paste it
+   into the **Connect Google Contacts** prompt in the app.
+
+After that, click **Connect Google Contacts** any time to sign in with Google
+and pull in your contacts — re-run it later to sync new ones.
 
 ### Install 97 Sender (Chrome / Edge / Brave)
 1. Open `chrome://extensions`.
