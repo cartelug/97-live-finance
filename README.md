@@ -198,6 +198,12 @@ and pull in your contacts — re-run it later to sync new ones.
 > number always carries some risk — the safety rails and human pacing are there
 > to keep it looking natural, but keep volumes sensible.
 
+### Polish
+The Messaging screens carry the **97 mark** in their headers, empty states, and
+message previews, animate in the same style as the rest of the app (with full
+`prefers-reduced-motion` support), and have been checked at narrow phone widths
+— dropdown menus dock safely on small screens instead of clipping off-edge.
+
 ---
 
 ## 6. What it does — and doesn't
