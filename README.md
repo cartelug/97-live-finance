@@ -126,6 +126,12 @@ ones that look similar to the client's name. This covers the informal labels
 people actually save contacts under. The **Numbers** screen works the same way,
 per client.
 
+The search is forgiving on purpose: it matches your words in **any order**
+(so it never fails just because a name has extra words in between), tolerates
+a small typo like two swapped letters, and if a query matches more contacts
+than fit on screen it tells you — *"Showing 20 of 34 — add a surname to
+narrow it down"* — instead of silently leaving the one you want off the list.
+
 The **Add/Edit upcoming** form is also progressive: only Client name, WhatsApp
 number, and Amount show at first — Category, Status, Expected date, and Note
 collapse under **"More details"** (one tap to expand; automatically expanded
