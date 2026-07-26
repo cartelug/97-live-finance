@@ -35,6 +35,46 @@
   };
   var EMOJIS = ["😀","😁","😅","😂","🙂","😉","😍","😘","😎","🤩","🥳","🙏","👍","👌","👏","🙌","💪","🔥","✨","🎉","💯","✅","❗","❓","⚠️","💰","💸","🧾","📅","⏰","📌","📞","📱","💬","➡️","👉","❤️","🧡","💚","💙","🙏🏾","😊","😄","🤝","🎬","🎥","📸","🌟"];
 
+  var FX_KEY = "ns97.v2.fx";
+  var FX_BASE = "USD";
+  var FX_HOME = "UGX";
+  var FX_TICKER = ["EUR", "GBP", "KES", "TZS"];
+  var FX_NAMES = {
+    UGX: "Uganda Shilling", USD: "US Dollar", EUR: "Euro", GBP: "British Pound", KES: "Kenyan Shilling",
+    TZS: "Tanzanian Shilling", RWF: "Rwandan Franc", BIF: "Burundian Franc", SSP: "South Sudanese Pound",
+    CDF: "Congolese Franc", ETB: "Ethiopian Birr", ZAR: "South African Rand", NGN: "Nigerian Naira",
+    GHS: "Ghanaian Cedi", ZMW: "Zambian Kwacha", EGP: "Egyptian Pound", MAD: "Moroccan Dirham",
+    AED: "UAE Dirham", SAR: "Saudi Riyal", QAR: "Qatari Riyal", TRY: "Turkish Lira", INR: "Indian Rupee",
+    CNY: "Chinese Yuan", JPY: "Japanese Yen", CAD: "Canadian Dollar", AUD: "Australian Dollar",
+    CHF: "Swiss Franc", SEK: "Swedish Krona", NOK: "Norwegian Krone", DKK: "Danish Krone"
+  };
+  var FX_ORDER = ["UGX","USD","EUR","GBP","KES","TZS","RWF","BIF","SSP","CDF","ETB","ZAR","NGN","GHS","ZMW","EGP","MAD","AED","SAR","QAR","TRY","INR","CNY","JPY","CAD","AUD","CHF","SEK","NOK","DKK"];
+  var FX_SOURCES = [
+    {
+      id: "exchangerate-api",
+      label: "ExchangeRate-API",
+      url: "https://open.er-api.com/v6/latest/USD",
+      parse: function (j) {
+        if (!j || j.result === "error" || !j.rates) return null;
+        return { rates: j.rates, updatedAt: num(j.time_last_update_unix) * 1000, nextAt: num(j.time_next_update_unix) * 1000 };
+      }
+    },
+    {
+      id: "currency-api",
+      label: "Currency-API",
+      url: "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.min.json",
+      parse: parseCurrencyApi
+    },
+    {
+      id: "currency-api",
+      label: "Currency-API",
+      url: "https://latest.currency-api.pages.dev/v1/currencies/usd.min.json",
+      parse: parseCurrencyApi
+    }
+  ];
+  var fxBusy = false;
+  var fxConv = { amount: "", from: "USD", to: "UGX" };
+
   var state = {
     upcoming: {
       view: "list",
@@ -192,7 +232,7 @@
     return doc;
   }
 
-  function writeDoc(doc, reason) {
+  function writeDoc(doc, reason, quiet) {
     if (!doc) return;
     var value = JSON.stringify(doc);
     try { localStorage.setItem(DATA_KEY, value); } catch (err) { toast("Could not save on this device", "error"); return; }
@@ -201,14 +241,14 @@
     try { sessionStorage.setItem(REFRESH_KEY, "1"); } catch (_) {}
     try { window.dispatchEvent(new CustomEvent("s97:v2-data-change", { detail: { reason: reason || "update" } })); } catch (_) {}
     scheduleRender(0);
-    toast("Saved · syncing to cloud", "success");
+    if (!quiet) toast("Saved · syncing to cloud", "success");
   }
 
-  function updateDoc(mutator, reason) {
+  function updateDoc(mutator, reason, quiet) {
     var doc = readDoc();
     if (!doc) { toast("Finance data is not ready yet", "error"); return false; }
     mutator(doc);
-    writeDoc(doc, reason);
+    writeDoc(doc, reason, quiet);
     return true;
   }
 
@@ -225,6 +265,370 @@
 
   function savePrefs() {
     try { localStorage.setItem(PREF_KEY, JSON.stringify(state.upcoming)); } catch (_) {}
+  }
+
+  /* ── Live FX ──────────────────────────────────────────────────────────────
+     Rates are pulled from a free, no-key provider once a day, straight from the
+     browser (same "no middle server" pattern as the AI copilot). The last good
+     table is cached so the converter keeps working offline, and doc.meta.usdRate
+     is kept in step so the rest of the app — and the copilot — read the same
+     number. Set doc.settings.fxManual to keep a hand-typed rate instead. */
+
+  function parseCurrencyApi(j) {
+    if (!j || !j.usd || typeof j.usd !== "object") return null;
+    var stamp = parseLocalDate(j.date);
+    return { rates: j.usd, updatedAt: stamp ? stamp.getTime() : 0, nextAt: 0 };
+  }
+
+  function fxNormalize(rates) {
+    var out = {};
+    Object.keys(rates || {}).forEach(function (code) {
+      var key = String(code).toUpperCase();
+      var value = num(rates[code]);
+      if (/^[A-Z]{3}$/.test(key) && value > 0 && isFinite(value)) out[key] = value;
+    });
+    out[FX_BASE] = 1;
+    // A payload without a sane home rate is a broken payload — never let it
+    // overwrite a good cached table or the user's manual rate.
+    if (!(out[FX_HOME] > 100 && out[FX_HOME] < 1000000)) return null;
+    return out;
+  }
+
+  function fxLoad() {
+    var store;
+    try { store = JSON.parse(localStorage.getItem(FX_KEY) || "null"); } catch (_) { store = null; }
+    if (!store || typeof store !== "object" || !store.rates || !store.rates[FX_HOME]) return null;
+    return store;
+  }
+
+  function fxSave(store) {
+    try { localStorage.setItem(FX_KEY, JSON.stringify(store)); } catch (_) {}
+  }
+
+  function fxStale(store) {
+    if (!store) return true;
+    if (store.day !== todayISO()) return true;
+    if (store.nextAt && Date.now() >= store.nextAt) return true;
+    return false;
+  }
+
+  function fxRate(code, store) {
+    var s = store || fxLoad();
+    if (!s) return 0;
+    return num(s.rates[String(code || "").toUpperCase()]);
+  }
+
+  function fxConvert(amount, from, to, store) {
+    var a = fxRate(from, store), b = fxRate(to, store);
+    if (!a || !b) return null;
+    return num(amount) / a * b;
+  }
+
+  function fxCurrencies(store) {
+    var have = (store && store.rates) || {};
+    var listed = FX_ORDER.filter(function (c) { return have[c]; });
+    var rest = Object.keys(have).filter(function (c) { return FX_ORDER.indexOf(c) < 0; }).sort();
+    return listed.concat(rest);
+  }
+
+  function fxDecimals(code) {
+    var r = fxRate(code);
+    if (!r) return 2;
+    // Weak units (UGX, TZS…) read better whole; strong ones need cents.
+    return r >= 500 ? 0 : 2;
+  }
+
+  function fxAmount(value, code) {
+    var n = num(value);
+    var abs = Math.abs(n);
+    var d = fxDecimals(code);
+    // Whole shillings are right for real sums, but "1 TZS = 1" throws the
+    // answer away — small results keep their decimals whatever the currency.
+    if (abs && abs < 10) d = Math.max(d, abs < 1 ? 4 : 2);
+    return n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+  }
+
+  function fxRateLine(from, to, store) {
+    var one = fxConvert(1, from, to, store);
+    if (one == null) return "";
+    var d = one >= 500 ? 0 : one >= 1 ? 2 : one >= 0.01 ? 4 : 6;
+    return "1 " + from + " = " + one.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }) + " " + to;
+  }
+
+  function fxAgo(store) {
+    if (!store) return "never";
+    var ms = Date.now() - num(store.updatedAt || store.fetchedAt);
+    if (!isFinite(ms) || ms < 0) return "just now";
+    var mins = Math.round(ms / 60000);
+    if (mins < 2) return "just now";
+    if (mins < 60) return mins + "m ago";
+    var hrs = Math.round(mins / 60);
+    if (hrs < 24) return hrs + "h ago";
+    var days = Math.round(hrs / 24);
+    return days === 1 ? "yesterday" : days + "d ago";
+  }
+
+  function fxFetchJSON(url) {
+    var ctrl = window.AbortController ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 9000);
+    var opts = { cache: "no-store", mode: "cors" };
+    if (ctrl) opts.signal = ctrl.signal;
+    return fetch(url, opts).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    }).then(function (j) { clearTimeout(timer); return j; }, function (err) { clearTimeout(timer); throw err; });
+  }
+
+  // Walks the provider list in order and keeps the first sane answer.
+  function fxFetch() {
+    var i = 0;
+    function attempt() {
+      if (i >= FX_SOURCES.length) return Promise.reject(new Error("no source available"));
+      var src = FX_SOURCES[i++];
+      return fxFetchJSON(src.url).then(function (j) {
+        var parsed = src.parse(j);
+        var rates = parsed && fxNormalize(parsed.rates);
+        if (!rates) throw new Error("unusable payload");
+        return {
+          base: FX_BASE,
+          rates: rates,
+          source: src.id,
+          sourceLabel: src.label,
+          fetchedAt: Date.now(),
+          updatedAt: parsed.updatedAt || Date.now(),
+          nextAt: parsed.nextAt || 0,
+          day: todayISO()
+        };
+      }).catch(attempt);
+    }
+    return attempt();
+  }
+
+  // Keeps doc.meta.usdRate (used by the copilot and the Settings screen) in step
+  // with the live table, unless the user has pinned a manual rate.
+  function fxSyncDoc(store) {
+    var doc = readDoc();
+    if (!doc || !store) return;
+    if (doc.settings && doc.settings.fxManual) return;
+    var live = Math.round(num(store.rates[FX_HOME]));
+    if (!live || Math.abs(num(doc.meta.usdRate) - live) < 1) return;
+    doc.meta.usdRate = live;
+    writeDoc(doc, "fx-rate", true);
+  }
+
+  function fxRefresh(force, onDone) {
+    var store = fxLoad();
+    if (fxBusy) return;
+    if (!force && !fxStale(store)) { if (onDone) onDone(store, null); return; }
+    if (!navigator.onLine) {
+      if (force) toast("You're offline — showing the last saved rates", "error");
+      if (onDone) onDone(store, new Error("offline"));
+      return;
+    }
+    fxBusy = true;
+    fxPaint();
+    fxFetch().then(function (next) {
+      fxBusy = false;
+      fxSave(next);
+      fxSyncDoc(next);
+      fxPaint();
+      scheduleRender(0);
+      if (force) toast("Rates updated", "success");
+      if (onDone) onDone(next, null);
+    }, function (err) {
+      fxBusy = false;
+      fxPaint();
+      if (force) toast("Could not reach the rate service", "error");
+      if (onDone) onDone(fxLoad(), err);
+    });
+  }
+
+  function fxWatch() {
+    fxRefresh(false);
+    // A new day should bring new rates even on a device that never gets closed.
+    setInterval(function () { fxRefresh(false); }, 30 * 60 * 1000);
+    window.addEventListener("online", function () { fxRefresh(false); });
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) fxRefresh(false); });
+  }
+
+  // Sub-line for the dashboard's USD tile: what those dollars are worth at home.
+  function usdEquivalent(usd) {
+    var value = fxConvert(usd, "USD", FX_HOME);
+    if (value == null || !num(usd)) return "Expected incoming";
+    return "≈ " + money(value, FX_HOME, true) + " today";
+  }
+
+  function fxStamp(store) {
+    if (fxBusy) return "Updating…";
+    if (!store) return navigator.onLine ? "Tap to load rates" : "Offline · no rates yet";
+    var live = !fxStale(store);
+    return (live ? "Live" : "Last known") + " · " + fxAgo(store);
+  }
+
+  function fxCardHTML(doc) {
+    var store = fxLoad();
+    var manual = !!(doc.settings && doc.settings.fxManual);
+    var rows = FX_TICKER.map(function (code) {
+      var value = fxConvert(1, code, FX_HOME, store);
+      return '<div class="x97-fx-tick"><span>1 ' + esc(code) + '</span><b class="x97-money">' + (value == null ? "—" : fxAmount(value, FX_HOME)) + '</b></div>';
+    }).join("");
+    var headline = store ? fxAmount(fxRate(FX_HOME, store), FX_HOME) : "—";
+    return '<section class="x97-section">' + sectionHead("Currency", "Convert", "open-converter") +
+      '<button class="x97-fx-card" data-x97-action="open-converter">' +
+        '<div class="x97-fx-top">' +
+          '<div><div class="x97-fx-label">1 USD buys</div>' +
+          '<div class="x97-fx-value x97-money">' + headline + ' <em>UGX</em></div></div>' +
+          '<div class="x97-fx-badge' + (fxBusy ? " busy" : (store && !fxStale(store) ? " live" : "")) + '" data-x97-fx="stamp">' + esc(fxStamp(store)) + '</div>' +
+        '</div>' +
+        '<div class="x97-fx-ticks">' + rows + '</div>' +
+        (manual ? '<div class="x97-fx-note">Manual rate on — auto-update is paused</div>' : '') +
+      '</button></section>';
+  }
+
+  function fxQuickAmounts(from) {
+    var weak = fxRate(from) >= 500;
+    return weak ? [10000, 50000, 100000, 1000000] : [10, 50, 100, 1000];
+  }
+
+  // Chips follow the "from" currency — 1M makes sense in shillings, not dollars.
+  function fxQuickHTML(from) {
+    return fxQuickAmounts(from).map(function (v) {
+      return '<button type="button" class="x97-chip" data-x97-action="fx-amount" data-value="' + v + '">' + money(v, "", true) + '</button>';
+    }).join("");
+  }
+
+  function fxSwap() {
+    var from = document.getElementById("x97-fx-from");
+    var to = document.getElementById("x97-fx-to");
+    var swapped = fxConv.from;
+    fxConv.from = fxConv.to;
+    fxConv.to = swapped;
+    if (from) from.value = fxConv.from;
+    if (to) to.value = fxConv.to;
+    var quick = document.querySelector(".x97-fx-quick");
+    if (quick) quick.innerHTML = fxQuickHTML(fxConv.from);
+    fxPaint();
+  }
+
+  function fxSelect(id, selected, store) {
+    return '<select class="x97-select" id="' + id + '">' + fxCurrencies(store).map(function (code) {
+      return option(code, code + (FX_NAMES[code] ? " · " + FX_NAMES[code] : ""), selected);
+    }).join("") + '</select>';
+  }
+
+  // Repaints the live parts in place so typing never rebuilds the sheet.
+  function fxPaint() {
+    var store = fxLoad();
+    document.querySelectorAll('[data-x97-fx="stamp"]').forEach(function (el) {
+      el.textContent = fxStamp(store);
+      el.classList.toggle("busy", fxBusy);
+      el.classList.toggle("live", !fxBusy && !!store && !fxStale(store));
+    });
+    var out = document.getElementById("x97-fx-result");
+    if (!out) return;
+    var amount = num(fxConv.amount);
+    var value = fxConvert(amount, fxConv.from, fxConv.to, store);
+    out.textContent = value == null ? "—" : fxAmount(value, fxConv.to);
+    var rate = document.getElementById("x97-fx-rate");
+    if (rate) rate.textContent = fxRateLine(fxConv.from, fxConv.to, store) || "Rates not loaded yet";
+    var inverse = document.getElementById("x97-fx-inverse");
+    if (inverse) inverse.textContent = fxRateLine(fxConv.to, fxConv.from, store) || "";
+    var meta = document.getElementById("x97-fx-meta");
+    if (meta) {
+      meta.textContent = store
+        ? fxStamp(store) + " · " + (store.sourceLabel || store.source || "rate service") + " · refreshes automatically each day"
+        : (navigator.onLine ? "No rates saved yet — tap Refresh" : "Offline — connect once to load rates");
+    }
+  }
+
+  function openConverter() {
+    var doc = readDoc() || { settings: {} };
+    var store = fxLoad();
+    if (!fxCurrencies(store).length) { fxConv.from = "USD"; fxConv.to = "UGX"; }
+    var manual = !!(doc.settings && doc.settings.fxManual);
+    var chips = fxQuickHTML(fxConv.from);
+    var body =
+      '<div class="x97-fx-conv">' +
+        '<div class="x97-fx-leg">' +
+          '<label>From</label>' +
+          '<div class="x97-fx-leg-row">' + fxSelect("x97-fx-from", fxConv.from, store) +
+          '<input class="x97-input x97-fx-amount x97-money" id="x97-fx-amount" inputmode="decimal" autocomplete="off" placeholder="0" value="' + attr(fxConv.amount) + '"></div>' +
+          '<div class="x97-chips x97-fx-quick">' + chips + '</div>' +
+        '</div>' +
+        '<div class="x97-fx-swap-row"><button type="button" class="x97-fx-swap" data-x97-action="fx-swap" aria-label="Swap currencies">' + icon("arrow", 17) + '</button></div>' +
+        '<div class="x97-fx-leg">' +
+          '<label>To</label>' +
+          '<div class="x97-fx-leg-row">' + fxSelect("x97-fx-to", fxConv.to, store) +
+          '<div class="x97-fx-result x97-money" id="x97-fx-result">—</div></div>' +
+        '</div>' +
+        '<div class="x97-fx-rates"><div id="x97-fx-rate" class="x97-fx-rate-main"></div><div id="x97-fx-inverse" class="x97-fx-rate-sub"></div></div>' +
+        '<div class="x97-fx-meta" id="x97-fx-meta"></div>' +
+        '<label class="x97-check x97-fx-manual"><input type="checkbox" id="x97-fx-manual"' + (manual ? " checked" : "") + '>' +
+          '<span>Keep my own USD rate<em>Stops the daily rate from updating Settings and the copilot</em></span></label>' +
+      '</div>';
+    var foot = '<button class="x97-btn" data-x97-action="fx-refresh">' + icon("bolt", 15) + 'Refresh</button>' +
+      '<button class="x97-btn primary" data-x97-action="close-sheet">Done</button>';
+    openSheet("Currency converter", body, foot, { afterOpen: wireConverter });
+  }
+
+  function wireConverter(back) {
+    var amount = back.querySelector("#x97-fx-amount");
+    var from = back.querySelector("#x97-fx-from");
+    var to = back.querySelector("#x97-fx-to");
+    var manual = back.querySelector("#x97-fx-manual");
+    if (amount) amount.addEventListener("input", function () { fxConv.amount = amount.value; fxPaint(); });
+    if (from) from.addEventListener("change", function () { fxConv.from = from.value; fxPaint(); });
+    if (to) to.addEventListener("change", function () { fxConv.to = to.value; fxPaint(); });
+    if (manual) manual.addEventListener("change", function () {
+      var on = manual.checked;
+      updateDoc(function (doc) { doc.settings.fxManual = on; }, "fx-manual", true);
+      if (!on) fxSyncDoc(fxLoad());
+      toast(on ? "Auto-update paused — your typed rate stays" : "Auto-update on — daily rate will sync", "success");
+      scheduleRender(0);
+    });
+    fxPaint();
+    fxRefresh(false);
+  }
+
+  function injectFxCSS() {
+    if (document.getElementById("x97-fx-css")) return;
+    var style = document.createElement("style");
+    style.id = "x97-fx-css";
+    style.textContent =
+      ".x97-fx-card{display:block;width:100%;text-align:left;padding:17px 17px 15px;background:linear-gradient(180deg,var(--card) 0%,var(--bg2) 135%);border:1px solid var(--line);border-radius:22px;box-shadow:var(--toplit),var(--elev-1);transition:border-color .2s ease,box-shadow .24s ease,transform .24s cubic-bezier(.22,1,.36,1);cursor:pointer}" +
+      "@media(hover:hover){.x97-fx-card:hover{border-color:var(--line2);box-shadow:var(--toplit),var(--elev-2);transform:translateY(-2px)}}" +
+      ".x97-fx-card:active{transform:scale(.99)}" +
+      ".x97-fx-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}" +
+      ".x97-fx-label{font-size:9.5px;text-transform:uppercase;letter-spacing:.09em;font-weight:800;color:var(--tx3)}" +
+      ".x97-fx-value{font-size:29px;line-height:1.05;margin-top:9px;color:var(--tx);letter-spacing:-.03em}" +
+      ".x97-fx-value em{font-style:normal;font-size:14px;font-weight:800;color:var(--tx3);letter-spacing:0}" +
+      ".x97-fx-badge{flex:none;font-size:10px;font-weight:800;padding:6px 9px;border-radius:999px;background:var(--card2);color:var(--tx3);display:inline-flex;align-items:center;gap:6px;white-space:nowrap}" +
+      ".x97-fx-badge.live{background:var(--posdim);color:var(--pos)}" +
+      ".x97-fx-badge.live::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--pos);animation:x97-pulse 2.4s ease-in-out infinite}" +
+      ".x97-fx-badge.busy{background:var(--warndim);color:var(--warn)}" +
+      "@media(prefers-reduced-motion:reduce){.x97-fx-badge.live::before{animation:none}}" +
+      ".x97-fx-ticks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin-top:15px;padding-top:13px;border-top:1px solid var(--line)}" +
+      ".x97-fx-tick{min-width:0}.x97-fx-tick span{display:block;font-size:9.5px;font-weight:800;color:var(--tx3);letter-spacing:.05em}" +
+      ".x97-fx-tick b{display:block;font-size:13px;color:var(--tx);margin-top:4px;overflow:hidden;text-overflow:ellipsis}" +
+      ".x97-fx-note{margin-top:11px;font-size:10.5px;font-weight:700;color:var(--warn)}" +
+      ".x97-fx-leg label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--tx2);font-weight:800;margin:0 0 6px}" +
+      ".x97-fx-leg-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:9px;align-items:stretch}" +
+      ".x97-fx-leg-row>*{min-width:0}" +
+      ".x97-fx-amount{font-size:19px;text-align:right}" +
+      ".x97-fx-result{display:flex;align-items:center;justify-content:flex-end;min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--posdim);color:var(--pos);font-size:19px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
+      ".x97-fx-quick{margin-top:9px}" +
+      ".x97-fx-swap-row{display:flex;justify-content:center;margin:11px 0;position:relative}" +
+      ".x97-fx-swap-row::before{content:'';position:absolute;left:0;right:0;top:50%;height:1px;background:var(--line)}" +
+      ".x97-fx-swap{position:relative;width:40px;height:40px;border-radius:50%;border:1px solid var(--line2);background:var(--card);color:var(--pos);display:grid;place-items:center;box-shadow:var(--toplit),var(--elev-1);cursor:pointer;transition:transform .18s cubic-bezier(.22,1,.36,1)}" +
+      ".x97-fx-swap svg{transform:rotate(90deg)}.x97-fx-swap:active{transform:rotate(180deg) scale(.94)}" +
+      ".x97-fx-rates{margin-top:15px;padding:12px 13px;background:var(--card2);border-radius:13px}" +
+      ".x97-fx-rate-main{font-size:13px;font-weight:800;color:var(--tx)}" +
+      ".x97-fx-rate-sub{font-size:11px;color:var(--tx3);margin-top:4px;font-weight:600}" +
+      ".x97-fx-meta{font-size:10.5px;color:var(--tx3);line-height:1.5;margin-top:9px}" +
+      ".x97-fx-manual{margin-top:14px;align-items:flex-start}" +
+      ".x97-fx-manual span{display:block}.x97-fx-manual em{display:block;font-style:normal;font-weight:600;font-size:10.5px;color:var(--tx3);margin-top:3px;line-height:1.45}" +
+      "@media(max-width:560px){.x97-fx-value{font-size:25px}.x97-fx-ticks{grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.x97-fx-leg-row{grid-template-columns:1fr}.x97-fx-amount{text-align:left}.x97-fx-result{justify-content:flex-start}}";
+    document.head.appendChild(style);
   }
 
   function icon(name, size) {
@@ -727,10 +1131,11 @@
       pageHeader("Financial command", "Dashboard", new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })) +
       '<div class="x97-dashboard-main">' +
         '<section class="x97-card x97-hero"><div class="x97-hero-label">Available now</div><div class="x97-hero-value x97-money">' + money(a.cash, "UGX") + '</div><div class="x97-hero-meta"><div class="x97-stat"><span>Net position</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
-        '<section><div class="x97-summary-grid"><div class="x97-card x97-summary"><div class="k">This month UGX</div><div class="v x97-money x97-green">' + money(a.ugxMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">This month USD</div><div class="v x97-money x97-teal">' + money(a.usdMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">Safe personal</div><div class="v x97-money ' + (a.expenses.personalSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.personalSafe, "", true) + '</div><div class="s">After plans</div></div><div class="x97-card x97-summary"><div class="k">Safe business</div><div class="v x97-money ' + (a.expenses.businessSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.businessSafe, "", true) + '</div><div class="s">After plans</div></div></div></section>' +
+        '<section><div class="x97-summary-grid"><div class="x97-card x97-summary"><div class="k">This month UGX</div><div class="v x97-money x97-green">' + money(a.ugxMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">This month USD</div><div class="v x97-money x97-teal">' + money(a.usdMonth, "", true) + '</div><div class="s">' + esc(usdEquivalent(a.usdMonth)) + '</div></div><div class="x97-card x97-summary"><div class="k">Safe personal</div><div class="v x97-money ' + (a.expenses.personalSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.personalSafe, "", true) + '</div><div class="s">After plans</div></div><div class="x97-card x97-summary"><div class="k">Safe business</div><div class="v x97-money ' + (a.expenses.businessSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.businessSafe, "", true) + '</div><div class="s">After plans</div></div></div></section>' +
         '<section class="x97-section">' + sectionHead("Needs attention", "View Upcoming", "go-upcoming") + '<div class="x97-card x97-pad">' + attentionRows + '</div></section>' +
         (function(){var s=messagingSummary(doc);var pillOd=s.overdue?'<span class="x97-pill bad">'+s.overdue+' overdue</span>':(s.dueSoon?'<span class="x97-pill warn">'+s.dueSoon+' due soon</span>':'<span class="x97-pill good">'+icon("check",11)+'All clear</span>');return '<section class="x97-section">' + sectionHead("Messaging", "Open", "open-messaging") + '<button class="x97-msg-card" data-x97-action="open-messaging"><div class="x97-msg-icon">' + icon("send") + '</div><div class="x97-msg-body"><div class="x97-msg-title">WhatsApp reminders &amp; campaigns</div><div class="x97-msg-sub">' + s.contacts + ' contacts · ' + s.campaigns + ' campaigns' + (remindExt.ready?' · sender connected':'') + '</div><div class="x97-msg-pills">' + pillOd + '</div></div>' + icon("chevron") + '</button></section>';})() +
         '<section class="x97-section">' + sectionHead("Next 7 days") + '<div class="x97-card x97-pad"><div class="x97-hero-meta" style="margin-bottom:4px"><div class="x97-stat"><span>Expected in</span><b class="x97-green">' + money(in7, "UGX") + '</b></div><div class="x97-stat"><span>Expected out</span><b class="x97-red">' + money(out7, "UGX") + '</b></div></div>' + timelineRows + '</div></section>' +
+        fxCardHTML(doc) +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Accounts", "Add account", "add-account") + '<div class="x97-card x97-pad">' + (accountRows || '<div class="x97-empty"><strong>No accounts yet</strong><p>Add your bank, mobile money or cash balance.</p></div>') + '</div></section>' +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Incoming pipeline", "View all months", "go-upcoming-months") + '<div class="x97-grid x97-pipeline">' + pipeline + '</div></section>' +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Credit position", "Open Credit", "go-credit") + '<div class="x97-card x97-pad"><div class="x97-summary-grid"><div class="x97-summary" style="padding:4px"><div class="k">Available credit</div><div class="v x97-money x97-teal">' + money(a.creditAvailable, "", true) + '</div><div class="s">Not included in cash</div></div><div class="x97-summary" style="padding:4px"><div class="k">Borrowed</div><div class="v x97-money x97-red">' + money(a.activeLoans.reduce(function (s,l){return s+num(l.principal);},0), "", true) + '</div><div class="s">' + a.activeLoans.length + ' active</div></div><div class="x97-summary" style="padding:4px"><div class="k">Amount due</div><div class="v x97-money x97-red">' + money(a.debt, "", true) + '</div><div class="s">Estimated today</div></div><div class="x97-summary" style="padding:4px"><div class="k">Next repayment</div><div class="v x97-money" style="font-size:17px">' + esc(nextLoanDue(a.activeLoans)) + '</div><div class="s">Earliest active loan</div></div></div></div></section>' +
@@ -2437,6 +2842,10 @@
     if(action==="borrow-percent"){var form=document.getElementById("x97-borrow-form");if(form){var max=num(form.amount.max);form.amount.value=Math.floor(max*num(btn.dataset.value)/100);form.amount.dispatchEvent(new Event("input",{bubbles:true}));}return;}
     if(action==="repay"){openRepayForm(btn.dataset.id);return;}
     if(action==="loan-details"){openLoanDetails(btn.dataset.id);return;}
+    if(action==="open-converter"){openConverter();return;}
+    if(action==="fx-refresh"){fxRefresh(true);return;}
+    if(action==="fx-swap"){fxSwap();return;}
+    if(action==="fx-amount"){fxConv.amount=btn.dataset.value;var amt=document.getElementById("x97-fx-amount");if(amt)amt.value=fxConv.amount;fxPaint();return;}
   }, true);
 
   function resumeOriginalTab() {
@@ -2455,7 +2864,7 @@
   }
 
   function boot() {
-    injectCSS();injectMsgCSS();loadPrefs();resumeOriginalTab();initRemindBridge();
+    injectCSS();injectMsgCSS();injectFxCSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
     var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
     var observer=new MutationObserver(function(mutations){
       var relevant=mutations.some(function(m){
@@ -2471,7 +2880,7 @@
     observer.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:["class"]});
     watchData();
     window.addEventListener("pageshow",syncMode);window.addEventListener("focus",function(){setTimeout(syncMode,30);});
-    window.__x97v2={version:VERSION,render:scheduleRender,read:readDoc,analytics:function(){var d=readDoc();return d?analytics(d):null;},selfTest:function(){var d=readDoc();return {version:VERSION,dataReady:!!d,followups:d?d.followups.length:0,facilities:d?d.credit.length:0,loans:d?virtualLegacyLoans(d).length:0,screen:currentScreen};}};
+    window.__x97v2={version:VERSION,render:scheduleRender,read:readDoc,analytics:function(){var d=readDoc();return d?analytics(d):null;},fx:{rates:fxLoad,refresh:function(){fxRefresh(true);},convert:fxConvert},selfTest:function(){var d=readDoc(),fx=fxLoad();return {version:VERSION,dataReady:!!d,followups:d?d.followups.length:0,facilities:d?d.credit.length:0,loans:d?virtualLegacyLoans(d).length:0,screen:currentScreen,fx:fx?{source:fx.source,day:fx.day,ugx:fx.rates.UGX,currencies:Object.keys(fx.rates).length,stale:fxStale(fx)}:null};}};
   }
 
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();

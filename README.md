@@ -206,8 +206,40 @@ message previews, animate in the same style as the rest of the app (with full
 
 ---
 
-## 6. What it does — and doesn't
-It **tracks, forecasts, advises** and now **drafts and paces WhatsApp reminders**.
+## 6. Live currency converter
+The dashboard carries a **Currency** card showing what 1 USD buys in shillings
+right now, plus EUR, GBP, KES and TZS at a glance. Tap it for the full
+**converter**: type an amount, pick any two of ~160 currencies, swap with one
+tap, and see the result update as you type — along with the rate both ways.
+
+**Rates refresh themselves once a day.** The app checks on open, when the
+device comes back online, and on a timer, so a phone left running overnight
+still wakes up on the new day's rate. Nothing to press.
+
+- **No key, no setup, no server.** Rates come straight from your browser to a
+  free public rate service ([ExchangeRate-API's open
+  endpoint](https://www.exchangerate-api.com/docs/free)), with
+  [Currency-API](https://github.com/fawazahmed0/exchange-api) as a standby if
+  it's unreachable. Nothing about your finances is sent — the request only asks
+  "what are today's rates".
+- **Works offline.** The last good rate table is saved on the device, so the
+  converter keeps working with no connection; the card just says *Last known*
+  instead of *Live*.
+- **Your USD rate stays in step.** The daily rate updates the **USD rate** in
+  Settings, so the dashboard's *This month USD* tile shows its shilling value
+  and the AI copilot reasons with today's number instead of a stale one.
+- **Prefer your own rate?** Tick **Keep my own USD rate** in the converter and
+  auto-update pauses — the figure you typed in Settings is left alone. The
+  converter still shows live rates.
+
+A bad or empty response from the rate service is discarded rather than saved,
+so a provider having a bad day can never overwrite a good rate with a broken one.
+
+---
+
+## 7. What it does — and doesn't
+It **tracks, forecasts, advises**, **converts currencies at live daily rates** and
+**drafts and paces WhatsApp reminders**.
 It does **not** move money or connect to your mobile-money or bank accounts. You
 update balances and mark items paid; it does the maths, the alerts, the
 suggestions, and helps you chase what's owed.
