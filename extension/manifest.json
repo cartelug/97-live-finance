@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "97 Sender — WhatsApp reminders for 97 LIVE",
+  "version": "1.0.0",
+  "description": "Sends the payment reminders you queue in 97 LIVE Finance through your own WhatsApp Web, at a safe, human pace.",
+  "permissions": ["tabs", "storage", "alarms", "notifications"],
+  "host_permissions": ["https://web.whatsapp.com/*"],
+  "background": { "service_worker": "background.js" },
+  "icons": { "16": "icons/icon-16.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "action": { "default_title": "97 Sender", "default_popup": "popup.html", "default_icon": { "16": "icons/icon-16.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" } },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["wa-content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "exclude_matches": ["https://web.whatsapp.com/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

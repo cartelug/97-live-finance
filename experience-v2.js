@@ -25,6 +25,55 @@
   var unavailableOpen = false;
   var needsReactRefresh = false;
   var modeActive = false;
+  var remindExt = { ready: false, version: "", sending: false };
+  var remindState = { open: false, mode: "onetap", tone: "auto", useAI: false, selected: {}, drafts: {}, showAll: false, progress: {} };
+  var campaignState = { open: false, view: "home", mode: "onetap", editId: null, audience: { type: "list", id: "" }, message: "", previewIdx: 0, progress: {}, sending: false, runId: null, oneTapIdx: 0, antiblock: "balanced", showDetail: false, showVars: false, showEmoji: false, showPreview: false, showTemplates: false, dupRemoval: true, timestamp: false, countryCode: "", manualNumbers: "" };
+  var ANTIBLOCK = {
+    conservative: { label: "Conservative", min: 60, max: 180, batch: 5, brk: 15, note: "Safest · 60–180s between sends" },
+    balanced: { label: "Balanced", min: 30, max: 90, batch: 8, brk: 10, note: "Recommended · 30–90s between sends" },
+    fast: { label: "Fast", min: 8, max: 25, batch: 15, brk: 5, note: "Quick · 8–25s between sends" }
+  };
+  var EMOJIS = ["😀","😁","😅","😂","🙂","😉","😍","😘","😎","🤩","🥳","🙏","👍","👌","👏","🙌","💪","🔥","✨","🎉","💯","✅","❗","❓","⚠️","💰","💸","🧾","📅","⏰","📌","📞","📱","💬","➡️","👉","❤️","🧡","💚","💙","🙏🏾","😊","😄","🤝","🎬","🎥","📸","🌟"];
+
+  var FX_KEY = "ns97.v2.fx";
+  var FX_BASE = "USD";
+  var FX_HOME = "UGX";
+  var FX_TICKER = ["EUR", "GBP", "KES", "TZS"];
+  var FX_NAMES = {
+    UGX: "Uganda Shilling", USD: "US Dollar", EUR: "Euro", GBP: "British Pound", KES: "Kenyan Shilling",
+    TZS: "Tanzanian Shilling", RWF: "Rwandan Franc", BIF: "Burundian Franc", SSP: "South Sudanese Pound",
+    CDF: "Congolese Franc", ETB: "Ethiopian Birr", ZAR: "South African Rand", NGN: "Nigerian Naira",
+    GHS: "Ghanaian Cedi", ZMW: "Zambian Kwacha", EGP: "Egyptian Pound", MAD: "Moroccan Dirham",
+    AED: "UAE Dirham", SAR: "Saudi Riyal", QAR: "Qatari Riyal", TRY: "Turkish Lira", INR: "Indian Rupee",
+    CNY: "Chinese Yuan", JPY: "Japanese Yen", CAD: "Canadian Dollar", AUD: "Australian Dollar",
+    CHF: "Swiss Franc", SEK: "Swedish Krona", NOK: "Norwegian Krone", DKK: "Danish Krone"
+  };
+  var FX_ORDER = ["UGX","USD","EUR","GBP","KES","TZS","RWF","BIF","SSP","CDF","ETB","ZAR","NGN","GHS","ZMW","EGP","MAD","AED","SAR","QAR","TRY","INR","CNY","JPY","CAD","AUD","CHF","SEK","NOK","DKK"];
+  var FX_SOURCES = [
+    {
+      id: "exchangerate-api",
+      label: "ExchangeRate-API",
+      url: "https://open.er-api.com/v6/latest/USD",
+      parse: function (j) {
+        if (!j || j.result === "error" || !j.rates) return null;
+        return { rates: j.rates, updatedAt: num(j.time_last_update_unix) * 1000, nextAt: num(j.time_next_update_unix) * 1000 };
+      }
+    },
+    {
+      id: "currency-api",
+      label: "Currency-API",
+      url: "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.min.json",
+      parse: parseCurrencyApi
+    },
+    {
+      id: "currency-api",
+      label: "Currency-API",
+      url: "https://latest.currency-api.pages.dev/v1/currencies/usd.min.json",
+      parse: parseCurrencyApi
+    }
+  ];
+  var fxBusy = false;
+  var fxConv = { amount: "", from: "USD", to: "UGX" };
 
   var state = {
     upcoming: {
@@ -180,10 +229,133 @@
     if (!Array.isArray(doc.expenses.entries)) doc.expenses.entries = [];
     if (!doc.settings || typeof doc.settings !== "object") doc.settings = {};
     if (!Array.isArray(doc.creditLoans)) doc.creditLoans = [];
+    if (!Array.isArray(doc.payments)) doc.payments = [];
     return doc;
   }
 
-  function writeDoc(doc, reason) {
+  /* ── Money received ───────────────────────────────────────────────────────
+     `amount` stays what it has always meant to every reader of this document
+     — what is still owed — so the React screens and the copilot keep summing
+     it correctly with no changes. `gross` remembers the invoiced total and
+     `paid` what has come in, which is what makes part payments honest. */
+
+  function grossOf(item) {
+    var gross = num(item.gross);
+    return gross > 0 ? gross : num(item.amount) + num(item.paid);
+  }
+
+  function paidOf(item) { return Math.max(0, num(item.paid)); }
+
+  function outstandingOf(item) { return Math.max(0, grossOf(item) - paidOf(item)); }
+
+  function isPartPaid(item) { return paidOf(item) > 0 && outstandingOf(item) > 0; }
+
+  function paymentsFor(doc, followupId) {
+    return (doc.payments || []).filter(function (p) { return String(p.followupId) === String(followupId); });
+  }
+
+  // What actually landed. Items settled before payments existed have no ledger
+  // entry, so fall back to their face value rather than reporting zero earned.
+  function receivedOf(item) {
+    var paid = paidOf(item);
+    if (paid > 0) return paid;
+    return isPaid(item.status) ? grossOf(item) : 0;
+  }
+
+  // Records money in against a receivable and rewrites the item so that
+  // `amount` keeps meaning "still owed" while it is open, and returns to the
+  // invoiced total once settled (paid items are excluded from every sum, and
+  // the Paid list should show what the job was worth, not zero).
+  function applyPayment(doc, followupId, entry) {
+    var item = (doc.followups || []).find(function (x) { return String(x.id) === String(followupId); });
+    if (!item) return null;
+    var gross = grossOf(item);
+    var received = Math.min(Math.max(0, roundMoney(entry.amount)), Math.max(0, gross - paidOf(item)));
+    if (received <= 0) return null;
+    var payment = {
+      id: uid("pay"),
+      followupId: item.id,
+      client: item.client || "",
+      category: item.category || "",
+      amount: received,
+      currency: String(item.currency || "UGX").toUpperCase(),
+      date: entry.date || todayISO(),
+      accountId: entry.accountId || "",
+      accountName: "",
+      note: (entry.note || "").trim(),
+      createdAt: new Date().toISOString()
+    };
+    item.gross = gross;
+    item.paid = paidOf(item) + received;
+    item.paidOn = payment.date;
+    var settled = item.paid >= gross - 0.5;
+    item.amount = settled ? gross : roundMoney(gross - item.paid);
+    item.status = settled ? "Paid" : "Part Paid";
+    if (entry.accountId) {
+      var account = (doc.balances || []).find(function (b) { return String(b.id) === String(entry.accountId); });
+      if (account) {
+        payment.accountName = account.account || "";
+        // Accounts are held in shillings; dollar receipts land at today's rate.
+        var credited = payment.currency === "USD" ? fxConvert(received, "USD", FX_HOME) : received;
+        if (credited != null) {
+          account.balance = roundMoney(num(account.balance) + credited);
+          payment.creditedUGX = roundMoney(credited);
+        }
+      }
+    }
+    doc.payments.unshift(payment);
+    return payment;
+  }
+
+  function reversePayment(doc, paymentId) {
+    var idx = (doc.payments || []).findIndex(function (p) { return String(p.id) === String(paymentId); });
+    if (idx < 0) return false;
+    var payment = doc.payments[idx];
+    doc.payments.splice(idx, 1);
+    var item = (doc.followups || []).find(function (x) { return String(x.id) === String(payment.followupId); });
+    if (item) {
+      var gross = grossOf(item);
+      item.gross = gross;
+      item.paid = Math.max(0, paidOf(item) - num(payment.amount));
+      item.amount = item.paid > 0 ? roundMoney(gross - item.paid) : gross;
+      item.status = item.paid <= 0 ? "Pending" : "Part Paid";
+      var rest = paymentsFor(doc, item.id);
+      item.paidOn = rest.length ? rest[0].date : "";
+    }
+    if (payment.accountId) {
+      var account = (doc.balances || []).find(function (b) { return String(b.id) === String(payment.accountId); });
+      if (account) account.balance = roundMoney(num(account.balance) - num(payment.creditedUGX != null ? payment.creditedUGX : payment.amount));
+    }
+    return true;
+  }
+
+  // Everything received in a month, in shillings, dollars converted at today's rate.
+  function earnedIn(doc, key) {
+    return (doc.payments || []).filter(function (p) { return monthKey(p.date) === key; }).reduce(function (sum, p) {
+      if (String(p.currency).toUpperCase() !== "USD") return sum + num(p.amount);
+      var ugx = p.creditedUGX != null ? num(p.creditedUGX) : fxConvert(p.amount, "USD", FX_HOME);
+      return sum + (ugx == null ? 0 : ugx);
+    }, 0);
+  }
+
+  function spentIn(doc, key) {
+    return ((doc.expenses && doc.expenses.entries) || []).filter(function (e) {
+      return monthKey(e.date) === key && String(e.kind || "").toLowerCase() === "actual";
+    }).reduce(function (sum, e) { return sum + num(e.amount); }, 0);
+  }
+
+  function earningsSeries(doc, months) {
+    var out = [];
+    var start = startOfMonth(todayDate());
+    for (var i = num(months) - 1; i >= 0; i--) {
+      var d = new Date(start.getFullYear(), start.getMonth() - i, 1, 12, 0, 0, 0);
+      var key = monthKey(d);
+      out.push({ key: key, label: monthLabel(key, true), earned: earnedIn(doc, key), spent: spentIn(doc, key) });
+    }
+    return out;
+  }
+
+  function writeDoc(doc, reason, quiet) {
     if (!doc) return;
     var value = JSON.stringify(doc);
     try { localStorage.setItem(DATA_KEY, value); } catch (err) { toast("Could not save on this device", "error"); return; }
@@ -192,14 +364,14 @@
     try { sessionStorage.setItem(REFRESH_KEY, "1"); } catch (_) {}
     try { window.dispatchEvent(new CustomEvent("s97:v2-data-change", { detail: { reason: reason || "update" } })); } catch (_) {}
     scheduleRender(0);
-    toast("Saved · syncing to cloud", "success");
+    if (!quiet) toast("Saved · syncing to cloud", "success");
   }
 
-  function updateDoc(mutator, reason) {
+  function updateDoc(mutator, reason, quiet) {
     var doc = readDoc();
     if (!doc) { toast("Finance data is not ready yet", "error"); return false; }
     mutator(doc);
-    writeDoc(doc, reason);
+    writeDoc(doc, reason, quiet);
     return true;
   }
 
@@ -216,6 +388,609 @@
 
   function savePrefs() {
     try { localStorage.setItem(PREF_KEY, JSON.stringify(state.upcoming)); } catch (_) {}
+  }
+
+  /* ── Live FX ──────────────────────────────────────────────────────────────
+     Rates are pulled from a free, no-key provider once a day, straight from the
+     browser (same "no middle server" pattern as the AI copilot). The last good
+     table is cached so the converter keeps working offline, and doc.meta.usdRate
+     is kept in step so the rest of the app — and the copilot — read the same
+     number. Set doc.settings.fxManual to keep a hand-typed rate instead. */
+
+  function parseCurrencyApi(j) {
+    if (!j || !j.usd || typeof j.usd !== "object") return null;
+    var stamp = parseLocalDate(j.date);
+    return { rates: j.usd, updatedAt: stamp ? stamp.getTime() : 0, nextAt: 0 };
+  }
+
+  function fxNormalize(rates) {
+    var out = {};
+    Object.keys(rates || {}).forEach(function (code) {
+      var key = String(code).toUpperCase();
+      var value = num(rates[code]);
+      if (/^[A-Z]{3}$/.test(key) && value > 0 && isFinite(value)) out[key] = value;
+    });
+    out[FX_BASE] = 1;
+    // A payload without a sane home rate is a broken payload — never let it
+    // overwrite a good cached table or the user's manual rate.
+    if (!(out[FX_HOME] > 100 && out[FX_HOME] < 1000000)) return null;
+    return out;
+  }
+
+  function fxLoad() {
+    var store;
+    try { store = JSON.parse(localStorage.getItem(FX_KEY) || "null"); } catch (_) { store = null; }
+    if (!store || typeof store !== "object" || !store.rates || !store.rates[FX_HOME]) return null;
+    return store;
+  }
+
+  function fxSave(store) {
+    try { localStorage.setItem(FX_KEY, JSON.stringify(store)); } catch (_) {}
+  }
+
+  function fxStale(store) {
+    if (!store) return true;
+    if (store.day !== todayISO()) return true;
+    if (store.nextAt && Date.now() >= store.nextAt) return true;
+    return false;
+  }
+
+  function fxRate(code, store) {
+    var s = store || fxLoad();
+    if (!s) return 0;
+    return num(s.rates[String(code || "").toUpperCase()]);
+  }
+
+  function fxConvert(amount, from, to, store) {
+    var a = fxRate(from, store), b = fxRate(to, store);
+    if (!a || !b) return null;
+    return num(amount) / a * b;
+  }
+
+  function fxCurrencies(store) {
+    var have = (store && store.rates) || {};
+    var listed = FX_ORDER.filter(function (c) { return have[c]; });
+    var rest = Object.keys(have).filter(function (c) { return FX_ORDER.indexOf(c) < 0; }).sort();
+    return listed.concat(rest);
+  }
+
+  function fxDecimals(code) {
+    var r = fxRate(code);
+    if (!r) return 2;
+    // Weak units (UGX, TZS…) read better whole; strong ones need cents.
+    return r >= 500 ? 0 : 2;
+  }
+
+  function fxAmount(value, code) {
+    var n = num(value);
+    var abs = Math.abs(n);
+    var d = fxDecimals(code);
+    // Whole shillings are right for real sums, but "1 TZS = 1" throws the
+    // answer away — small results keep their decimals whatever the currency.
+    if (abs && abs < 10) d = Math.max(d, abs < 1 ? 4 : 2);
+    return n.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+  }
+
+  function fxRateLine(from, to, store) {
+    var one = fxConvert(1, from, to, store);
+    if (one == null) return "";
+    var d = one >= 500 ? 0 : one >= 1 ? 2 : one >= 0.01 ? 4 : 6;
+    return "1 " + from + " = " + one.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }) + " " + to;
+  }
+
+  function fxAgo(store) {
+    if (!store) return "never";
+    var ms = Date.now() - num(store.updatedAt || store.fetchedAt);
+    if (!isFinite(ms) || ms < 0) return "just now";
+    var mins = Math.round(ms / 60000);
+    if (mins < 2) return "just now";
+    if (mins < 60) return mins + "m ago";
+    var hrs = Math.round(mins / 60);
+    if (hrs < 24) return hrs + "h ago";
+    var days = Math.round(hrs / 24);
+    return days === 1 ? "yesterday" : days + "d ago";
+  }
+
+  function fxFetchJSON(url) {
+    var ctrl = window.AbortController ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctrl) ctrl.abort(); }, 9000);
+    var opts = { cache: "no-store", mode: "cors" };
+    if (ctrl) opts.signal = ctrl.signal;
+    return fetch(url, opts).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    }).then(function (j) { clearTimeout(timer); return j; }, function (err) { clearTimeout(timer); throw err; });
+  }
+
+  // Walks the provider list in order and keeps the first sane answer.
+  function fxFetch() {
+    var i = 0;
+    function attempt() {
+      if (i >= FX_SOURCES.length) return Promise.reject(new Error("no source available"));
+      var src = FX_SOURCES[i++];
+      return fxFetchJSON(src.url).then(function (j) {
+        var parsed = src.parse(j);
+        var rates = parsed && fxNormalize(parsed.rates);
+        if (!rates) throw new Error("unusable payload");
+        return {
+          base: FX_BASE,
+          rates: rates,
+          source: src.id,
+          sourceLabel: src.label,
+          fetchedAt: Date.now(),
+          updatedAt: parsed.updatedAt || Date.now(),
+          nextAt: parsed.nextAt || 0,
+          day: todayISO()
+        };
+      }).catch(attempt);
+    }
+    return attempt();
+  }
+
+  // Keeps doc.meta.usdRate (used by the copilot and the Settings screen) in step
+  // with the live table, unless the user has pinned a manual rate.
+  function fxSyncDoc(store) {
+    var doc = readDoc();
+    if (!doc || !store) return;
+    if (doc.settings && doc.settings.fxManual) return;
+    var live = Math.round(num(store.rates[FX_HOME]));
+    if (!live || Math.abs(num(doc.meta.usdRate) - live) < 1) return;
+    doc.meta.usdRate = live;
+    writeDoc(doc, "fx-rate", true);
+  }
+
+  function fxRefresh(force, onDone) {
+    var store = fxLoad();
+    if (fxBusy) return;
+    if (!force && !fxStale(store)) { if (onDone) onDone(store, null); return; }
+    if (!navigator.onLine) {
+      if (force) toast("You're offline — showing the last saved rates", "error");
+      if (onDone) onDone(store, new Error("offline"));
+      return;
+    }
+    fxBusy = true;
+    fxPaint();
+    fxFetch().then(function (next) {
+      fxBusy = false;
+      fxSave(next);
+      fxSyncDoc(next);
+      fxPaint();
+      scheduleRender(0);
+      if (force) toast("Rates updated", "success");
+      if (onDone) onDone(next, null);
+    }, function (err) {
+      fxBusy = false;
+      fxPaint();
+      if (force) toast("Could not reach the rate service", "error");
+      if (onDone) onDone(fxLoad(), err);
+    });
+  }
+
+  function fxWatch() {
+    fxRefresh(false);
+    // A new day should bring new rates even on a device that never gets closed.
+    setInterval(function () { fxRefresh(false); }, 30 * 60 * 1000);
+    window.addEventListener("online", function () { fxRefresh(false); });
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) fxRefresh(false); });
+  }
+
+  // Sub-line for the dashboard's USD tile: what those dollars are worth at home.
+  function usdEquivalent(usd) {
+    var value = fxConvert(usd, "USD", FX_HOME);
+    if (value == null || !num(usd)) return "Expected incoming";
+    return "≈ " + money(value, FX_HOME, true) + " today";
+  }
+
+  /* ── Earnings ─────────────────────────────────────────────────────────────
+     Earned and spent are the same unit on one scale, so they share one axis.
+     Green-in / red-out matches every other inflow/outflow cue in the app, but
+     that pair sits at ΔE 6.4 for deuteranopia — so identity never rests on
+     colour alone: earned is always the left bar, both are labelled in the key,
+     and the sheet carries the same numbers as a table. */
+
+  function earnChartHTML(series) {
+    var peak = series.reduce(function (m, r) { return Math.max(m, r.earned, r.spent); }, 0);
+    if (peak <= 0) return '<div class="x97-empty">' + icon("trend", 25) + '<strong>No payments recorded yet</strong><p>Mark a receivable paid and this fills in month by month.</p></div>';
+    var current = series[series.length - 1];
+    var cols = series.map(function (r, i) {
+      var last = i === series.length - 1;
+      var earnedH = Math.max(r.earned > 0 ? 3 : 0, Math.round(r.earned / peak * 100));
+      var spentH = Math.max(r.spent > 0 ? 3 : 0, Math.round(r.spent / peak * 100));
+      return '<div class="x97-earn-col' + (last ? " now" : "") + '">' +
+        '<div class="x97-earn-bars">' +
+          '<i class="in" style="height:' + earnedH + '%" title="' + attr(r.label + " earned " + money(r.earned, FX_HOME)) + '"></i>' +
+          '<i class="out" style="height:' + spentH + '%" title="' + attr(r.label + " spent " + money(r.spent, FX_HOME)) + '"></i>' +
+        '</div><span class="x97-earn-mon">' + esc(r.label.split(" ")[0]) + '</span></div>';
+    }).join("");
+    return '<div class="x97-earn-key"><span class="in">Earned</span><span class="out">Spent</span></div>' +
+      '<div class="x97-earn-chart" role="img" aria-label="' + attr("Earned versus spent for the last " + series.length + " months. " + series.map(function (r) { return r.label + ": earned " + money(r.earned, FX_HOME) + ", spent " + money(r.spent, FX_HOME); }).join(". ")) + '">' + cols + '</div>' +
+      '<div class="x97-earn-now">' + esc(current.label) + ' · <b class="x97-green">' + esc(money(current.earned, FX_HOME, true)) + '</b> in · <b class="x97-red">' + esc(money(current.spent, FX_HOME, true)) + '</b> out</div>';
+  }
+
+  function earnCardHTML(doc) {
+    var series = earningsSeries(doc, 6);
+    var current = series[series.length - 1], prev = series[series.length - 2];
+    var delta = prev && prev.earned > 0 ? Math.round((current.earned - prev.earned) / prev.earned * 100) : null;
+    var net = current.earned - current.spent;
+    var pill = delta == null ? "" : '<span class="x97-pill ' + (delta >= 0 ? "good" : "bad") + '">' + (delta >= 0 ? "+" : "") + delta + '% vs ' + esc(prev.label.split(" ")[0]) + '</span>';
+    return '<section class="x97-section x97-dashboard-wide">' + sectionHead("Earnings", "History", "open-earnings") +
+      '<div class="x97-card x97-pad">' +
+        '<div class="x97-earn-top"><div><div class="x97-fx-label">Received this month</div>' +
+        '<div class="x97-earn-value x97-money x97-green">' + money(current.earned, FX_HOME) + '</div></div>' + pill + '</div>' +
+        '<div class="x97-hero-meta" style="margin:13px 0 4px"><div class="x97-stat"><span>Spent</span><b class="x97-red">' + money(current.spent, FX_HOME, true) + '</b></div>' +
+        '<div class="x97-stat"><span>Kept</span><b class="' + (net < 0 ? "x97-red" : "x97-green") + '">' + money(net, FX_HOME, true) + '</b></div></div>' +
+        earnChartHTML(series) +
+      '</div></section>';
+  }
+
+  function openEarnings() {
+    var doc = readDoc();
+    if (!doc) return;
+    var series = earningsSeries(doc, 12).slice().reverse();
+    var payments = (doc.payments || []).slice(0, 60);
+    var rows = series.filter(function (r) { return r.earned > 0 || r.spent > 0; }).map(function (r) {
+      var net = r.earned - r.spent;
+      return '<div class="x97-earn-row"><div class="x97-earn-row-mon">' + esc(r.label) + '</div>' +
+        '<div class="x97-earn-row-num x97-money x97-green">' + money(r.earned, "", true) + '</div>' +
+        '<div class="x97-earn-row-num x97-money x97-red">' + money(r.spent, "", true) + '</div>' +
+        '<div class="x97-earn-row-num x97-money ' + (net < 0 ? "x97-red" : "") + '"><b>' + money(net, "", true) + '</b></div></div>';
+    }).join("");
+    var log = payments.length ? payments.map(function (p) {
+      return '<div class="x97-row" style="border-left:0;border-right:0;border-top:0"><div class="x97-row-icon good">' + icon("check") + '</div>' +
+        '<div class="x97-row-main"><div class="x97-row-title">' + esc(p.client || "Payment") + '</div>' +
+        '<div class="x97-row-sub">' + esc(formatDate(p.date)) + (p.accountName ? " · " + esc(p.accountName) : "") + (p.note ? " · " + esc(p.note) : "") + '</div></div>' +
+        '<div class="x97-row-value x97-money x97-green">' + money(p.amount, p.currency) + '</div></div>';
+    }).join("") : '<div class="x97-empty"><strong>No payments yet</strong><p>Recording payments builds your earnings history.</p></div>';
+    var body =
+      '<div class="x97-card x97-pad" style="margin-bottom:15px">' + earnChartHTML(earningsSeries(doc, 6)) + '</div>' +
+      (rows ? '<div class="x97-field"><label>Month by month</label><div class="x97-earn-table">' +
+        '<div class="x97-earn-row head"><div class="x97-earn-row-mon">Month</div><div class="x97-earn-row-num">In</div><div class="x97-earn-row-num">Out</div><div class="x97-earn-row-num">Kept</div></div>' +
+        rows + '</div></div>' : "") +
+      '<div class="x97-field"><label>Payments received</label><div class="x97-card" style="overflow:hidden">' + log + '</div></div>';
+    var foot = '<button class="x97-btn" data-x97-action="open-exports">' + icon("list", 15) + ' Export</button>' +
+      '<button class="x97-btn primary" data-x97-action="close-sheet">Done</button>';
+    openSheet("Earnings", body, foot);
+  }
+
+  /* ── Books: exports and documents ─────────────────────────────────────── */
+
+  function csvCell(value) {
+    var s = String(value == null ? "" : value);
+    // Excel reads a leading =, +, - or @ as a formula; prefix so it stays text.
+    if (/^[=+\-@]/.test(s)) s = "'" + s;
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  function toCSV(headers, rows) {
+    return [headers.map(csvCell).join(",")].concat(rows.map(function (r) { return r.map(csvCell).join(","); })).join("\r\n");
+  }
+
+  function csvFor(doc, kind) {
+    if (kind === "payments") {
+      return {
+        name: "97-payments",
+        csv: toCSV(["Date", "Client", "Category", "Amount", "Currency", "Amount UGX", "Account", "Note"],
+          (doc.payments || []).map(function (p) {
+            var ugx = p.creditedUGX != null ? num(p.creditedUGX) : (String(p.currency).toUpperCase() === "USD" ? fxConvert(p.amount, "USD", FX_HOME) : num(p.amount));
+            return [p.date, p.client, p.category, num(p.amount), p.currency, ugx == null ? "" : Math.round(ugx), p.accountName, p.note];
+          }))
+      };
+    }
+    if (kind === "expenses") {
+      return {
+        name: "97-expenses",
+        csv: toCSV(["Date", "Type", "Kind", "Item", "Amount", "Note"],
+          ((doc.expenses && doc.expenses.entries) || []).map(function (e) { return [e.date, e.type, e.kind, e.item, num(e.amount), e.note]; }))
+      };
+    }
+    return {
+      name: "97-receivables",
+      csv: toCSV(["Client", "Category", "Invoice total", "Received", "Outstanding", "Currency", "Status", "Expected by", "Last payment", "Note"],
+        (doc.followups || []).map(function (x) {
+          return [x.client, x.category, grossOf(x), paidOf(x), outstandingOf(x), String(x.currency || "UGX").toUpperCase(), normalizeStatus(x.status), x.expectedBy, x.paidOn || "", x.note];
+        }))
+    };
+  }
+
+  function exportCSV(kind) {
+    var doc = readDoc();
+    if (!doc) return;
+    var out = csvFor(doc, kind);
+    // A BOM keeps Excel from mangling shillings and accented client names.
+    downloadCSV(out.name + "-" + todayISO() + ".csv", "﻿" + out.csv);
+    toast("Exported " + out.name.replace("97-", ""), "success");
+  }
+
+  function openExports() {
+    var doc = readDoc();
+    if (!doc) return;
+    var counts = {
+      receivables: (doc.followups || []).length,
+      payments: (doc.payments || []).length,
+      expenses: ((doc.expenses && doc.expenses.entries) || []).length
+    };
+    function row(kind, title, sub) {
+      return '<button class="x97-row" style="width:100%;border-left:0;border-right:0;border-top:0;background:transparent;text-align:left" data-x97-action="export-csv" data-kind="' + attr(kind) + '">' +
+        '<div class="x97-row-icon good">' + icon("list") + '</div><div class="x97-row-main"><div class="x97-row-title">' + esc(title) + '</div>' +
+        '<div class="x97-row-sub">' + esc(sub) + '</div></div>' + icon("chevron") + '</button>';
+    }
+    var body = '<div class="x97-help" style="margin-bottom:12px">Spreadsheet files your accountant can open directly — amounts, dates and references, no formatting to unpick.</div>' +
+      '<div class="x97-card" style="overflow:hidden">' +
+        row("receivables", "Receivables", counts.receivables + " records · invoice total, received and outstanding") +
+        row("payments", "Payments received", counts.payments + " payments · with UGX value of dollar receipts") +
+        row("expenses", "Expenses", counts.expenses + " entries · planned and actual") +
+      '</div>';
+    openSheet("Export for the books", body, '<button class="x97-btn primary" data-x97-action="close-sheet">Done</button>');
+  }
+
+  function docNumber(prefix, item, doc) {
+    var list = (doc.followups || []).slice().reverse();
+    var seq = Math.max(1, list.findIndex(function (x) { return String(x.id) === String(item.id); }) + 1);
+    var d = parseLocalDate(item.expectedBy) || todayDate();
+    return prefix + "-" + d.getFullYear() + "-" + String(seq).padStart(3, "0");
+  }
+
+  // Invoices and receipts go out over WhatsApp, so they are plain text the
+  // client can read in the chat rather than a file they have to open.
+  function documentText(item, doc, kind) {
+    var currency = String(item.currency || "UGX").toUpperCase();
+    var business = String((doc.settings && doc.settings.businessName) || doc.meta.appName || "97 LIVE").trim();
+    var receipt = kind === "receipt";
+    var lines = [];
+    lines.push("*" + (receipt ? "RECEIPT" : "INVOICE") + "*  " + docNumber(receipt ? "RCT" : "INV", item, doc));
+    lines.push(business);
+    lines.push("");
+    lines.push("*Billed to:* " + (item.client || "—"));
+    lines.push("*Date:* " + formatDate(todayISO()));
+    if (!receipt && item.expectedBy) lines.push("*Due:* " + formatDate(item.expectedBy));
+    lines.push("");
+    lines.push((item.category || "Services") + " — " + money(grossOf(item), currency));
+    if (item.note) lines.push("_" + item.note + "_");
+    lines.push("");
+    lines.push("*Total:* " + money(grossOf(item), currency));
+    if (paidOf(item) > 0) {
+      lines.push("*Received:* " + money(paidOf(item), currency));
+      var left = outstandingOf(item);
+      lines.push(left > 0 ? "*Still due:* " + money(left, currency) : "*Settled in full — thank you.*");
+    }
+    var pays = paymentsFor(doc, item.id);
+    if (receipt && pays.length) {
+      lines.push("");
+      lines.push("*Payments*");
+      pays.slice().reverse().forEach(function (p) { lines.push("· " + formatDate(p.date, true) + " — " + money(p.amount, p.currency) + (p.accountName ? " (" + p.accountName + ")" : "")); });
+    }
+    return lines.join("\n");
+  }
+
+  function openDocument(id, kind) {
+    var doc = readDoc();
+    var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(id); });
+    if (!item) { toast("That record is no longer there", "error"); return; }
+    var text = documentText(item, doc, kind);
+    var body = '<div class="x97-field"><label>' + (kind === "receipt" ? "Receipt" : "Invoice") + ' preview</label>' +
+      '<div class="x97-doc-preview">' + renderWaFormat(esc(text)).replace(/\n/g, "<br>") + '</div></div>' +
+      field("Your business name", '<input class="x97-input" id="x97-doc-business" value="' + attr((doc.settings && doc.settings.businessName) || "") + '" placeholder="' + attr(doc.meta.appName || "97 LIVE") + '">', "Saved and reused on every document.") +
+      '<textarea id="x97-doc-text" class="x97-textarea" style="display:none">' + esc(text) + '</textarea>';
+    var wa = hasWa(item, doc);
+    var foot = '<button class="x97-btn" data-x97-action="copy-document">' + icon("list", 15) + ' Copy</button>' +
+      (wa ? '<button class="x97-btn primary" data-x97-action="send-document" data-id="' + attr(item.id) + '" data-kind="' + attr(kind) + '">' + icon("send", 15) + ' Send on WhatsApp</button>'
+          : '<button class="x97-btn primary" data-x97-action="close-sheet">Done</button>');
+    openSheet(kind === "receipt" ? "Receipt" : "Invoice", body, foot, { afterOpen: function (back) {
+      var input = back.querySelector("#x97-doc-business");
+      if (input) input.addEventListener("change", function () {
+        var name = input.value.trim();
+        updateDoc(function (d) { d.settings.businessName = name; }, "business-name", true);
+        closeSheet(); openDocument(id, kind);
+      });
+    } });
+  }
+
+  function fxStamp(store) {
+    if (fxBusy) return "Updating…";
+    if (!store) return navigator.onLine ? "Tap to load rates" : "Offline · no rates yet";
+    var live = !fxStale(store);
+    return (live ? "Live" : "Last known") + " · " + fxAgo(store);
+  }
+
+  function fxCardHTML(doc) {
+    var store = fxLoad();
+    var manual = !!(doc.settings && doc.settings.fxManual);
+    var rows = FX_TICKER.map(function (code) {
+      var value = fxConvert(1, code, FX_HOME, store);
+      return '<div class="x97-fx-tick"><span>1 ' + esc(code) + '</span><b class="x97-money">' + (value == null ? "—" : fxAmount(value, FX_HOME)) + '</b></div>';
+    }).join("");
+    var headline = store ? fxAmount(fxRate(FX_HOME, store), FX_HOME) : "—";
+    return '<section class="x97-section">' + sectionHead("Currency", "Convert", "open-converter") +
+      '<button class="x97-fx-card" data-x97-action="open-converter">' +
+        '<div class="x97-fx-top">' +
+          '<div><div class="x97-fx-label">1 USD buys</div>' +
+          '<div class="x97-fx-value x97-money">' + headline + ' <em>UGX</em></div></div>' +
+          '<div class="x97-fx-badge' + (fxBusy ? " busy" : (store && !fxStale(store) ? " live" : "")) + '" data-x97-fx="stamp">' + esc(fxStamp(store)) + '</div>' +
+        '</div>' +
+        '<div class="x97-fx-ticks">' + rows + '</div>' +
+        (manual ? '<div class="x97-fx-note">Manual rate on — auto-update is paused</div>' : '') +
+      '</button></section>';
+  }
+
+  function fxQuickAmounts(from) {
+    var weak = fxRate(from) >= 500;
+    return weak ? [10000, 50000, 100000, 1000000] : [10, 50, 100, 1000];
+  }
+
+  // Chips follow the "from" currency — 1M makes sense in shillings, not dollars.
+  function fxQuickHTML(from) {
+    return fxQuickAmounts(from).map(function (v) {
+      return '<button type="button" class="x97-chip" data-x97-action="fx-amount" data-value="' + v + '">' + money(v, "", true) + '</button>';
+    }).join("");
+  }
+
+  function fxSwap() {
+    var from = document.getElementById("x97-fx-from");
+    var to = document.getElementById("x97-fx-to");
+    var swapped = fxConv.from;
+    fxConv.from = fxConv.to;
+    fxConv.to = swapped;
+    if (from) from.value = fxConv.from;
+    if (to) to.value = fxConv.to;
+    var quick = document.querySelector(".x97-fx-quick");
+    if (quick) quick.innerHTML = fxQuickHTML(fxConv.from);
+    fxPaint();
+  }
+
+  function fxSelect(id, selected, store) {
+    return '<select class="x97-select" id="' + id + '">' + fxCurrencies(store).map(function (code) {
+      return option(code, code + (FX_NAMES[code] ? " · " + FX_NAMES[code] : ""), selected);
+    }).join("") + '</select>';
+  }
+
+  // Repaints the live parts in place so typing never rebuilds the sheet.
+  function fxPaint() {
+    var store = fxLoad();
+    document.querySelectorAll('[data-x97-fx="stamp"]').forEach(function (el) {
+      el.textContent = fxStamp(store);
+      el.classList.toggle("busy", fxBusy);
+      el.classList.toggle("live", !fxBusy && !!store && !fxStale(store));
+    });
+    var out = document.getElementById("x97-fx-result");
+    if (!out) return;
+    var amount = num(fxConv.amount);
+    var value = fxConvert(amount, fxConv.from, fxConv.to, store);
+    out.textContent = value == null ? "—" : fxAmount(value, fxConv.to);
+    var rate = document.getElementById("x97-fx-rate");
+    if (rate) rate.textContent = fxRateLine(fxConv.from, fxConv.to, store) || "Rates not loaded yet";
+    var inverse = document.getElementById("x97-fx-inverse");
+    if (inverse) inverse.textContent = fxRateLine(fxConv.to, fxConv.from, store) || "";
+    var meta = document.getElementById("x97-fx-meta");
+    if (meta) {
+      meta.textContent = store
+        ? fxStamp(store) + " · " + (store.sourceLabel || store.source || "rate service") + " · refreshes automatically each day"
+        : (navigator.onLine ? "No rates saved yet — tap Refresh" : "Offline — connect once to load rates");
+    }
+  }
+
+  function openConverter() {
+    var doc = readDoc() || { settings: {} };
+    var store = fxLoad();
+    if (!fxCurrencies(store).length) { fxConv.from = "USD"; fxConv.to = "UGX"; }
+    var manual = !!(doc.settings && doc.settings.fxManual);
+    var chips = fxQuickHTML(fxConv.from);
+    var body =
+      '<div class="x97-fx-conv">' +
+        '<div class="x97-fx-leg">' +
+          '<label>From</label>' +
+          '<div class="x97-fx-leg-row">' + fxSelect("x97-fx-from", fxConv.from, store) +
+          '<input class="x97-input x97-fx-amount x97-money" id="x97-fx-amount" inputmode="decimal" autocomplete="off" placeholder="0" value="' + attr(fxConv.amount) + '"></div>' +
+          '<div class="x97-chips x97-fx-quick">' + chips + '</div>' +
+        '</div>' +
+        '<div class="x97-fx-swap-row"><button type="button" class="x97-fx-swap" data-x97-action="fx-swap" aria-label="Swap currencies">' + icon("arrow", 17) + '</button></div>' +
+        '<div class="x97-fx-leg">' +
+          '<label>To</label>' +
+          '<div class="x97-fx-leg-row">' + fxSelect("x97-fx-to", fxConv.to, store) +
+          '<div class="x97-fx-result x97-money" id="x97-fx-result">—</div></div>' +
+        '</div>' +
+        '<div class="x97-fx-rates"><div id="x97-fx-rate" class="x97-fx-rate-main"></div><div id="x97-fx-inverse" class="x97-fx-rate-sub"></div></div>' +
+        '<div class="x97-fx-meta" id="x97-fx-meta"></div>' +
+        '<label class="x97-check x97-fx-manual"><input type="checkbox" id="x97-fx-manual"' + (manual ? " checked" : "") + '>' +
+          '<span>Keep my own USD rate<em>Stops the daily rate from updating Settings and the copilot</em></span></label>' +
+      '</div>';
+    var foot = '<button class="x97-btn" data-x97-action="fx-refresh">' + icon("bolt", 15) + 'Refresh</button>' +
+      '<button class="x97-btn primary" data-x97-action="close-sheet">Done</button>';
+    openSheet("Currency converter", body, foot, { afterOpen: wireConverter });
+  }
+
+  function wireConverter(back) {
+    var amount = back.querySelector("#x97-fx-amount");
+    var from = back.querySelector("#x97-fx-from");
+    var to = back.querySelector("#x97-fx-to");
+    var manual = back.querySelector("#x97-fx-manual");
+    if (amount) amount.addEventListener("input", function () { fxConv.amount = amount.value; fxPaint(); });
+    if (from) from.addEventListener("change", function () { fxConv.from = from.value; fxPaint(); });
+    if (to) to.addEventListener("change", function () { fxConv.to = to.value; fxPaint(); });
+    if (manual) manual.addEventListener("change", function () {
+      var on = manual.checked;
+      updateDoc(function (doc) { doc.settings.fxManual = on; }, "fx-manual", true);
+      if (!on) fxSyncDoc(fxLoad());
+      toast(on ? "Auto-update paused — your typed rate stays" : "Auto-update on — daily rate will sync", "success");
+      scheduleRender(0);
+    });
+    fxPaint();
+    fxRefresh(false);
+  }
+
+  function injectFeatureCSS() {
+    if (document.getElementById("x97-feature-css")) return;
+    var style = document.createElement("style");
+    style.id = "x97-feature-css";
+    style.textContent =
+      ".x97-fx-card{display:block;width:100%;text-align:left;padding:17px 17px 15px;background:linear-gradient(180deg,var(--card) 0%,var(--bg2) 135%);border:1px solid var(--line);border-radius:22px;box-shadow:var(--toplit),var(--elev-1);transition:border-color .2s ease,box-shadow .24s ease,transform .24s cubic-bezier(.22,1,.36,1);cursor:pointer}" +
+      "@media(hover:hover){.x97-fx-card:hover{border-color:var(--line2);box-shadow:var(--toplit),var(--elev-2);transform:translateY(-2px)}}" +
+      ".x97-fx-card:active{transform:scale(.99)}" +
+      ".x97-fx-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}" +
+      ".x97-fx-label{font-size:9.5px;text-transform:uppercase;letter-spacing:.09em;font-weight:800;color:var(--tx3)}" +
+      ".x97-fx-value{font-size:29px;line-height:1.05;margin-top:9px;color:var(--tx);letter-spacing:-.03em}" +
+      ".x97-fx-value em{font-style:normal;font-size:14px;font-weight:800;color:var(--tx3);letter-spacing:0}" +
+      ".x97-fx-badge{flex:none;font-size:10px;font-weight:800;padding:6px 9px;border-radius:999px;background:var(--card2);color:var(--tx3);display:inline-flex;align-items:center;gap:6px;white-space:nowrap}" +
+      ".x97-fx-badge.live{background:var(--posdim);color:var(--pos)}" +
+      ".x97-fx-badge.live::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--pos);animation:x97-pulse 2.4s ease-in-out infinite}" +
+      ".x97-fx-badge.busy{background:var(--warndim);color:var(--warn)}" +
+      "@media(prefers-reduced-motion:reduce){.x97-fx-badge.live::before{animation:none}}" +
+      ".x97-fx-ticks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin-top:15px;padding-top:13px;border-top:1px solid var(--line)}" +
+      ".x97-fx-tick{min-width:0}.x97-fx-tick span{display:block;font-size:9.5px;font-weight:800;color:var(--tx3);letter-spacing:.05em}" +
+      ".x97-fx-tick b{display:block;font-size:13px;color:var(--tx);margin-top:4px;overflow:hidden;text-overflow:ellipsis}" +
+      ".x97-fx-note{margin-top:11px;font-size:10.5px;font-weight:700;color:var(--warn)}" +
+      ".x97-fx-leg label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--tx2);font-weight:800;margin:0 0 6px}" +
+      ".x97-fx-leg-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:9px;align-items:stretch}" +
+      ".x97-fx-leg-row>*{min-width:0}" +
+      ".x97-fx-amount{font-size:19px;text-align:right}" +
+      ".x97-fx-result{display:flex;align-items:center;justify-content:flex-end;min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--posdim);color:var(--pos);font-size:19px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
+      ".x97-fx-quick{margin-top:9px}" +
+      ".x97-fx-swap-row{display:flex;justify-content:center;margin:11px 0;position:relative}" +
+      ".x97-fx-swap-row::before{content:'';position:absolute;left:0;right:0;top:50%;height:1px;background:var(--line)}" +
+      ".x97-fx-swap{position:relative;width:40px;height:40px;border-radius:50%;border:1px solid var(--line2);background:var(--card);color:var(--pos);display:grid;place-items:center;box-shadow:var(--toplit),var(--elev-1);cursor:pointer;transition:transform .18s cubic-bezier(.22,1,.36,1)}" +
+      ".x97-fx-swap svg{transform:rotate(90deg)}.x97-fx-swap:active{transform:rotate(180deg) scale(.94)}" +
+      ".x97-fx-rates{margin-top:15px;padding:12px 13px;background:var(--card2);border-radius:13px}" +
+      ".x97-fx-rate-main{font-size:13px;font-weight:800;color:var(--tx)}" +
+      ".x97-fx-rate-sub{font-size:11px;color:var(--tx3);margin-top:4px;font-weight:600}" +
+      ".x97-fx-meta{font-size:10.5px;color:var(--tx3);line-height:1.5;margin-top:9px}" +
+      ".x97-fx-manual{margin-top:14px;align-items:flex-start}" +
+      ".x97-fx-manual span{display:block}.x97-fx-manual em{display:block;font-style:normal;font-weight:600;font-size:10.5px;color:var(--tx3);margin-top:3px;line-height:1.45}" +
+      // Part payments
+      ".x97-pay-progress{margin-top:12px}.x97-pay-progress.compact{margin:11px 0 0}" +
+      ".x97-pay-bar{height:6px;border-radius:99px;background:var(--card3);overflow:hidden}" +
+      ".x97-pay-bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#17A468,var(--pos2))}" +
+      ".x97-pay-split{display:flex;justify-content:space-between;gap:10px;margin-top:6px;font-size:10.5px;font-weight:700;color:var(--tx3)}" +
+      ".x97-pay-split b{color:var(--tx)}" +
+      ".x97-pay-log{border:1px solid var(--line);border-radius:13px;overflow:hidden}" +
+      ".x97-pay-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}" +
+      ".x97-pay-row:last-child{border-bottom:0}.x97-pay-row b{display:block;font-size:13px}" +
+      ".x97-pay-row span{display:block;font-size:10.5px;color:var(--tx3);margin-top:2px}" +
+      ".x97-mini.danger{color:var(--neg)}" +
+      // Earnings chart — earned is always the left bar, so identity never rests on hue
+      ".x97-earn-top{display:flex;align-items:flex-start;justify-content:space-between;gap:11px}" +
+      ".x97-earn-value{font-size:29px;line-height:1.05;margin-top:8px;letter-spacing:-.03em}" +
+      ".x97-earn-key{display:flex;gap:14px;margin:4px 0 9px}" +
+      ".x97-earn-key span{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:750;color:var(--tx3)}" +
+      ".x97-earn-key span::before{content:'';width:9px;height:9px;border-radius:3px}" +
+      ".x97-earn-key .in::before{background:var(--pos)}.x97-earn-key .out::before{background:var(--neg)}" +
+      ".x97-earn-chart{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:9px;align-items:end;height:96px}" +
+      ".x97-earn-col{display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;min-width:0}" +
+      ".x97-earn-bars{flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center;gap:2px}" +
+      ".x97-earn-bars i{width:38%;max-width:15px;border-radius:4px 4px 0 0;min-height:0;transition:height .3s cubic-bezier(.22,1,.36,1)}" +
+      ".x97-earn-bars .in{background:var(--pos)}.x97-earn-bars .out{background:var(--neg)}" +
+      ".x97-earn-mon{font-size:9.5px;font-weight:750;color:var(--tx3);white-space:nowrap}" +
+      ".x97-earn-col.now .x97-earn-mon{color:var(--tx);font-weight:850}" +
+      ".x97-earn-now{margin-top:11px;font-size:11px;color:var(--tx3);font-weight:650}" +
+      ".x97-earn-table{border:1px solid var(--line);border-radius:13px;overflow:hidden}" +
+      ".x97-earn-row{display:grid;grid-template-columns:minmax(0,1.2fr) repeat(3,minmax(0,1fr));gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);align-items:center}" +
+      ".x97-earn-row:last-child{border-bottom:0}" +
+      ".x97-earn-row.head{background:var(--card2);font-size:9.5px;text-transform:uppercase;letter-spacing:.07em;font-weight:800;color:var(--tx3)}" +
+      ".x97-earn-row-mon{font-size:12px;font-weight:750;color:var(--tx);overflow:hidden;text-overflow:ellipsis}" +
+      ".x97-earn-row-num{font-size:12px;text-align:right;overflow:hidden;text-overflow:ellipsis}" +
+      // Documents
+      ".x97-doc-preview{border:1px solid var(--line);border-radius:13px;padding:14px;background:var(--card2);font-size:12.5px;line-height:1.6;color:var(--tx);white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto}" +
+      ".x97-doc-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}.x97-doc-actions .x97-btn{flex:1;min-width:130px}" +
+      "@media(max-width:560px){.x97-earn-value{font-size:25px}.x97-earn-chart{height:84px}.x97-earn-row{grid-template-columns:minmax(0,1.1fr) repeat(3,minmax(0,1fr));gap:6px;padding:9px 10px}.x97-earn-row-num{font-size:11px}.x97-fx-value{font-size:25px}.x97-fx-ticks{grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.x97-fx-leg-row{grid-template-columns:1fr}.x97-fx-amount{text-align:left}.x97-fx-result{justify-content:flex-start}}";
+    document.head.appendChild(style);
   }
 
   function icon(name, size) {
@@ -240,9 +1015,18 @@
       more: '<circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle>',
       trend: '<path d="m3 17 6-6 4 4 8-9"></path><path d="M15 6h6v6"></path>',
       list: '<path d="M8 6h13M8 12h13M8 18h13"></path><circle cx="4" cy="6" r="1"></circle><circle cx="4" cy="12" r="1"></circle><circle cx="4" cy="18" r="1"></circle>',
-      grid: '<rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect>'
+      grid: '<rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect>',
+      message: '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12Z"></path>',
+      phone: '<path d="M6.6 3H10l2 5-2.5 1.5a11 11 0 0 0 5 5L16 11l5 2v3.4a2 2 0 0 1-2.2 2A16 16 0 0 1 4.6 5.2 2 2 0 0 1 6.6 3Z"></path>',
+      shield: '<path d="M12 3l7 3v6c0 5-3.5 7.6-7 9-3.5-1.4-7-4-7-9V6l7-3Z"></path>',
+      bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"></path>',
+      send: '<path d="M22 2 11 13"></path><path d="M22 2 15 22l-4-9-9-4 20-7Z"></path>'
     };
     return '<svg aria-hidden="true" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' + (paths[name] || paths.more) + '</svg>';
+  }
+
+  function brandMark(size, cls) {
+    return '<img src="icons/mark-97.png" width="' + (size || 18) + '" height="' + (size || 18) + '" alt="" class="x97-brand-mark' + (cls ? " " + cls : "") + '">';
   }
 
   function brandFor(name) {
@@ -327,6 +1111,15 @@
       .x97-badge-count{position:absolute;right:-4px;top:-5px;min-width:18px;height:18px;padding:0 5px;border-radius:99px;background:var(--pos);color:#fff;font-size:10px;display:grid;place-items:center;border:2px solid var(--bg)}
       .x97-chips{display:flex;gap:7px;overflow-x:auto;padding:2px 1px 9px;scrollbar-width:none}.x97-chips::-webkit-scrollbar{display:none}
       .x97-chip{white-space:nowrap;height:34px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--tx2);padding:0 12px;font-size:11.5px;font-weight:750;display:inline-flex;align-items:center;gap:6px}.x97-chip.on{background:var(--posdim);border-color:rgba(14,117,72,.25);color:var(--pos)}.x97-chip.alert.on{background:var(--negdim);border-color:rgba(181,53,46,.22);color:var(--neg)}
+      .x97-contact-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.x97-contact-chips:empty{margin-top:0}.x97-contact-chip{height:auto;padding:6px 10px;border-style:dashed}.x97-contact-chip.on{border-style:solid}
+      .x97-contact-chips.scroll{max-height:220px;overflow-y:auto;padding-right:2px;align-content:flex-start}
+      .x97-more{margin-top:6px;border-top:1px dashed var(--line2);padding-top:12px}
+      .x97-more-summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:800;color:var(--pos);user-select:none}
+      .x97-more-summary::-webkit-details-marker{display:none}.x97-more-summary::marker{content:""}
+      .x97-more-summary svg{transition:transform .15s}
+      .x97-more[open] .x97-more-summary svg{transform:rotate(90deg)}
+      .x97-more-body{margin-top:12px}
+      .x97-more:not([open]) .x97-more-body{display:none}
       .x97-active-filters{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 12px}.x97-filter-tag{border:0;background:var(--card2);color:var(--tx2);border-radius:999px;padding:6px 9px;font-size:10.5px;font-weight:700;display:inline-flex;align-items:center;gap:4px}
       .x97-count{font-size:11px;color:var(--tx3);margin:5px 2px 10px}
       .x97-group{margin:18px 0 9px;display:flex;justify-content:space-between;align-items:center}.x97-group b{display:inline-flex;align-items:center;gap:8px;font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--tx)}.x97-group b::before{content:"";width:4px;height:12px;border-radius:99px;background:linear-gradient(180deg,#17A468,var(--pos2))}.x97-group span{font-size:10.5px;color:var(--tx3)}
@@ -660,7 +1453,7 @@
     var paid = records.filter(function (x) { return isPaid(x.status); });
     var ugx = pending.filter(function (x) { return String(x.currency).toUpperCase() !== "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
     var usd = pending.filter(function (x) { return String(x.currency).toUpperCase() === "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
-    var paidAmount = paid.reduce(function (a, x) { return a + num(x.amount); }, 0);
+    var paidAmount = records.reduce(function (a, x) { return a + receivedOf(x); }, 0);
     var attention = pending.filter(function (x) { var t = timing(x); return t.key === "overdue" || t.key === "today" || t.key === "very-soon" || !x.expectedBy || num(x.amount) <= 0; }).length;
     return { key: key, records: records, pending: pending, paid: paid, ugx: ugx, usd: usd, paidAmount: paidAmount, attention: attention };
   }
@@ -700,9 +1493,12 @@
       pageHeader("Financial command", "Dashboard", new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })) +
       '<div class="x97-dashboard-main">' +
         '<section class="x97-card x97-hero"><div class="x97-hero-label">Available now</div><div class="x97-hero-value x97-money">' + money(a.cash, "UGX") + '</div><div class="x97-hero-meta"><div class="x97-stat"><span>Net position</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
-        '<section><div class="x97-summary-grid"><div class="x97-card x97-summary"><div class="k">This month UGX</div><div class="v x97-money x97-green">' + money(a.ugxMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">This month USD</div><div class="v x97-money x97-teal">' + money(a.usdMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">Safe personal</div><div class="v x97-money ' + (a.expenses.personalSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.personalSafe, "", true) + '</div><div class="s">After plans</div></div><div class="x97-card x97-summary"><div class="k">Safe business</div><div class="v x97-money ' + (a.expenses.businessSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.businessSafe, "", true) + '</div><div class="s">After plans</div></div></div></section>' +
+        '<section><div class="x97-summary-grid"><div class="x97-card x97-summary"><div class="k">This month UGX</div><div class="v x97-money x97-green">' + money(a.ugxMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">This month USD</div><div class="v x97-money x97-teal">' + money(a.usdMonth, "", true) + '</div><div class="s">' + esc(usdEquivalent(a.usdMonth)) + '</div></div><div class="x97-card x97-summary"><div class="k">Safe personal</div><div class="v x97-money ' + (a.expenses.personalSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.personalSafe, "", true) + '</div><div class="s">After plans</div></div><div class="x97-card x97-summary"><div class="k">Safe business</div><div class="v x97-money ' + (a.expenses.businessSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.businessSafe, "", true) + '</div><div class="s">After plans</div></div></div></section>' +
         '<section class="x97-section">' + sectionHead("Needs attention", "View Upcoming", "go-upcoming") + '<div class="x97-card x97-pad">' + attentionRows + '</div></section>' +
+        (function(){var s=messagingSummary(doc);var pillOd=s.overdue?'<span class="x97-pill bad">'+s.overdue+' overdue</span>':(s.dueSoon?'<span class="x97-pill warn">'+s.dueSoon+' due soon</span>':'<span class="x97-pill good">'+icon("check",11)+'All clear</span>');return '<section class="x97-section">' + sectionHead("Messaging", "Open", "open-messaging") + '<button class="x97-msg-card" data-x97-action="open-messaging"><div class="x97-msg-icon">' + icon("send") + '</div><div class="x97-msg-body"><div class="x97-msg-title">WhatsApp reminders &amp; campaigns</div><div class="x97-msg-sub">' + s.contacts + ' contacts · ' + s.campaigns + ' campaigns' + (remindExt.ready?' · sender connected':'') + '</div><div class="x97-msg-pills">' + pillOd + '</div></div>' + icon("chevron") + '</button></section>';})() +
         '<section class="x97-section">' + sectionHead("Next 7 days") + '<div class="x97-card x97-pad"><div class="x97-hero-meta" style="margin-bottom:4px"><div class="x97-stat"><span>Expected in</span><b class="x97-green">' + money(in7, "UGX") + '</b></div><div class="x97-stat"><span>Expected out</span><b class="x97-red">' + money(out7, "UGX") + '</b></div></div>' + timelineRows + '</div></section>' +
+        earnCardHTML(doc) +
+        fxCardHTML(doc) +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Accounts", "Add account", "add-account") + '<div class="x97-card x97-pad">' + (accountRows || '<div class="x97-empty"><strong>No accounts yet</strong><p>Add your bank, mobile money or cash balance.</p></div>') + '</div></section>' +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Incoming pipeline", "View all months", "go-upcoming-months") + '<div class="x97-grid x97-pipeline">' + pipeline + '</div></section>' +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Credit position", "Open Credit", "go-credit") + '<div class="x97-card x97-pad"><div class="x97-summary-grid"><div class="x97-summary" style="padding:4px"><div class="k">Available credit</div><div class="v x97-money x97-teal">' + money(a.creditAvailable, "", true) + '</div><div class="s">Not included in cash</div></div><div class="x97-summary" style="padding:4px"><div class="k">Borrowed</div><div class="v x97-money x97-red">' + money(a.activeLoans.reduce(function (s,l){return s+num(l.principal);},0), "", true) + '</div><div class="s">' + a.activeLoans.length + ' active</div></div><div class="x97-summary" style="padding:4px"><div class="k">Amount due</div><div class="v x97-money x97-red">' + money(a.debt, "", true) + '</div><div class="s">Estimated today</div></div><div class="x97-summary" style="padding:4px"><div class="k">Next repayment</div><div class="v x97-money" style="font-size:17px">' + esc(nextLoanDue(a.activeLoans)) + '</div><div class="s">Earliest active loan</div></div></div></div></section>' +
@@ -793,7 +1589,13 @@
 
   function upcomingCard(item) {
     var t = timing(item), currency = String(item.currency || "UGX").toUpperCase();
-    return '<article class="x97-item x97-card" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '"><div class="x97-item-top"><div class="x97-item-main"><div class="x97-item-category">' + esc(item.category || "Uncategorised") + '</div><div class="x97-item-title">' + esc(item.client || "Untitled upcoming payment") + '</div></div><div class="x97-item-amount x97-money ' + (currency === "USD" ? "x97-teal" : isPaid(item.status) ? "x97-green" : "") + '">' + (num(item.amount) ? money(item.amount, currency) : "Amount not set") + '</div></div><div class="x97-item-foot"><span class="x97-pill ' + esc(t.cls) + '">' + icon("clock", 12) + esc(t.label) + '</span>' + (item.expectedBy ? '<span class="x97-pill">' + icon("calendar", 12) + esc(formatDate(item.expectedBy, false)) + '</span>' : '') + '<span class="x97-pill ' + (isPaid(item.status) ? "good" : "") + '">' + esc(normalizeStatus(item.status)) + '</span><div class="x97-item-actions">' + (!isPaid(item.status) && !isCancelled(item.status) ? '<button class="x97-mini" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("check", 12) + ' Paid</button>' : '') + '<button class="x97-mini" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">' + icon("edit", 12) + ' Edit</button></div></div></article>';
+    var part = isPartPaid(item);
+    var gross = grossOf(item), already = paidOf(item), left = outstandingOf(item);
+    var partHTML = part
+      ? '<div class="x97-pay-progress compact"><div class="x97-pay-bar"><i style="width:' + Math.min(100, Math.round(already / (gross || 1) * 100)) + '%"></i></div>' +
+        '<div class="x97-pay-split"><span>' + esc(money(already, currency)) + ' in</span><b>of ' + esc(money(gross, currency)) + '</b></div></div>'
+      : "";
+    return '<article class="x97-item x97-card" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '"><div class="x97-item-top"><div class="x97-item-main"><div class="x97-item-category">' + esc(item.category || "Uncategorised") + '</div><div class="x97-item-title">' + esc(item.client || "Untitled upcoming payment") + '</div></div><div class="x97-item-amount x97-money ' + (currency === "USD" ? "x97-teal" : isPaid(item.status) ? "x97-green" : "") + '">' + (num(item.amount) ? money(isPaid(item.status) ? gross : left, currency) : "Amount not set") + '</div></div>' + partHTML + '<div class="x97-item-foot"><span class="x97-pill ' + esc(t.cls) + '">' + icon("clock", 12) + esc(t.label) + '</span>' + (item.expectedBy ? '<span class="x97-pill">' + icon("calendar", 12) + esc(formatDate(item.expectedBy, false)) + '</span>' : '') + '<span class="x97-pill ' + (isPaid(item.status) ? "good" : part ? "warn" : "") + '">' + esc(normalizeStatus(item.status)) + '</span><div class="x97-item-actions">' + (!isPaid(item.status) && !isCancelled(item.status) ? '<button class="x97-mini" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("check", 12) + (part ? " Add payment" : " Paid") + '</button>' : '') + '<button class="x97-mini" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">' + icon("edit", 12) + ' Edit</button></div></div></article>';
   }
 
   function groupFollowups(items) {
@@ -946,21 +1748,111 @@
 
   function field(label, input, help) { return '<div class="x97-field"><label>' + esc(label) + '</label>' + input + (help ? '<div class="x97-help">' + esc(help) + '</div>' : '') + '</div>'; }
 
+  function contactPickerHTML(query, doc, hintName, currentPhone) {
+    var contacts = campContacts(doc);
+    if (!contacts.length) return "";
+    var res = searchAllContacts(query, contacts, hintName, 20);
+    var list = res.list, total = res.total;
+    if (!list.length) return query ? '<div class="x97-help" style="margin-top:6px">No contacts match "' + esc(query) + '"</div>' : "";
+    var chips = '<div class="x97-contact-chips' + (list.length > 8 ? ' scroll' : '') + '">' + list.map(function (c) {
+      var on = currentPhone && waNumber(currentPhone, doc) === waNumber(c.phone, doc);
+      return '<button type="button" class="x97-chip x97-contact-chip' + (on ? " on" : "") + '" data-phone="' + attr(c.phone) + '">' + icon("phone", 11) + ' ' + esc(c.name) + ' · ' + esc(c.phone) + '</button>';
+    }).join("") + "</div>";
+    var more = total > list.length ? '<div class="x97-help" style="margin-top:6px">Showing ' + list.length + ' of ' + total + ' matches — add another word (e.g. a surname) to narrow it down.</div>' : "";
+    return chips + more;
+  }
+
   function openUpcomingForm(id) {
     var doc = readDoc(), existing = id ? (doc.followups || []).find(function(x){return String(x.id)===String(id);}) : null;
-    var item = existing ? clone(existing) : { id:"", client:"", category:"One Time", amount:"", currency:"UGX", status:"Pending", expectedBy:"", note:"" };
+    var item = existing ? clone(existing) : { id:"", client:"", category:"One Time", amount:"", currency:"UGX", status:"Pending", expectedBy:"", phone:"", note:"" };
     var categories = Array.from(new Set([].concat(doc.settings.categories || [], (doc.followups || []).map(function(x){return x.category;}), ["Design","One Time","Retainer"]).filter(Boolean))).sort();
     var statuses = Array.from(new Set([].concat(doc.settings.fuStatuses || [], ["Pending","Paid","Cancelled"]).filter(Boolean)));
+    var hasContacts = campContacts(doc).length > 0;
     var body = '<form id="x97-upcoming-form" data-x97-form="upcoming"><input type="hidden" name="id" value="' + attr(item.id) + '">' +
-      field("Client / project", '<input class="x97-input" name="client" required maxlength="160" value="' + attr(item.client) + '" placeholder="e.g. Apollo — Scene 3">') +
+      field("Client / project", '<input class="x97-input" name="client" required maxlength="160" placeholder="e.g. Apollo — Scene 3" value="' + attr(item.client) + '">') +
+      field("WhatsApp number", '<input class="x97-input" name="phone" inputmode="tel" value="' + attr(item.phone || "") + '" placeholder="e.g. 0772 123 456">' +
+        (hasContacts ? '<input class="x97-input x97-contact-search" style="margin-top:8px" placeholder="Or search any contact — e.g. a name, nickname, part of a number…">' : '') +
+        '<div id="x97-contact-suggest">' + contactPickerHTML("", doc, item.client, item.phone) + '</div>', "Used for payment reminders. Local (0772…) or full (+256772…) both work.") +
+      '<div class="x97-fields-2">' + field(existing && paidOf(item) > 0 ? "Invoice total" : "Amount", '<input class="x97-input" name="amount" inputmode="decimal" type="number" min="0" step="1" value="' + attr(existing ? grossOf(item) : item.amount) + '" placeholder="0">', existing && paidOf(item) > 0 ? money(paidOf(item), item.currency) + " already received — outstanding follows from this total." : "") + field("Currency", '<select class="x97-select" name="currency">' + option("UGX","UGX",item.currency) + option("USD","USD",item.currency) + '</select>') + '</div>' +
+      '<details class="x97-more"' + (existing ? " open" : "") + '><summary class="x97-more-summary">' + icon("chevron", 12) + ' More details</summary><div class="x97-more-body">' +
       '<div class="x97-fields-2">' +
       field("Category", '<select class="x97-select" name="category">' + categories.map(function(x){return option(x,x,item.category);}).join("") + '</select>') +
       field("Status", '<select class="x97-select" name="status">' + statuses.map(function(x){return option(x,x,item.status);}).join("") + '</select>') + '</div>' +
-      '<div class="x97-fields-2">' + field("Amount", '<input class="x97-input" name="amount" inputmode="decimal" type="number" min="0" step="1" value="' + attr(item.amount) + '" placeholder="0">') + field("Currency", '<select class="x97-select" name="currency">' + option("UGX","UGX",item.currency) + option("USD","USD",item.currency) + '</select>') + '</div>' +
       field("Expected date", '<input class="x97-input" name="expectedBy" type="date" value="' + attr(item.expectedBy) + '"><div class="x97-chips" style="padding-top:7px"><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="0">Today</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="7">+7 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="30">+30 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-value="month-end">Month end</button></div>') +
-      field("Note", '<textarea class="x97-textarea" name="note" maxlength="500" placeholder="Invoice, follow-up context, or next action">' + esc(item.note) + '</textarea>') + '</form>';
+      field("Note", '<textarea class="x97-textarea" name="note" maxlength="500" placeholder="Invoice, follow-up context, or next action">' + esc(item.note) + '</textarea>') + '</div></details></form>';
+    if (existing) body += '<div class="x97-doc-actions"><button type="button" class="x97-btn" data-x97-action="open-invoice" data-id="' + attr(item.id) + '">' + icon("list", 15) + ' Invoice</button>' +
+      (paidOf(item) > 0 ? '<button type="button" class="x97-btn" data-x97-action="open-receipt" data-id="' + attr(item.id) + '">' + icon("check", 15) + ' Receipt</button>' : '') +
+      (!isPaid(item.status) && !isCancelled(item.status) ? '<button type="button" class="x97-btn teal" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("wallet", 15) + ' Record payment</button>' : '') + '</div>';
     var foot = (existing ? '<button class="x97-btn danger" data-x97-action="delete-upcoming" data-id="' + attr(item.id) + '">' + icon("trash") + ' Delete</button>' : '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button>') + '<button class="x97-btn primary" type="submit" form="x97-upcoming-form">' + icon("check") + (existing ? " Save changes" : " Add upcoming") + '</button>';
-    openSheet(existing ? "Edit upcoming" : "Add upcoming", body, foot);
+    openSheet(existing ? "Edit upcoming" : "Add upcoming", body, foot, { afterOpen: function (back) {
+      var clientInput = back.querySelector('input[name="client"]'), phoneInput = back.querySelector('input[name="phone"]'), searchInput = back.querySelector(".x97-contact-search"), box = back.querySelector("#x97-contact-suggest");
+      if (!clientInput || !phoneInput || !box) return;
+      var timer = null;
+      function refresh() {
+        clearTimeout(timer);
+        timer = setTimeout(function () { box.innerHTML = contactPickerHTML(searchInput ? searchInput.value : "", readDoc(), clientInput.value, phoneInput.value); }, 150);
+      }
+      clientInput.addEventListener("input", function () { if (!searchInput || !searchInput.value.trim()) refresh(); });
+      phoneInput.addEventListener("input", refresh);
+      if (searchInput) searchInput.addEventListener("input", refresh);
+      back.addEventListener("click", function (e) {
+        var chip = e.target.closest && e.target.closest(".x97-contact-chip"); if (!chip) return;
+        phoneInput.value = chip.dataset.phone;
+        refresh();
+      });
+    } });
+  }
+
+  function openPaymentForm(id) {
+    var doc = readDoc();
+    var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(id); });
+    if (!item) { toast("That payment is no longer there", "error"); return; }
+    var currency = String(item.currency || "UGX").toUpperCase();
+    var gross = grossOf(item), already = paidOf(item), left = outstandingOf(item);
+    var history = paymentsFor(doc, item.id);
+    var accounts = (doc.balances || []).map(function (b) { return option(b.id, b.account + " · " + money(b.balance, FX_HOME), ""); }).join("");
+    var progress = already > 0
+      ? '<div class="x97-pay-progress"><div class="x97-pay-bar"><i style="width:' + Math.min(100, Math.round(already / (gross || 1) * 100)) + '%"></i></div>' +
+        '<div class="x97-pay-split"><span>Paid ' + money(already, currency) + '</span><b>' + money(left, currency) + ' left</b></div></div>'
+      : "";
+    var historyHTML = history.length
+      ? '<div class="x97-field"><label>Payments so far</label><div class="x97-pay-log">' + history.map(function (p) {
+          return '<div class="x97-pay-row"><div><b class="x97-money">' + money(p.amount, p.currency) + '</b><span>' + esc(formatDate(p.date, true)) + (p.accountName ? " · " + esc(p.accountName) : "") + '</span></div>' +
+            '<button type="button" class="x97-mini danger" data-x97-action="undo-payment" data-id="' + attr(p.id) + '">' + icon("trash", 12) + ' Undo</button></div>';
+        }).join("") + '</div></div>'
+      : "";
+    var body = '<form id="x97-pay-form" data-x97-form="payment"><input type="hidden" name="id" value="' + attr(item.id) + '">' +
+      '<div class="x97-card x97-pad" style="margin-bottom:14px"><div class="x97-row-sub">' + esc(item.client || "Receivable") + '</div>' +
+        '<div class="x97-money" style="font-size:28px;margin-top:5px">' + money(left, currency) + '</div>' +
+        '<div class="x97-row-sub">Still owed of ' + esc(money(gross, currency)) + '</div>' + progress + '</div>' +
+      field("Amount received", '<input class="x97-input" name="amount" type="number" required min="1" max="' + attr(left) + '" step="1" value="' + attr(left) + '">' +
+        '<div class="x97-chips" style="padding-top:7px"><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="25">25%</button><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="50">50%</button><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="75">75%</button><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="100">Full amount</button></div>',
+        "Enter less than the full amount to record a part payment — the rest stays outstanding.") +
+      field("Date received", '<input class="x97-input" name="date" type="date" required value="' + todayISO() + '">') +
+      field("Into which account", '<select class="x97-select" name="accountId"><option value="">Don\'t change any balance</option>' + accounts + '</select>',
+        currency === "USD" ? "Dollars are converted at today's live rate before the balance moves." : "The selected account balance goes up by this amount.") +
+      field("Note", '<input class="x97-input" name="note" maxlength="200" placeholder="Optional — e.g. MoMo ref, deposit slip">') +
+      historyHTML + '</form>';
+    var foot = '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button>' +
+      '<button class="x97-btn primary" type="submit" form="x97-pay-form">' + icon("check") + ' Record payment</button>';
+    openSheet("Record payment", body, foot);
+  }
+
+  function submitPayment(form) {
+    var v = formValues(form);
+    var received = roundMoney(v.amount);
+    if (received <= 0) { toast("Enter how much came in", "error"); return; }
+    var saved = null;
+    updateDoc(function (doc) {
+      saved = applyPayment(doc, v.id, { amount: received, date: v.date, accountId: v.accountId, note: v.note });
+    }, "payment-record");
+    closeSheet();
+    if (saved) {
+      var doc = readDoc();
+      var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(v.id); });
+      var left = item ? outstandingOf(item) : 0;
+      toast(left > 0 ? money(left, String(saved.currency)) + " still outstanding" : "Settled in full — nice one", "success");
+    }
   }
 
   function openFilters(doc) {
@@ -1049,8 +1941,1265 @@
 
   function submitUpcoming(form) {
     var v=formValues(form), id=v.id||uid("fu");
-    updateDoc(function(doc){var i=doc.followups.findIndex(function(x){return String(x.id)===String(id);});var item={id:id,client:v.client.trim(),category:v.category,amount:roundMoney(v.amount),currency:v.currency,status:v.status,expectedBy:v.expectedBy,note:v.note.trim()};if(i>=0)doc.followups[i]=Object.assign({},doc.followups[i],item);else doc.followups.unshift(item);},"upcoming-save");
+    updateDoc(function(doc){
+      var i=doc.followups.findIndex(function(x){return String(x.id)===String(id);});
+      var gross=roundMoney(v.amount);
+      var already=i>=0?paidOf(doc.followups[i]):0;
+      // The form edits the invoiced total; what is still owed follows from it.
+      var settled=already>0&&already>=gross-0.5;
+      var item={id:id,client:v.client.trim(),category:v.category,gross:gross,paid:already,amount:already>0&&!settled?roundMoney(gross-already):gross,currency:v.currency,status:settled?"Paid":v.status,expectedBy:v.expectedBy,phone:(v.phone||"").trim(),note:v.note.trim()};
+      if(i>=0)doc.followups[i]=Object.assign({},doc.followups[i],item);else doc.followups.unshift(item);
+    },"upcoming-save");
+    closeSheet(); if(remindState.open) refreshRemind();
+  }
+
+  /* ============================ WhatsApp payment reminders ============================ */
+
+  function readAiCfg() {
+    try { var e = localStorage.getItem("ns97-ai-cfg-v1"); var t = e ? JSON.parse(e) : {}; return { apiKey: t.apiKey || "", model: t.model || "claude-haiku-4-5-20251001" }; }
+    catch (_) { return { apiKey: "", model: "claude-haiku-4-5-20251001" }; }
+  }
+
+  function firstName(value) { var s = String(value == null ? "" : value).trim(); if (!s) return "there"; var m = s.split(/[\s\-—,:/|]+/)[0]; return m || s; }
+  function prettyPhone(p) { return String(p == null ? "" : p).trim(); }
+
+  function waCountry(doc) { return String((doc.settings && doc.settings.countryCode) || "256").replace(/\D/g, "") || "256"; }
+  function waNumber(phone, doc, ccOverride) {
+    var raw = String(phone == null ? "" : phone).trim();
+    if (!raw) return "";
+    if (raw.charAt(0) === "+") return raw.replace(/\D/g, "");
+    var d = raw.replace(/\D/g, ""); if (!d) return "";
+    var cc = String(ccOverride || "").replace(/\D/g, "") || waCountry(doc);
+    if (d.indexOf(cc) === 0 && d.length >= cc.length + 8) return d;
+    if (d.charAt(0) === "0") return cc + d.slice(1);
+    if (d.length === 9) return cc + d;
+    return d;
+  }
+  function hasWa(item, doc) { return waNumber(item.phone, doc).length >= 10; }
+
+  function defaultTemplates() {
+    return [
+      { id: "t-friendly", name: "Friendly nudge", tone: "friendly", body: "Hi {name}, hope you're doing well! 🙏 Just a gentle reminder about {amount} for {project} (due {date}). Whenever you get a chance to sort it out, I'd really appreciate it. Thank you! — {you}" },
+      { id: "t-followup", name: "Follow-up", tone: "followup", body: "Hi {name}, following up on {amount} for {project} — it's now {days} days past the {date} due date. Could you let me know when I can expect payment? Happy to resend the details if that helps. Thanks — {you}" },
+      { id: "t-firm", name: "Firm final notice", tone: "firm", body: "Hi {name}, this is a final reminder that {amount} for {project} is now {days} days overdue (was due {date}). Please arrange payment at your earliest convenience, or reply with a date you can commit to. Thank you — {you}" }
+    ];
+  }
+  function allTemplates(doc) { var t = doc.settings && doc.settings.reminderTemplates; return (t && t.length) ? t : defaultTemplates(); }
+  function templateForTone(doc, tone) { var list = allTemplates(doc); var hit = list.find(function (x) { return x.tone === tone; }); return (hit || list[0]).body; }
+
+  function autoTone(item) { var t = timing(item); if (t.days != null && t.days < 0) { return Math.abs(t.days) > 14 ? "firm" : "followup"; } return "friendly"; }
+
+  function fillTemplate(body, item, doc) {
+    var cur = String(item.currency || "UGX").toUpperCase();
+    var t = timing(item); var late = (t.days != null && t.days < 0) ? Math.abs(t.days) : 0;
+    var map = {
+      "{name}": firstName(item.client),
+      "{project}": item.client || "the project",
+      "{amount}": num(item.amount) ? money(item.amount, cur) : "the outstanding amount",
+      "{currency}": cur,
+      "{date}": item.expectedBy ? formatDate(item.expectedBy, false) : "the agreed date",
+      "{days}": String(late),
+      "{you}": (doc.settings && doc.settings.senderName) || "97 LIVE"
+    };
+    return String(body).replace(/\{name\}|\{project\}|\{amount\}|\{currency\}|\{date\}|\{days\}|\{you\}/g, function (k) { return map[k]; });
+  }
+
+  function messageFor(item, doc) {
+    if (remindState.drafts[item.id] != null) return remindState.drafts[item.id];
+    var tone = remindState.tone === "auto" ? autoTone(item) : remindState.tone;
+    return fillTemplate(templateForTone(doc, tone), item, doc);
+  }
+
+  function chaseList(doc) {
+    return (doc.followups || []).filter(isOpenFollowup).filter(function (x) {
+      var t = timing(x); return t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7);
+    }).sort(function (a, b) {
+      var ta = timing(a), tb = timing(b);
+      function rank(t) { if (t.key === "overdue") return 0; if (t.key === "today") return 1; return 2; }
+      var r = rank(ta) - rank(tb); if (r) return r;
+      var da = ta.days == null ? 999 : ta.days, db = tb.days == null ? 999 : tb.days;
+      if (da !== db) return da - db;
+      return num(b.amount) - num(a.amount);
+    });
+  }
+  function chaseSendable(doc) { return chaseList(doc).filter(function (x) { return hasWa(x, doc); }); }
+  function selectedItems(doc) { return chaseList(doc).filter(function (x) { return remindState.selected[x.id]; }); }
+  function selectedSendable(doc) { return selectedItems(doc).filter(function (x) { return hasWa(x, doc); }); }
+
+  function safety(doc) {
+    var s = (doc.settings && doc.settings.waSafety) || {};
+    return {
+      dailyCap: num(s.dailyCap) || 40, minDelay: num(s.minDelay) || 45, maxDelay: num(s.maxDelay) || 120,
+      batchSize: num(s.batchSize) || 8, batchBreak: num(s.batchBreak) || 10,
+      quietStart: s.quietStart || "21:00", quietEnd: s.quietEnd || "08:00",
+      warmup: s.warmup !== false, knownOnly: !!s.knownOnly
+    };
+  }
+
+  function remindSentToday(doc) {
+    var now = new Date(); var key = now.getFullYear() + "-" + now.getMonth() + "-" + now.getDate();
+    return (doc.reminderLog || []).filter(function (r) { var d = new Date(r.at); return (d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate()) === key; }).length;
+  }
+
+  function markReminded(id, mode) {
+    updateDoc(function (doc) {
+      var x = (doc.followups || []).find(function (i) { return String(i.id) === String(id); });
+      if (x) { x.lastRemindedAt = new Date().toISOString(); x.reminderCount = num(x.reminderCount) + 1; }
+      doc.reminderLog = (doc.reminderLog || []).concat([{ at: new Date().toISOString(), id: String(id), mode: mode || "onetap" }]);
+      var cut = Date.now() - 7 * 86400000;
+      doc.reminderLog = doc.reminderLog.filter(function (r) { return new Date(r.at).getTime() > cut; });
+    }, "reminder-sent");
+  }
+
+  function relFromISO(iso) {
+    var d = new Date(iso).getTime(); if (!isFinite(d)) return "";
+    var s = Math.round((Date.now() - d) / 1000);
+    if (s < 60) return "just now"; if (s < 3600) return Math.floor(s / 60) + "m ago";
+    if (s < 86400) return Math.floor(s / 3600) + "h ago"; return Math.floor(s / 86400) + "d ago";
+  }
+  function progLabel(p) { return ({ queued: "Queued", sending: "Sending…", typing: "Typing…", sent: "Sent ✓", error: "Failed", skipped: "Skipped", paused: "Paused" })[p] || p; }
+  function safeJson(text) { try { return JSON.parse(text); } catch (_) {} var a = text.indexOf("{"), b = text.lastIndexOf("}"); if (a >= 0 && b > a) { try { return JSON.parse(text.slice(a, b + 1)); } catch (_) {} } return null; }
+
+  function openReminders() {
+    injectRemindCSS();
+    remindState.open = true; remindState.progress = {};
+    var doc = readDoc();
+    if (doc) chaseSendable(doc).forEach(function (x) { if (timing(x).key === "overdue" && !x.lastRemindedAt) remindState.selected[x.id] = true; });
+    var el = document.getElementById("x97-remind");
+    if (!el) { el = document.createElement("div"); el.id = "x97-remind"; el.className = "x97-remind-overlay"; document.body.appendChild(el); wireRemind(el); }
+    document.body.classList.add("x97-remind-lock");
+    refreshRemind();
+  }
+  function closeReminders() { remindState.open = false; var el = document.getElementById("x97-remind"); if (el) el.remove(); if (!campaignState.open && !document.getElementById("x97-msg")) document.body.classList.remove("x97-remind-lock"); }
+  function refreshRemind() { var el = document.getElementById("x97-remind"); if (!el || !remindState.open) return; var doc = readDoc(); if (!doc) return; el.innerHTML = remindOverlayHTML(doc); }
+
+  function remindRow(item, doc) {
+    var t = timing(item), sel = !!remindState.selected[item.id], wa = hasWa(item, doc);
+    var cur = String(item.currency || "UGX").toUpperCase();
+    var prog = remindState.progress[item.id];
+    var phoneHTML = wa
+      ? '<span class="x97-pill">' + icon("phone", 12) + esc(prettyPhone(item.phone)) + '</span>'
+      : '<button type="button" class="x97-pill" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '" style="cursor:pointer;border:1px dashed var(--line2)">' + icon("plus", 12) + ' Add number</button>';
+    var reminded = item.lastRemindedAt ? '<span class="x97-pill good">' + icon("check", 12) + 'Reminded ' + esc(relFromISO(item.lastRemindedAt)) + '</span>' : '';
+    var progHTML = prog ? '<span class="x97-pill ' + (prog === "sent" ? "good" : prog === "error" ? "bad" : "warn") + '">' + esc(progLabel(prog)) + '</span>' : '';
+    return '<div class="x97-rm-item' + (sel ? ' on' : '') + (wa ? '' : ' nowa') + '" data-id="' + attr(item.id) + '">' +
+      '<div class="x97-rm-head"><label class="x97-rm-pick"><input type="checkbox" class="x97-rm-check" data-id="' + attr(item.id) + '" ' + (sel ? 'checked' : '') + (wa ? '' : ' disabled') + '></label>' +
+      '<div class="x97-rm-body"><div class="x97-rm-top"><span class="x97-rm-name">' + esc(item.client || "Untitled") + '</span><span class="x97-rm-amt x97-money">' + (num(item.amount) ? money(item.amount, cur) : "—") + '</span></div>' +
+      '<div class="x97-rm-tags"><span class="x97-pill ' + esc(t.cls) + '">' + icon("clock", 12) + esc(t.label) + '</span>' + phoneHTML + reminded + progHTML + '</div></div></div>' +
+      (sel && wa ? '<textarea class="x97-rm-msg" data-id="' + attr(item.id) + '" rows="4">' + esc(messageFor(item, doc)) + '</textarea>' : '') +
+      '</div>';
+  }
+
+  function remindOverlayHTML(doc) {
+    var list = chaseList(doc), sendableN = selectedSendable(doc).length;
+    var sent = remindSentToday(doc), cap = safety(doc).dailyCap;
+    var pct = Math.min(100, Math.round(sent / Math.max(1, cap) * 100));
+    var meterCls = sent >= cap ? "bad" : (sent >= cap * 0.8 ? "warn" : "ok");
+    var rows = list.length ? list.map(function (x) { return remindRow(x, doc); }).join("")
+      : '<div class="x97-empty x97-brand-empty" style="padding:34px 16px">' + brandMark(40, "x97-brand-watermark") + '<strong>Nothing to chase 🎉</strong><p>No receivables are overdue or due within 7 days. This list fills up automatically as dates pass.</p></div>';
+    var toneSel = '<select class="x97-rm-tone x97-select" style="min-height:38px;width:auto">' +
+      option("auto", "Tone: Auto", remindState.tone) + option("friendly", "Tone: Friendly", remindState.tone) +
+      option("followup", "Tone: Follow-up", remindState.tone) + option("firm", "Tone: Firm", remindState.tone) + '</select>';
+    var modeSeg = '<div class="x97-rm-seg"><button data-rm="mode-onetap" class="' + (remindState.mode === "onetap" ? "on" : "") + '">One-tap</button><button data-rm="mode-auto" class="' + (remindState.mode === "auto" ? "on" : "") + '">Auto</button></div>';
+    var aiToggle = '<label class="x97-rm-ai-wrap"><input type="checkbox" class="x97-rm-ai" ' + (remindState.useAI ? "checked" : "") + '>' + icon("bolt", 14) + ' AI-personalise' + (remindState.aiBusy ? ' …' : '') + '</label>';
+    var footPrimary;
+    if (remindState.mode === "auto") {
+      footPrimary = remindExt.ready
+        ? '<button class="x97-btn primary" data-rm="send-auto" ' + (sendableN ? '' : 'disabled') + '>' + icon("send") + ' Send automatically (' + sendableN + ')</button>'
+        : '<button class="x97-btn primary" disabled style="opacity:.55">Sender extension not detected</button>';
+    } else {
+      footPrimary = '<button class="x97-btn primary" data-rm="send-onetap" ' + (sendableN ? '' : 'disabled') + '>' + icon("message") + ' Open next in WhatsApp (' + sendableN + ')</button>';
+    }
+    var autoHint = (remindState.mode === "auto" && !remindExt.ready)
+      ? '<div class="x97-rm-hint">' + icon("shield", 14) + '<div>Auto mode needs the free <b>97 Sender</b> browser extension (Chrome/Edge). Install it, keep <b>web.whatsapp.com</b> open in a tab, and this turns on. Until then use <b>One-tap</b> — it works right now.</div></div>' : '';
+    return '<div class="x97-remind-panel">' +
+      '<header class="x97-rm-header"><div class="x97-rm-htop"><div><button class="x97-rm-link" data-rm="hub" style="margin-bottom:4px">‹ Messaging</button><div class="x97-rm-title">' + brandMark(16) + icon("message", 18) + ' Chase overdue</div><div class="x97-rm-sub">' + list.length + ' to chase · ' + chaseSendable(doc).length + ' with a number</div></div><button class="x97-rm-close" data-rm="close">' + icon("close") + '</button></div>' +
+      '<div class="x97-rm-meter ' + meterCls + '"><div class="x97-rm-meter-bar" style="width:' + pct + '%"></div><span>Sent today ' + sent + ' / ' + cap + '</span><em class="' + (remindExt.ready ? "ok" : "") + '">' + (remindExt.ready ? "Sender connected" : "Sender off") + '</em></div></header>' +
+      '<div class="x97-rm-toolbar">' + toneSel + aiToggle + '<span class="x97-rm-spacer"></span>' + modeSeg + '<button class="x97-rm-tool" data-rm="numbers">' + icon("phone", 14) + ' Numbers</button><button class="x97-rm-tool" data-rm="templates">' + icon("edit", 14) + ' Templates</button><button class="x97-rm-tool" data-rm="safety">' + icon("shield", 14) + ' Safety</button></div>' +
+      '<div class="x97-rm-selrow"><button class="x97-rm-link" data-rm="select-all">Select all</button><button class="x97-rm-link" data-rm="select-none">Clear</button><span class="x97-rm-selcount">' + Object.keys(remindState.selected).length + ' selected</span></div>' +
+      autoHint + '<div class="x97-rm-list">' + rows + '</div>' +
+      '<footer class="x97-rm-footer">' + footPrimary + '</footer></div>';
+  }
+
+  function wireRemind(el) {
+    el.addEventListener("click", function (e) {
+      var seg = e.target.closest && e.target.closest("[data-rm]");
+      if (seg && el.contains(seg)) { onRemindAction(seg.dataset.rm); }
+    });
+    el.addEventListener("change", function (e) {
+      var t = e.target;
+      if (t.classList.contains("x97-rm-check")) { var id = t.dataset.id; if (t.checked) remindState.selected[id] = true; else delete remindState.selected[id]; refreshRemind(); return; }
+      if (t.classList.contains("x97-rm-tone")) { remindState.tone = t.value; refreshRemind(); return; }
+      if (t.classList.contains("x97-rm-ai")) { remindState.useAI = t.checked; if (t.checked) draftWithAI(readDoc()); else { remindState.drafts = {}; refreshRemind(); } return; }
+    });
+    el.addEventListener("input", function (e) { var t = e.target; if (t.classList.contains("x97-rm-msg")) remindState.drafts[t.dataset.id] = t.value; });
+  }
+
+  function onRemindAction(a) {
+    var doc = readDoc();
+    if (a === "close") return closeReminders();
+    if (a === "hub") { closeReminders(); openMessaging(); return; }
+    if (a === "select-all") { chaseSendable(doc).forEach(function (x) { remindState.selected[x.id] = true; }); return refreshRemind(); }
+    if (a === "select-none") { remindState.selected = {}; return refreshRemind(); }
+    if (a === "mode-onetap") { remindState.mode = "onetap"; return refreshRemind(); }
+    if (a === "mode-auto") { remindState.mode = "auto"; return refreshRemind(); }
+    if (a === "templates") return openTemplateManager();
+    if (a === "numbers") return openNumbersManager();
+    if (a === "safety") return openSafetySettings();
+    if (a === "send-onetap") return sendOneTapNext();
+    if (a === "send-auto") return sendAuto(doc);
+  }
+
+  function sendOneTapNext() {
+    var doc = readDoc(); if (!doc) return;
+    var list = selectedSendable(doc);
+    if (!list.length) { toast("Select someone with a WhatsApp number", "error"); return; }
+    var item = list[0];
+    var url = "https://wa.me/" + waNumber(item.phone, doc) + "?text=" + encodeURIComponent(messageFor(item, doc));
+    window.open(url, "_blank");
+    markReminded(item.id, "onetap");
+    delete remindState.selected[item.id];
+    remindState.progress[item.id] = "sent";
+    refreshRemind();
+  }
+
+  function sendAuto(doc) {
+    if (!remindExt.ready) { toast("Install the 97 Sender extension first", "error"); return; }
+    var jobs = selectedSendable(doc).map(function (item) { return { id: String(item.id), phone: waNumber(item.phone, doc), name: firstName(item.client), message: messageFor(item, doc) }; });
+    if (!jobs.length) { toast("Select at least one client with a number", "error"); return; }
+    jobs.forEach(function (j) { remindState.progress[j.id] = "queued"; });
+    remindExt.sending = true;
+    window.postMessage({ source: "x97-wa-app", type: "enqueue", jobs: jobs, safety: safety(doc) }, "*");
+    refreshRemind();
+    toast("Sending " + jobs.length + " reminder" + (jobs.length === 1 ? "" : "s") + " — keep WhatsApp Web open", "");
+  }
+
+  function draftWithAI(doc) {
+    doc = doc || readDoc(); if (!doc) return;
+    var cfg = readAiCfg();
+    if (!cfg.apiKey) { toast("Add your Anthropic key in Settings to draft with AI", "error"); remindState.useAI = false; return refreshRemind(); }
+    var items = selectedSendable(doc); if (!items.length) items = chaseSendable(doc);
+    items = items.slice(0, 25);
+    if (!items.length) { toast("Nothing to draft", "error"); return; }
+    remindState.aiBusy = true; refreshRemind();
+    toast("Drafting " + items.length + " message" + (items.length === 1 ? "" : "s") + " with AI…", "");
+    var sender = (doc.settings && doc.settings.senderName) || "97 LIVE";
+    var payload = items.map(function (x) { var t = timing(x); return { id: String(x.id), name: firstName(x.client), project: x.client || "", amount: num(x.amount) ? money(x.amount, String(x.currency || "UGX").toUpperCase()) : "the outstanding amount", due: x.expectedBy ? formatDate(x.expectedBy, false) : "the agreed date", daysOverdue: (t.days != null && t.days < 0) ? Math.abs(t.days) : 0, tone: autoTone(x) }; });
+    var sys = "You are the credit-control assistant for " + sender + ". Write short, warm, professional WhatsApp payment reminders in the sender's voice. One message per client. Vary the wording so no two are identical. Keep each to 2-4 sentences with a polite, specific ask. Use the client's first name. Use at most one emoji, sparingly. No markdown, no bullet points. Sign off as " + sender + ". Match the tone field: friendly = light gentle nudge; followup = clear check-in; firm = final but respectful.";
+    var user = "Return ONLY a JSON object mapping each id to its message string — no other text. Clients:\n" + JSON.stringify(payload);
+    fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "content-type": "application/json", "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }, body: JSON.stringify({ model: cfg.model, max_tokens: 1800, system: sys, messages: [{ role: "user", content: user }] }) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var text = (d && d.content && d.content[0] && d.content[0].text) || "";
+        var obj = safeJson(text); if (!obj) throw new Error("parse");
+        Object.keys(obj).forEach(function (id) { if (typeof obj[id] === "string") remindState.drafts[id] = obj[id].trim(); });
+        remindState.useAI = true; remindState.aiBusy = false; toast("AI drafts ready — edit any before sending", ""); refreshRemind();
+      })
+      .catch(function () { remindState.aiBusy = false; remindState.useAI = false; toast("AI draft failed — using templates instead", "error"); refreshRemind(); });
+  }
+
+  function openTemplateManager() {
+    var doc = readDoc(); var byTone = function (tone) { var list = allTemplates(doc); var hit = list.find(function (x) { return x.tone === tone; }); return hit ? hit.body : ""; };
+    var body = '<form id="x97-tpl-form" data-x97-form="reminder-templates">' +
+      '<div class="x97-help" style="margin-bottom:12px">Slots you can drop into any message: <b>{name}</b> · {project} · {amount} · {currency} · {date} · {days} · {you}</div>' +
+      field("Your sign-off name", '<input class="x97-input" name="senderName" value="' + attr((doc.settings && doc.settings.senderName) || "") + '" placeholder="e.g. Zah · 97 LIVE">') +
+      field("Country code", '<input class="x97-input" name="countryCode" inputmode="numeric" value="' + attr(waCountry(doc)) + '" placeholder="256">', "Digits only. 256 = Uganda. Local numbers starting with 0 are converted automatically.") +
+      field("Friendly nudge", '<textarea class="x97-textarea" name="friendly" rows="3">' + esc(byTone("friendly")) + '</textarea>') +
+      field("Follow-up", '<textarea class="x97-textarea" name="followup" rows="3">' + esc(byTone("followup")) + '</textarea>') +
+      field("Firm final notice", '<textarea class="x97-textarea" name="firm" rows="3">' + esc(byTone("firm")) + '</textarea>') + '</form>';
+    var foot = '<button class="x97-btn" data-x97-action="reset-templates">Reset defaults</button><button class="x97-btn primary" type="submit" form="x97-tpl-form">' + icon("check") + ' Save templates</button>';
+    openSheet("Reminder templates", body, foot);
+  }
+  function submitTemplates(form) {
+    var v = formValues(form), d = defaultTemplates();
+    updateDoc(function (doc) {
+      doc.settings = doc.settings || {};
+      doc.settings.senderName = (v.senderName || "").trim();
+      doc.settings.countryCode = (v.countryCode || "256").replace(/\D/g, "") || "256";
+      doc.settings.reminderTemplates = [
+        { id: "t-friendly", name: "Friendly nudge", tone: "friendly", body: (v.friendly || "").trim() || d[0].body },
+        { id: "t-followup", name: "Follow-up", tone: "followup", body: (v.followup || "").trim() || d[1].body },
+        { id: "t-firm", name: "Firm final notice", tone: "firm", body: (v.firm || "").trim() || d[2].body }
+      ];
+    }, "reminder-templates");
+    closeSheet(); if (remindState.open) refreshRemind();
+  }
+
+  /* ---- Contact matching: fuzzy-match finance clients against imported contacts ---- */
+
+  function normalizeForMatch(s) { return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim(); }
+  function primaryNamePart(raw) { var s = String(raw == null ? "" : raw); var seg = s.split(/[—–\-:|]/)[0]; return (seg && seg.trim()) || s.trim(); }
+  function nameTokens(raw) { return normalizeForMatch(primaryNamePart(raw)).split(" ").filter(function (w) { return w.length > 1; }); }
+  function nameSimilarity(a, b) {
+    var na = normalizeForMatch(primaryNamePart(a)), nb = normalizeForMatch(primaryNamePart(b));
+    if (!na || !nb) return 0;
+    if (na === nb) return 1;
+    if (na.length >= 3 && nb.length >= 3 && (na.indexOf(nb) >= 0 || nb.indexOf(na) >= 0)) return 0.9;
+    var ta = nameTokens(a), tb = nameTokens(b);
+    if (!ta.length || !tb.length) return 0;
+    var setB = {}; tb.forEach(function (t) { setB[t] = true; });
+    var inter = ta.filter(function (t) { return setB[t]; }).length;
+    if (!inter) return 0;
+    return (2 * inter) / (ta.length + tb.length);
+  }
+  var MATCH_AUTO = 0.82, MATCH_SUGGEST = 0.4;
+  function bestContactMatches(clientName, contacts, limit) {
+    var scored = contacts.map(function (c) { return { contact: c, score: nameSimilarity(clientName, c.name) }; })
+      .filter(function (x) { return x.score >= MATCH_SUGGEST; })
+      .sort(function (a, b) { return b.score - a.score; });
+    return scored.slice(0, limit || 4);
+  }
+  function classifyMatches(matches) {
+    if (!matches.length) return "none";
+    var top = matches[0].score, second = matches[1] ? matches[1].score : 0;
+    if (top >= MATCH_AUTO && (top - second) >= 0.12) return "auto";
+    return "review";
+  }
+
+  function editDistance(a, b, maxD) {
+    var al = a.length, bl = b.length;
+    if (Math.abs(al - bl) > maxD) return maxD + 1;
+    var d = []; for (var i = 0; i <= al; i++) { d[i] = [i]; }
+    for (var j = 0; j <= bl; j++) d[0][j] = j;
+    for (i = 1; i <= al; i++) {
+      var rowMin = maxD + 1;
+      for (j = 1; j <= bl; j++) {
+        var cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        var val = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+        if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) val = Math.min(val, d[i - 2][j - 2] + 1);
+        d[i][j] = val;
+        if (val < rowMin) rowMin = val;
+      }
+      if (rowMin > maxD) return maxD + 1;
+    }
+    return d[al][bl];
+  }
+  function tokenHitsWord(token, word) {
+    if (word.indexOf(token) >= 0) return "exact";
+    if (token.length >= 3) {
+      var maxD = token.length <= 4 ? 1 : (token.length <= 7 ? 2 : 3);
+      if (editDistance(token, word, maxD) <= maxD) return "fuzzy";
+    }
+    return null;
+  }
+
+  function searchAllContacts(query, contacts, hintName, limit) {
+    limit = limit || 20;
+    var q = normalizeForMatch(query);
+    if (!q) return { list: bestContactMatches(hintName, contacts, limit).map(function (m) { return m.contact; }), total: 0 };
+    var qTokens = q.split(" ").filter(Boolean);
+    var qDigits = query.replace(/\D/g, "");
+    var scored = contacts.map(function (c) {
+      var name = normalizeForMatch(c.name);
+      var nameWords = name.split(" ").filter(Boolean);
+      var phoneDigits = String(c.phone || "").replace(/\D/g, "");
+      // Every word typed matches somewhere in the name (any order, and tolerant of a small typo like a
+      // transposed pair of letters) — so it never fails just because of word order, extra words in
+      // between (e.g. a middle name), or a slipped keystroke.
+      var exactAll = qTokens.length > 0, fuzzyAll = qTokens.length > 0;
+      qTokens.forEach(function (t) {
+        var hits = nameWords.map(function (w) { return tokenHitsWord(t, w); });
+        if (hits.indexOf("exact") < 0) exactAll = false;
+        if (hits.indexOf("exact") < 0 && hits.indexOf("fuzzy") < 0) fuzzyAll = false;
+      });
+      var rank = 99;
+      if (name === q) rank = -1;
+      else if (name.indexOf(q) === 0) rank = 0;
+      else if (exactAll) rank = 1;
+      else if (fuzzyAll) rank = 2;
+      else if (name.indexOf(q) >= 0) rank = 3;
+      else if (qDigits.length >= 3 && phoneDigits.indexOf(qDigits) >= 0) rank = 4;
+      return { contact: c, rank: rank };
+    }).filter(function (x) { return x.rank < 99; })
+      .sort(function (a, b) { return a.rank - b.rank || a.contact.name.localeCompare(b.contact.name); });
+    return { list: scored.slice(0, limit).map(function (x) { return x.contact; }), total: scored.length };
+  }
+
+  function numRowPickerHTML(query, contacts, hintName, currentPhone, doc, targetName) {
+    var res = searchAllContacts(query, contacts, hintName, 20);
+    var list = res.list, total = res.total;
+    if (!list.length) return query ? '<div class="x97-help" style="margin-top:6px">No contacts match "' + esc(query) + '"</div>' : "";
+    var chips = '<div class="x97-contact-chips' + (list.length > 6 ? ' scroll' : '') + '">' + list.map(function (c) {
+      var on = currentPhone && waNumber(currentPhone, doc) === waNumber(c.phone, doc);
+      return '<button type="button" class="x97-chip x97-contact-chip' + (on ? " on" : "") + '" data-phone="' + attr(c.phone) + '" data-target="' + attr(targetName) + '">' + icon("phone", 11) + ' ' + esc(c.name) + ' · ' + esc(c.phone) + '</button>';
+    }).join("") + "</div>";
+    var more = total > list.length ? '<div class="x97-help" style="margin-top:6px">Showing ' + list.length + ' of ' + total + ' — add a surname to narrow it down.</div>' : "";
+    return chips + more;
+  }
+
+  function openNumbersManager() {
+    injectRemindCSS();
+    var doc = readDoc();
+    var contacts = campContacts(doc);
+    var list = (doc.followups || []).filter(isOpenFollowup).slice().sort(function (a, b) {
+      var am = hasWa(a, doc) ? 1 : 0, bm = hasWa(b, doc) ? 1 : 0;
+      if (am !== bm) return am - bm;                       // missing numbers first
+      var ta = timing(a), tb = timing(b);
+      var da = ta.days == null ? 9999 : ta.days, db = tb.days == null ? 9999 : tb.days;
+      if (da !== db) return da - db;                        // most urgent next
+      return String(a.client || "").localeCompare(String(b.client || ""));
+    });
+    var missing = list.filter(function (x) { return !hasWa(x, doc); }).length;
+    var autoCount = 0, reviewCount = 0;
+    var rows = list.map(function (x) {
+      var cur = String(x.currency || "UGX").toUpperCase(), t = timing(x);
+      var picker = "";
+      if (!hasWa(x, doc) && contacts.length) {
+        var matches = bestContactMatches(x.client, contacts, 4);
+        var cls = classifyMatches(matches);
+        if (cls === "auto") { autoCount++; x = Object.assign({}, x, { phone: matches[0].contact.phone }); }
+        else if (matches.length) reviewCount++;
+        var note = cls === "auto" ? '<div class="x97-num-auto">' + icon("check", 11) + ' Auto-matched — check it\'s right, then Save</div>'
+          : (matches.length ? '<div class="x97-num-review">' + icon("phone", 11) + ' Possible matches — pick one, search, or type the number</div>' : '<div class="x97-num-review">' + icon("phone", 11) + ' No automatic match — search or type the number</div>');
+        picker = note +
+          '<input class="x97-input x97-num-search" data-row="' + attr(x.id) + '" style="margin-top:6px" placeholder="Search any contact…">' +
+          '<div class="x97-num-picker" data-row="' + attr(x.id) + '">' + numRowPickerHTML("", contacts, x.client, x.phone, doc, "num_" + x.id) + '</div>';
+      }
+      return '<div class="x97-num-row"><div class="x97-num-meta"><div class="x97-num-name">' + esc(x.client || "Untitled") + '</div><div class="x97-num-sub"><span class="x97-pill ' + esc(t.cls) + '" style="padding:2px 6px">' + esc(t.label) + '</span>' + (num(x.amount) ? '<span>' + esc(money(x.amount, cur)) + '</span>' : '') + '</div>' + picker + '</div><input class="x97-input x97-num-input" name="num_' + attr(x.id) + '" inputmode="tel" value="' + attr(x.phone || "") + '" placeholder="0772…"></div>';
+    }).join("");
+    if (!list.length) rows = '<div class="x97-empty" style="padding:22px"><strong>No open receivables</strong><p>Add upcoming payments first.</p></div>';
+    var matchNote = contacts.length ? ('<div class="x97-help" style="margin-bottom:6px">Matched against your ' + contacts.length + ' imported contacts — ' + (autoCount ? '<b>' + autoCount + '</b> filled in automatically, ' : '') + (reviewCount ? '<b>' + reviewCount + '</b> need you to pick one' : (autoCount ? 'nothing else needs a pick' : 'search or type the rest')) + '.</div>') : "";
+    var body = '<form id="x97-numbers-form" data-x97-form="wa-numbers">' + matchNote + '<div class="x97-help" style="margin-bottom:12px">' + (missing ? '<b>' + missing + '</b> still need a number. ' : 'All clients have a number. ') + 'Local (0772…) or full (+256772…) both work.</div>' + rows + '</form>';
+    var foot = '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button><button class="x97-btn primary" type="submit" form="x97-numbers-form">' + icon("check") + ' Save numbers</button>';
+    openSheet("WhatsApp numbers", body, foot, { afterOpen: function (back) {
+      function refreshRow(id) {
+        var searchEl = back.querySelector('.x97-num-search[data-row="' + id + '"]');
+        var pickerEl = back.querySelector('.x97-num-picker[data-row="' + id + '"]');
+        var inputEl = back.querySelector('input[name="num_' + id + '"]');
+        if (!pickerEl || !inputEl) return;
+        var item = list.find(function (x) { return String(x.id) === String(id); });
+        pickerEl.innerHTML = numRowPickerHTML(searchEl ? searchEl.value : "", contacts, item ? item.client : "", inputEl.value, readDoc(), "num_" + id);
+      }
+      back.addEventListener("input", function (e) {
+        var t = e.target; if (!t.classList.contains("x97-num-search")) return;
+        var id = t.dataset.row;
+        clearTimeout(t.__timer); t.__timer = setTimeout(function () { refreshRow(id); }, 150);
+      });
+      back.addEventListener("click", function (e) {
+        var chip = e.target.closest && e.target.closest(".x97-contact-chip[data-target]"); if (!chip) return;
+        var input = back.querySelector('input[name="' + chip.dataset.target + '"]'); if (!input) return;
+        input.value = chip.dataset.phone;
+        refreshRow(String(chip.dataset.target).replace(/^num_/, ""));
+      });
+    } });
+  }
+  function submitNumbers(form) {
+    var v = formValues(form);
+    updateDoc(function (doc) {
+      (doc.followups || []).forEach(function (x) { var k = "num_" + x.id; if (Object.prototype.hasOwnProperty.call(v, k)) x.phone = String(v[k] || "").trim(); });
+    }, "wa-numbers");
+    closeSheet(); if (remindState.open) refreshRemind();
+  }
+
+  function openSafetySettings() {
+    var doc = readDoc(); var s = safety(doc);
+    var body = '<form id="x97-safety-form" data-x97-form="wa-safety">' +
+      '<div class="x97-help" style="margin-bottom:12px">These keep automated sending looking human so your number stays safe. They apply to <b>Auto</b> mode.</div>' +
+      '<div class="x97-fields-2">' + field("Daily send cap", '<input class="x97-input" type="number" min="1" name="dailyCap" value="' + attr(s.dailyCap) + '">') + field("Warm-up ramp", '<select class="x97-select" name="warmup">' + option("true", "On — start slow", String(s.warmup)) + option("false", "Off", String(s.warmup)) + '</select>') + '</div>' +
+      '<div class="x97-fields-2">' + field("Min gap (seconds)", '<input class="x97-input" type="number" min="5" name="minDelay" value="' + attr(s.minDelay) + '">') + field("Max gap (seconds)", '<input class="x97-input" type="number" min="10" name="maxDelay" value="' + attr(s.maxDelay) + '">') + '</div>' +
+      '<div class="x97-fields-2">' + field("Batch size", '<input class="x97-input" type="number" min="1" name="batchSize" value="' + attr(s.batchSize) + '">') + field("Break after batch (min)", '<input class="x97-input" type="number" min="0" name="batchBreak" value="' + attr(s.batchBreak) + '">') + '</div>' +
+      '<div class="x97-fields-2">' + field("Quiet hours from", '<input class="x97-input" type="time" name="quietStart" value="' + attr(s.quietStart) + '">') + field("Quiet hours to", '<input class="x97-input" type="time" name="quietEnd" value="' + attr(s.quietEnd) + '">') + '</div>' +
+      field("Only known contacts", '<select class="x97-select" name="knownOnly">' + option("false", "No — send to any number", String(s.knownOnly)) + option("true", "Yes — safest, skip unsaved", String(s.knownOnly)) + '</select>') + '</form>';
+    var foot = '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button><button class="x97-btn primary" type="submit" form="x97-safety-form">' + icon("check") + ' Save safety settings</button>';
+    openSheet("Sending safety", body, foot);
+  }
+  function submitSafety(form) {
+    var v = formValues(form);
+    updateDoc(function (doc) { doc.settings = doc.settings || {}; doc.settings.waSafety = { dailyCap: num(v.dailyCap) || 40, minDelay: num(v.minDelay) || 45, maxDelay: num(v.maxDelay) || 120, batchSize: num(v.batchSize) || 8, batchBreak: num(v.batchBreak) || 10, quietStart: v.quietStart || "21:00", quietEnd: v.quietEnd || "08:00", warmup: v.warmup !== "false", knownOnly: v.knownOnly === "true" }; }, "wa-safety");
+    closeSheet(); if (remindState.open) refreshRemind();
+  }
+
+  function handleExtProgress(d) {
+    if (!d.id) return;
+    if (campaignState.sending) { handleCampaignProgress(d); return; }
+    remindState.progress[d.id] = d.status;
+    if (d.status === "sent") { markReminded(d.id, "auto"); delete remindState.selected[d.id]; }
+    if (remindState.open) refreshRemind();
+  }
+  function initRemindBridge() {
+    window.addEventListener("message", function (ev) {
+      if (ev.source !== window) return;
+      var d = ev.data; if (!d || d.source !== "x97-wa-ext") return;
+      if (d.type === "ready") { remindExt.ready = true; remindExt.version = d.version || ""; if (remindState.open) refreshRemind(); if (campaignState.open) refreshCamp(); refreshMsgHub(); }
+      else if (d.type === "progress") handleExtProgress(d);
+      else if (d.type === "done") { remindExt.sending = false; if (campaignState.sending) { campaignState.sending = false; if (campaignState.open) refreshCamp(); toast("Campaign finished", ""); } else { if (remindState.open) refreshRemind(); toast("Reminder run finished", ""); } refreshMsgHub(); }
+      else if (d.type === "paused") { remindExt.sending = false; if (remindState.open) refreshRemind(); if (campaignState.open) refreshCamp(); }
+    });
+    try { window.postMessage({ source: "x97-wa-app", type: "hello" }, "*"); } catch (_) {}
+  }
+
+  function injectRemindCSS() {
+    if (document.getElementById("x97-remind-css")) return;
+    var css = ".x97-remind-lock{overflow:hidden}" +
+      ".x97-remind-overlay{position:fixed;inset:0;z-index:120;background:rgba(6,10,14,.55);backdrop-filter:blur(4px);display:flex;align-items:flex-end;justify-content:center}" +
+      "@media(min-width:760px){.x97-remind-overlay{align-items:center;padding:24px}}" +
+      ".x97-remind-panel{background:var(--bg);width:100%;max-width:640px;max-height:94vh;border-radius:22px 22px 0 0;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 -12px 44px rgba(0,0,0,.34)}" +
+      "@media(min-width:760px){.x97-remind-panel{border-radius:22px;max-height:88vh}}" +
+      ".x97-rm-header{padding:15px 15px 12px;border-bottom:1px solid var(--line);background:var(--card)}" +
+      ".x97-rm-htop{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}" +
+      ".x97-rm-title{display:flex;align-items:center;gap:8px;font-size:17px;font-weight:850;color:var(--tx)}" +
+      ".x97-rm-sub{font-size:11.5px;color:var(--tx3);margin-top:3px}" +
+      ".x97-rm-close{background:var(--card2);border:1px solid var(--line);border-radius:11px;width:38px;height:38px;min-width:38px;display:flex;align-items:center;justify-content:center;color:var(--tx2);cursor:pointer}" +
+      ".x97-rm-meter{position:relative;margin-top:12px;height:26px;border-radius:9px;background:var(--card2);border:1px solid var(--line);overflow:hidden;display:flex;align-items:center}" +
+      ".x97-rm-meter span{position:relative;z-index:1;font-size:10px;font-weight:850;color:var(--tx);padding-left:10px;text-transform:uppercase;letter-spacing:.05em}" +
+      ".x97-rm-meter em{position:relative;z-index:1;margin-left:auto;padding-right:10px;font-style:normal;font-size:10px;font-weight:800;color:var(--tx3)}" +
+      ".x97-rm-meter em.ok{color:var(--pos)}" +
+      ".x97-rm-meter-bar{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,var(--pos),var(--pos2));opacity:.3}" +
+      ".x97-rm-meter.warn .x97-rm-meter-bar{background:var(--warn);opacity:.4}.x97-rm-meter.bad .x97-rm-meter-bar{background:var(--neg);opacity:.45}" +
+      ".x97-rm-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--line)}" +
+      ".x97-rm-spacer{flex:1 1 auto}" +
+      ".x97-rm-ai-wrap{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:750;color:var(--tx);cursor:pointer}.x97-rm-ai{accent-color:var(--pos);width:16px;height:16px}" +
+      ".x97-rm-seg{display:inline-flex;background:var(--card2);border:1px solid var(--line);border-radius:10px;overflow:hidden}" +
+      ".x97-rm-seg button{border:0;background:transparent;padding:7px 13px;font-size:12px;font-weight:800;color:var(--tx3);cursor:pointer}.x97-rm-seg button.on{background:var(--pos);color:#fff}" +
+      ".x97-rm-tool{display:inline-flex;align-items:center;gap:5px;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:11.5px;font-weight:750;color:var(--tx2);cursor:pointer}" +
+      ".x97-rm-selrow{display:flex;align-items:center;gap:14px;padding:9px 15px}" +
+      ".x97-rm-link{background:0;border:0;color:var(--pos);font-weight:800;font-size:12px;cursor:pointer;padding:0}" +
+      ".x97-rm-selcount{margin-left:auto;font-size:11px;color:var(--tx3);font-weight:700}" +
+      ".x97-rm-hint{margin:0 13px 10px;padding:11px 12px;background:var(--card2);border:1px solid var(--line2);border-radius:12px;font-size:11.5px;line-height:1.55;color:var(--tx2);display:flex;gap:8px;align-items:flex-start}" +
+      ".x97-rm-list{flex:1 1 auto;overflow-y:auto;padding:6px 12px 12px}" +
+      ".x97-rm-item{border:1px solid var(--line);border-radius:14px;padding:11px 12px;margin-bottom:9px;background:var(--card)}" +
+      ".x97-rm-item.on{border-color:var(--pos);box-shadow:var(--ring)}.x97-rm-item.nowa{opacity:.9}" +
+      ".x97-rm-head{display:flex;gap:11px;align-items:flex-start}.x97-rm-pick{padding-top:1px}.x97-rm-check{width:20px;height:20px;accent-color:var(--pos)}" +
+      ".x97-rm-body{flex:1;min-width:0}" +
+      ".x97-rm-top{display:flex;justify-content:space-between;gap:10px;align-items:baseline}" +
+      ".x97-rm-name{font-size:14px;font-weight:800;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+      ".x97-rm-amt{font-size:14px;font-weight:800;white-space:nowrap}" +
+      ".x97-rm-tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}" +
+      ".x97-rm-msg{width:100%;margin-top:10px;border:1px solid var(--line2);border-radius:11px;background:var(--card2);color:var(--tx);padding:10px;font-size:12.5px;line-height:1.5;resize:vertical;min-height:74px;font-family:inherit}" +
+      ".x97-rm-footer{padding:12px 14px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--card)}.x97-rm-footer .x97-btn{width:100%;justify-content:center}" +
+      ".x97-num-row{display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}" +
+      ".x97-num-meta{flex:1;min-width:0}.x97-num-name{font-size:13px;font-weight:750;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+      ".x97-num-sub{font-size:11px;color:var(--tx3);margin-top:4px;display:flex;gap:7px;align-items:center}" +
+      ".x97-num-input{max-width:172px}" +
+      ".x97-num-row{flex-wrap:wrap}.x97-num-search{width:100%;margin-top:6px;font-size:11.5px}" +
+      ".x97-num-picker:empty{margin-top:0}" +
+      ".x97-num-auto{width:100%;font-size:10.5px;color:var(--pos);font-weight:750;display:flex;align-items:center;gap:4px;margin-top:4px}" +
+      ".x97-num-review{width:100%;font-size:10.5px;color:var(--warn);font-weight:750;display:flex;align-items:center;gap:4px;margin-top:4px}" +
+      "@keyframes x97PanelUp{from{transform:translateY(28px);opacity:0}to{transform:translateY(0);opacity:1}}" +
+      ".x97-remind-panel{animation:x97PanelUp .38s cubic-bezier(.3,1.22,.42,1)}" +
+      "@keyframes x97PillPop{0%{transform:scale(.7)}60%{transform:scale(1.08)}100%{transform:scale(1)}}" +
+      ".x97-rm-tags .x97-pill.good,.x97-camp-logrow .x97-pill.good{animation:x97PillPop .3s cubic-bezier(.34,1.56,.64,1)}" +
+      ".x97-rm-tool,.x97-ws-tool,.x97-ws-b,.x97-camp-hist{transition:transform .1s}" +
+      ".x97-rm-tool:active,.x97-ws-tool:active,.x97-ws-b:active,.x97-camp-hist:active{transform:scale(.96)}" +
+      ".x97-brand-mark{border-radius:6px;display:inline-block;vertical-align:middle;object-fit:contain;flex:none}" +
+      ".x97-brand-empty{display:flex;flex-direction:column;align-items:center}" +
+      ".x97-brand-watermark{opacity:.55;margin-bottom:8px}" +
+      ".x97-ws-signoff{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:10px;color:var(--tx3);font-weight:700}" +
+      "@media(prefers-reduced-motion:reduce){.x97-remind-panel,.x97-rm-tags .x97-pill.good,.x97-camp-logrow .x97-pill.good{animation:none}.x97-rm-tool,.x97-ws-tool,.x97-ws-b,.x97-camp-hist{transition:none}}";
+    var s = document.createElement("style"); s.id = "x97-remind-css"; s.textContent = css; document.head.appendChild(s);
+  }
+
+  /* ============================ Messaging hub ============================ */
+
+  function combinedSentToday(doc) {
+    var n = remindSentToday(doc);
+    var now = new Date(); var key = now.getFullYear() + "-" + now.getMonth() + "-" + now.getDate();
+    (doc.waCampaigns || []).forEach(function (c) { (c.log || []).forEach(function (e) { if (e.status !== "sent") return; var d = new Date(e.at); if ((d.getFullYear() + "-" + d.getMonth() + "-" + d.getDate()) === key) n++; }); });
+    return n;
+  }
+
+  function messagingSummary(doc) {
+    var cl = chaseList(doc);
+    return {
+      overdue: cl.filter(function (x) { return timing(x).key === "overdue"; }).length,
+      dueSoon: cl.length,
+      contacts: campContacts(doc).length,
+      lists: campLists(doc).length,
+      campaigns: campCampaigns(doc).length,
+      sentToday: combinedSentToday(doc),
+      cap: safety(doc).dailyCap
+    };
+  }
+
+  function openMessaging() {
+    injectRemindCSS(); injectCampCSS(); injectMsgCSS();
+    var el = document.getElementById("x97-msg");
+    if (!el) { el = document.createElement("div"); el.id = "x97-msg"; el.className = "x97-remind-overlay"; document.body.appendChild(el); wireMsgHub(el); }
+    document.body.classList.add("x97-remind-lock");
+    refreshMsgHub();
+  }
+  function closeMessaging() { var el = document.getElementById("x97-msg"); if (el) el.remove(); if (!remindState.open && !campaignState.open) document.body.classList.remove("x97-remind-lock"); }
+  function refreshMsgHub() { var el = document.getElementById("x97-msg"); if (!el) return; var doc = readDoc(); if (!doc) return; el.innerHTML = msgHubHTML(doc); }
+
+  function msgTile(opts) {
+    return '<button class="x97-msg-tile" data-msg="' + attr(opts.action) + '">' +
+      '<div class="x97-msg-tile-icon' + (opts.tone ? " " + opts.tone : "") + '">' + icon(opts.icon, 20) + '</div>' +
+      '<div class="x97-msg-tile-body"><div class="x97-msg-tile-title">' + esc(opts.title) + '</div><div class="x97-msg-tile-sub">' + esc(opts.sub) + '</div></div>' +
+      (opts.badge != null ? '<span class="x97-msg-tile-badge' + (opts.badgeTone ? " " + opts.badgeTone : "") + '">' + esc(opts.badge) + '</span>' : icon("chevron", 16)) +
+      '</button>';
+  }
+
+  function msgHubHTML(doc) {
+    var s = messagingSummary(doc);
+    var pct = Math.min(100, Math.round(s.sentToday / Math.max(1, s.cap) * 100));
+    var meterCls = s.sentToday >= s.cap ? "bad" : (s.sentToday >= s.cap * 0.8 ? "warn" : "ok");
+    var campaigns = campCampaigns(doc).slice(0, 3);
+    var histHTML = campaigns.length ? campaigns.map(function (c) {
+      var st = c.stats || { sent: 0 };
+      return '<button class="x97-camp-hist" data-msg="report" data-id="' + attr(c.id) + '"><div style="flex:1;min-width:0"><div class="x97-rm-name">' + esc(c.name || "Untitled") + '</div><div class="x97-rm-sub">' + esc(audienceLabel(doc, c.audience)) + ' · ' + (st.sent || 0) + ' sent' + (st.failed ? ' · ' + st.failed + ' failed' : '') + '</div></div>' + icon("chevron") + '</button>';
+    }).join("") : "";
+    return '<div class="x97-remind-panel">' +
+      '<header class="x97-msg-header"><div class="x97-rm-htop"><div><div class="x97-rm-title">' + brandMark(20) + ' Messaging</div><div class="x97-rm-sub">WhatsApp reminders &amp; bulk campaigns, all in one place</div></div><button class="x97-rm-close" data-msg="close">' + icon("close") + '</button></div>' +
+      '<div class="x97-msg-stats">' +
+        '<div class="x97-msg-stat"><b class="' + (s.overdue ? "x97-red" : "") + '">' + s.overdue + '</b><span>To chase</span></div>' +
+        '<div class="x97-msg-stat"><b>' + s.contacts + '</b><span>Contacts</span></div>' +
+        '<div class="x97-msg-stat"><b>' + s.campaigns + '</b><span>Campaigns</span></div>' +
+      '</div>' +
+      '<div class="x97-rm-meter ' + meterCls + '" style="margin-top:2px"><div class="x97-rm-meter-bar" style="width:' + pct + '%"></div><span>Sent today ' + s.sentToday + ' / ' + s.cap + '</span><em class="' + (remindExt.ready ? "ok" : "") + '">' + (remindExt.ready ? "Sender connected" : "Sender off") + '</em></div>' +
+      '</header>' +
+      '<div class="x97-rm-list">' +
+        '<div class="x97-camp-sec">Quick actions</div>' +
+        '<div class="x97-msg-tiles">' +
+          msgTile({ action: "chase", icon: "message", title: "Chase overdue", sub: s.overdue ? "Ready to send" : (s.dueSoon ? s.dueSoon + " due within 7 days" : "Nothing overdue right now"), badge: s.overdue || null, badgeTone: "bad", tone: s.overdue ? "bad" : "" }) +
+          msgTile({ action: "new-campaign", icon: "send", title: "New campaign", sub: "Message a list or import a CSV" }) +
+          msgTile({ action: "contacts", icon: "phone", title: "Contacts & lists", sub: s.contacts + " contacts · " + s.lists + " lists" }) +
+          msgTile({ action: "templates", icon: "edit", title: "Templates", sub: "Reusable messages, saved once" }) +
+        '</div>' +
+        (histHTML ? '<div class="x97-camp-sec" style="margin-top:18px">Recent campaigns</div>' + histHTML : '') +
+      '</div></div>';
+  }
+
+  function wireMsgHub(el) {
+    el.addEventListener("click", function (e) {
+      var b = e.target.closest && e.target.closest("[data-msg]"); if (!b || !el.contains(b)) return;
+      var a = b.dataset.msg;
+      if (a === "close") return closeMessaging();
+      if (a === "chase") { closeMessaging(); openReminders(); return; }
+      if (a === "new-campaign") { closeMessaging(); openCampaigns(true); return; }
+      if (a === "contacts") { closeMessaging(); openCampaigns(); return; }
+      if (a === "templates") return openTemplateManager();
+      if (a === "report") { closeMessaging(); openCampaigns(); onCampAction("report", { dataset: { id: b.dataset.id } }); return; }
+    });
+  }
+
+  function injectMsgCSS() {
+    if (document.getElementById("x97-msg-css")) return;
+    var css =
+      ".x97-msg-card{width:100%;text-align:left;border:0;cursor:pointer;display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}" +
+      ".x97-msg-icon{width:44px;height:44px;min-width:44px;border-radius:13px;display:flex;align-items:center;justify-content:center;background:linear-gradient(145deg,var(--pos),var(--pos2));color:#fff;box-shadow:0 6px 16px rgba(14,117,72,.28)}" +
+      ".x97-msg-body{flex:1;min-width:0}.x97-msg-title{font-size:14.5px;font-weight:800;color:var(--tx)}.x97-msg-sub{font-size:11.5px;color:var(--tx3);margin-top:2px}" +
+      ".x97-msg-pills{display:flex;gap:7px;margin-top:8px;flex-wrap:wrap}" +
+      ".x97-msg-header{padding:16px 15px 13px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(23,164,104,.08),transparent 70%),var(--card)}" +
+      ".x97-msg-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:13px 0 11px}" +
+      ".x97-msg-stat{background:var(--card2);border:1px solid var(--line);border-radius:13px;padding:11px 8px;text-align:center}" +
+      ".x97-msg-stat b{display:block;font-size:22px;font-variant-numeric:tabular-nums;font-weight:800;color:var(--tx)}" +
+      ".x97-msg-stat span{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--tx3);font-weight:800}" +
+      ".x97-msg-tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px}" +
+      "@media(max-width:420px){.x97-msg-tiles{grid-template-columns:1fr}}" +
+      ".x97-msg-tile{display:flex;align-items:center;gap:11px;text-align:left;border:1px solid var(--line);background:var(--card);border-radius:15px;padding:13px;cursor:pointer;transition:border-color .15s,transform .1s}" +
+      ".x97-msg-tile:active{transform:scale(.98)}.x97-msg-tile:hover{border-color:var(--line2)}" +
+      ".x97-msg-tile-icon{width:38px;height:38px;min-width:38px;border-radius:11px;display:flex;align-items:center;justify-content:center;background:var(--card2);color:var(--pos)}" +
+      ".x97-msg-tile-icon.bad{background:rgba(229,72,77,.12);color:var(--neg)}" +
+      ".x97-msg-tile-body{flex:1;min-width:0}.x97-msg-tile-title{font-size:13px;font-weight:800;color:var(--tx)}.x97-msg-tile-sub{font-size:10.5px;color:var(--tx3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+      ".x97-msg-tile-badge{min-width:22px;height:22px;border-radius:99px;background:var(--card2);color:var(--tx2);font-size:11px;font-weight:850;display:flex;align-items:center;justify-content:center;padding:0 6px}" +
+      ".x97-msg-tile-badge.bad{background:var(--neg);color:#fff}" +
+      "@keyframes x97TileIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}" +
+      ".x97-msg-tile{animation:x97TileIn .32s cubic-bezier(.22,1,.36,1) backwards}" +
+      ".x97-msg-tile:nth-child(1){animation-delay:.03s}.x97-msg-tile:nth-child(2){animation-delay:.07s}.x97-msg-tile:nth-child(3){animation-delay:.11s}.x97-msg-tile:nth-child(4){animation-delay:.15s}" +
+      "@keyframes x97StatIn{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}" +
+      ".x97-msg-stat{animation:x97StatIn .3s cubic-bezier(.22,1,.36,1) backwards}" +
+      ".x97-msg-stat:nth-child(1){animation-delay:0s}.x97-msg-stat:nth-child(2){animation-delay:.04s}.x97-msg-stat:nth-child(3){animation-delay:.08s}" +
+      "@media(prefers-reduced-motion:reduce){.x97-msg-tile,.x97-msg-stat{animation:none}}";
+    var s = document.createElement("style"); s.id = "x97-msg-css"; s.textContent = css; document.head.appendChild(s);
+  }
+
+  /* ============================ Bulk messaging / campaigns ============================ */
+
+  function campLists(doc) { return doc.waLists || []; }
+  function campContacts(doc) { return doc.waContacts || []; }
+  function campCampaigns(doc) { return doc.waCampaigns || []; }
+
+  function parseCSV(text) {
+    text = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n+$/, "");
+    if (!text.trim()) return { headers: [], rows: [] };
+    var first = text.split("\n")[0];
+    var delim = ",";
+    if (first.split("\t").length > first.split(",").length) delim = "\t";
+    else if (first.split(";").length > first.split(",").length) delim = ";";
+    var lines = [], cur = [], field = "", inQ = false;
+    for (var i = 0; i < text.length; i++) {
+      var c = text[i];
+      if (inQ) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; } else field += c; }
+      else if (c === '"') inQ = true;
+      else if (c === delim) { cur.push(field); field = ""; }
+      else if (c === "\n") { cur.push(field); lines.push(cur); cur = []; field = ""; }
+      else field += c;
+    }
+    cur.push(field); lines.push(cur);
+    var headers = (lines.shift() || []).map(function (h) { return String(h).trim(); });
+    var rows = lines.filter(function (l) { return l.some(function (v) { return String(v).trim(); }); }).map(function (l) {
+      var o = {}; headers.forEach(function (h, idx) { o[h] = (l[idx] == null ? "" : String(l[idx]).trim()); }); return o;
+    });
+    return { headers: headers, rows: rows };
+  }
+
+  function detectPhoneCol(headers, rows) {
+    var byName = headers.find(function (h) { return /phone|number|tel|whats|mobile|cell|contact|msisdn/i.test(h); });
+    if (byName) return byName;
+    var best = "", bestScore = 0;
+    headers.forEach(function (h) {
+      var digits = 0, n = 0;
+      rows.slice(0, 20).forEach(function (r) { var v = String(r[h] || ""); if (!v) return; n++; if (v.replace(/[^\d]/g, "").length >= 7) digits++; });
+      var score = n ? digits / n : 0;
+      if (score > bestScore) { bestScore = score; best = h; }
+    });
+    return bestScore >= 0.6 ? best : (headers[0] || "");
+  }
+  function detectNameCol(headers, phoneCol) {
+    var byName = headers.find(function (h) { return /name|client|customer|contact|company/i.test(h) && h !== phoneCol; });
+    if (byName) return byName;
+    return headers.find(function (h) { return h !== phoneCol; }) || headers[0] || "";
+  }
+
+  function resolveMessage(tpl, contact) {
+    var s = String(tpl || "");
+    s = s.replace(/\{([^{}|]*\|[^{}]*)\}/g, function (_, body) { var p = body.split("|"); return p[Math.floor(Math.random() * p.length)]; });
+    s = s.replace(/\{\{\s*([\w .\-]+?)\s*\}\}/g, function (_, key) {
+      var k = key.toLowerCase();
+      if (k === "name") return contact.name || "";
+      if (k === "phone") return contact.phone || "";
+      var f = contact.fields || {};
+      for (var fk in f) { if (fk.toLowerCase() === k) return f[fk] == null ? "" : String(f[fk]); }
+      return "";
+    });
+    return s;
+  }
+
+  function audienceContacts(doc, audience) {
+    if (!audience) return [];
+    if (audience.type === "overdue") {
+      return (doc.followups || []).filter(isOpenFollowup).filter(function (x) { var t = timing(x); return (t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7)) && hasWa(x, doc); }).map(function (x) {
+        var t = timing(x), cur = String(x.currency || "UGX").toUpperCase();
+        return { id: "od_" + x.id, name: x.client || "", phone: x.phone || "", fields: { amount: num(x.amount) ? money(x.amount, cur) : "", currency: cur, date: x.expectedBy ? formatDate(x.expectedBy, false) : "", days: (t.days != null && t.days < 0) ? String(Math.abs(t.days)) : "0", project: x.client || "" } };
+      });
+    }
+    if (audience.type === "manual") {
+      return String(campaignState.manualNumbers || "").split(/[\n,;]+/).map(function (s) { return s.trim(); }).filter(Boolean).map(function (s, i) { return { id: "m_" + i + "_" + s.replace(/\D/g, ""), name: "", phone: s, fields: {} }; });
+    }
+    var contacts = campContacts(doc);
+    if (audience.type === "all") return contacts.slice();
+    if (audience.type === "list") return contacts.filter(function (c) { return (c.lists || []).indexOf(audience.id) >= 0; });
+    return [];
+  }
+  function campSafety(doc) {
+    var p = ANTIBLOCK[campaignState.antiblock] || ANTIBLOCK.balanced;
+    return { dailyCap: (doc.settings && doc.settings.waSafety && num(doc.settings.waSafety.dailyCap)) || 200, minDelay: p.min, maxDelay: p.max, batchSize: p.batch, batchBreak: p.brk, quietStart: "", quietEnd: "", warmup: campaignState.antiblock !== "fast", knownOnly: false };
+  }
+  function stampMessage(msg) {
+    if (!campaignState.timestamp) return msg;
+    try { return msg + "\n\n" + new Date().toLocaleString(); } catch (_) { return msg; }
+  }
+  function renderWaFormat(text) {
+    var s = esc(text);
+    s = s.replace(/```([\s\S]+?)```/g, '<code>$1</code>');
+    s = s.replace(/(^|\s)\*(\S[^*]*?\S|\S)\*(?=\s|$)/g, '$1<b>$2</b>');
+    s = s.replace(/(^|\s)_(\S[^_]*?\S|\S)_(?=\s|$)/g, '$1<i>$2</i>');
+    s = s.replace(/(^|\s)~(\S[^~]*?\S|\S)~(?=\s|$)/g, '$1<s>$2</s>');
+    return s.replace(/\n/g, "<br>");
+  }
+  function campTemplates(doc) { return (doc.settings && doc.settings.waTemplates) || []; }
+  function audienceLabel(doc, audience) {
+    if (!audience) return "No audience";
+    if (audience.type === "overdue") return "Overdue clients";
+    if (audience.type === "all") return "All contacts";
+    var l = campLists(doc).find(function (x) { return x.id === audience.id; });
+    return l ? l.name : "List";
+  }
+  function variableKeys(doc) {
+    var c = audienceContacts(doc, campaignState.audience)[0];
+    var keys = ["name", "phone"];
+    if (c && c.fields) Object.keys(c.fields).forEach(function (k) { if (k && keys.indexOf(k) < 0) keys.push(k); });
+    return keys;
+  }
+  function campaignJobs(doc) {
+    var cc = campaignState.countryCode;
+    var jobs = audienceContacts(doc, campaignState.audience).map(function (c) {
+      var phone = waNumber(c.phone, doc, cc);
+      return { id: c.id, cid: c.id, name: c.name, phone: phone, message: stampMessage(resolveMessage(campaignState.message, c)), valid: phone.length >= 10 };
+    }).filter(function (j) { return j.valid; });
+    if (campaignState.dupRemoval) { var seen = {}; jobs = jobs.filter(function (j) { if (seen[j.phone]) return false; seen[j.phone] = 1; return true; }); }
+    return jobs;
+  }
+
+  function persistCampaign() {
+    var id = campaignState.editId || uid("camp");
+    var rec = { id: id, name: (campaignState.name || "Untitled campaign").trim(), message: campaignState.message, audience: campaignState.audience, mode: campaignState.mode, createdAt: campaignState.createdAt || new Date().toISOString() };
+    updateDoc(function (doc) {
+      doc.waCampaigns = doc.waCampaigns || [];
+      var i = doc.waCampaigns.findIndex(function (c) { return c.id === id; });
+      if (i >= 0) doc.waCampaigns[i] = Object.assign({}, doc.waCampaigns[i], rec);
+      else doc.waCampaigns.unshift(Object.assign({ log: [], stats: { sent: 0, failed: 0, skipped: 0 } }, rec));
+    }, "camp-save");
+    campaignState.editId = id; campaignState.createdAt = rec.createdAt;
+    return id;
+  }
+  function logCampaignResult(campaignId, cid, status) {
+    updateDoc(function (doc) {
+      var c = (doc.waCampaigns || []).find(function (x) { return x.id === campaignId; });
+      if (!c) return;
+      c.log = c.log || []; c.stats = c.stats || { sent: 0, failed: 0, skipped: 0 };
+      var job = campaignState.jobsById && campaignState.jobsById[cid];
+      c.log = c.log.filter(function (e) { return e.cid !== cid; });
+      c.log.push({ cid: cid, name: job ? job.name : "", phone: job ? job.phone : "", status: status, at: new Date().toISOString() });
+      var s = { sent: 0, skipped: 0, failed: 0 };
+      c.log.forEach(function (e) { if (e.status === "sent") s.sent++; else if (e.status === "skipped") s.skipped++; else s.failed++; });
+      c.stats = s;
+    }, "camp-log");
+  }
+
+  function startCampaign(mode) {
+    var doc = readDoc();
+    if (!campaignState.message.trim()) { toast("Write a message first", "error"); return; }
+    var jobs = campaignJobs(doc);
+    if (!jobs.length) { toast("No valid numbers in this audience", "error"); return; }
+    var id = persistCampaign();
+    campaignState.runId = id; campaignState.jobs = jobs; campaignState.progress = {};
+    campaignState.jobsById = {}; jobs.forEach(function (j) { campaignState.jobsById[j.id] = j; });
+    campaignState.oneTapIdx = 0;
+    if (mode === "auto") {
+      if (!remindExt.ready) { toast("Install the 97 Sender extension for Auto", "error"); return; }
+      jobs.forEach(function (j) { campaignState.progress[j.id] = "queued"; });
+      campaignState.sending = true;
+      window.postMessage({ source: "x97-wa-app", type: "enqueue", jobs: jobs.map(function (j) { return { id: j.id, phone: j.phone, name: j.name, message: j.message }; }), safety: campSafety(doc) }, "*");
+      toast("Sending " + jobs.length + " — keep WhatsApp Web open", "");
+      campaignState.view = "report"; refreshCamp();
+    } else {
+      campaignState.view = "report"; refreshCamp();
+      sendCampaignOneTapNext();
+    }
+  }
+  function sendCampaignOneTapNext() {
+    var jobs = campaignState.jobs || [];
+    while (campaignState.oneTapIdx < jobs.length && campaignState.progress[jobs[campaignState.oneTapIdx].id] === "sent") campaignState.oneTapIdx++;
+    if (campaignState.oneTapIdx >= jobs.length) { toast("Campaign complete", ""); refreshCamp(); return; }
+    var job = jobs[campaignState.oneTapIdx];
+    window.open("https://wa.me/" + job.phone + "?text=" + encodeURIComponent(job.message), "_blank");
+    campaignState.progress[job.id] = "sent";
+    logCampaignResult(campaignState.runId, job.id, "sent");
+    campaignState.oneTapIdx++;
+    refreshCamp();
+  }
+  function handleCampaignProgress(d) {
+    campaignState.progress[d.id] = d.status;
+    if (d.status === "sent" || d.status === "skipped" || d.status === "error") logCampaignResult(campaignState.runId, d.id, d.status);
+    if (campaignState.open) refreshCamp();
+  }
+
+  function importContacts(parsed, nameCol, phoneCol, listName) {
+    var doc = readDoc(), added = 0, skipped = 0;
+    var listId = uid("list");
+    updateDoc(function (d) {
+      d.waLists = d.waLists || []; d.waContacts = d.waContacts || [];
+      d.waLists.unshift({ id: listId, name: (listName || "Imported list").trim(), createdAt: new Date().toISOString() });
+      var byPhone = {}; d.waContacts.forEach(function (c) { var k = waNumber(c.phone, d); if (k) byPhone[k] = c; });
+      parsed.rows.forEach(function (r) {
+        var phoneRaw = r[phoneCol] || ""; var norm = waNumber(phoneRaw, d);
+        if (norm.length < 10) { skipped++; return; }
+        var fields = {}; Object.keys(r).forEach(function (h) { if (h !== phoneCol) fields[h] = r[h]; });
+        var name = (r[nameCol] || "").trim() || phoneRaw;
+        var existing = byPhone[norm];
+        if (existing) { existing.lists = existing.lists || []; if (existing.lists.indexOf(listId) < 0) existing.lists.push(listId); existing.fields = Object.assign({}, fields, existing.fields); existing.name = existing.name || name; }
+        else { var nc = { id: uid("ct"), name: name, phone: phoneRaw, fields: fields, lists: [listId] }; d.waContacts.push(nc); byPhone[norm] = nc; }
+        added++;
+      });
+    }, "camp-import");
+    return { listId: listId, added: added, skipped: skipped };
+  }
+
+  function downloadCSV(filename, csv) {
+    try {
+      var blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a"); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+    } catch (_) { toast("Could not export", "error"); }
+  }
+  function exportCampaignCSV(id) {
+    var doc = readDoc(); var c = campCampaigns(doc).find(function (x) { return x.id === id; }); if (!c) return;
+    var rows = [["name", "phone", "status", "at"]].concat((c.log || []).map(function (e) { return [e.name, e.phone, e.status, e.at]; }));
+    var csv = rows.map(function (r) { return r.map(function (v) { v = String(v == null ? "" : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(","); }).join("\n");
+    downloadCSV((c.name || "campaign").replace(/[^\w]+/g, "-").toLowerCase() + "-report.csv", csv);
+  }
+
+  function openCampaigns(startCompose) {
+    injectRemindCSS(); injectCampCSS();
+    campaignState.open = true; campaignState.view = "home"; campaignState.progress = {}; campaignState.sending = false;
+    var el = document.getElementById("x97-camp");
+    if (!el) { el = document.createElement("div"); el.id = "x97-camp"; el.className = "x97-remind-overlay"; document.body.appendChild(el); wireCamp(el); }
+    document.body.classList.add("x97-remind-lock");
+    refreshCamp();
+    if (startCompose) onCampAction("new");
+  }
+  function closeCampaigns() { campaignState.open = false; var el = document.getElementById("x97-camp"); if (el) el.remove(); if (!remindState.open && !document.getElementById("x97-msg")) document.body.classList.remove("x97-remind-lock"); }
+  var campRefreshing = false;
+  function refreshCamp() {
+    if (campRefreshing) return;
+    var el = document.getElementById("x97-camp"); if (!el || !campaignState.open) return;
+    var doc = readDoc(); if (!doc) return;
+    var active = document.activeElement; if (active && el.contains(active) && active.blur) { try { active.blur(); } catch (_) {} }
+    campRefreshing = true;
+    try { el.innerHTML = campOverlayHTML(doc); } finally { campRefreshing = false; }
+  }
+
+  function campOverlayHTML(doc) {
+    var v = campaignState.view;
+    var head = function (title, sub, back, backLabel) {
+      return '<header class="x97-rm-header"><div class="x97-rm-htop"><div>' + (back ? '<button class="x97-rm-link" data-camp="' + back + '" style="margin-bottom:4px">‹ ' + esc(backLabel || "Back") + '</button>' : '') + '<div class="x97-rm-title">' + brandMark(16) + ' ' + esc(title) + '</div><div class="x97-rm-sub">' + esc(sub) + '</div></div><button class="x97-rm-close" data-camp="close">' + icon("close") + '</button></div></header>';
+    };
+    var inner;
+    if (v === "import") inner = head("Import contacts", "Paste a CSV or choose a file", "home") + campImportHTML(doc);
+    else if (v === "compose") inner = head(campaignState.editId ? "Edit campaign" : "New campaign", "Compose and send", "home") + campComposeHTML(doc);
+    else if (v === "report") inner = head(campaignState.name || "Campaign", "Delivery report", campaignState.sending ? "" : "home") + campReportHTML(doc);
+    else inner = head("Campaigns", campContacts(doc).length + " contacts · " + campLists(doc).length + " lists", "hub", "Messaging") + campHomeHTML(doc);
+    return '<div class="x97-remind-panel">' + inner + '</div>';
+  }
+
+  /* ---- Google Contacts import (client-side OAuth, no server) ---- */
+
+  var GOOGLE_SCOPE = "https://www.googleapis.com/auth/contacts.readonly";
+  var googleTokenClient = null;
+
+  function loadGIS() {
+    return new Promise(function (resolve, reject) {
+      if (window.google && window.google.accounts && window.google.accounts.oauth2) return resolve();
+      var existing = document.getElementById("x97-gis-script");
+      if (existing) { existing.addEventListener("load", function () { resolve(); }); existing.addEventListener("error", reject); return; }
+      var s = document.createElement("script");
+      s.id = "x97-gis-script"; s.src = "https://accounts.google.com/gsi/client"; s.async = true; s.defer = true;
+      s.onload = function () { resolve(); }; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  function fetchGoogleContacts(accessToken) {
+    var all = [];
+    function page(pageToken) {
+      var url = "https://people.googleapis.com/v1/people/me/connections?personFields=names,phoneNumbers&pageSize=1000" + (pageToken ? "&pageToken=" + encodeURIComponent(pageToken) : "");
+      return fetch(url, { headers: { Authorization: "Bearer " + accessToken } }).then(function (r) {
+        return r.json().then(function (data) {
+          if (!r.ok) throw new Error((data.error && data.error.message) || ("Google API error " + r.status));
+          (data.connections || []).forEach(function (p) {
+            var name = (p.names && p.names[0] && p.names[0].displayName) || "";
+            (p.phoneNumbers || []).forEach(function (ph) { if (ph.value) all.push({ name: name, phone: ph.value }); });
+          });
+          return data.nextPageToken ? page(data.nextPageToken) : all;
+        });
+      });
+    }
+    return page("");
+  }
+
+  function connectGoogleContacts() {
+    var doc = readDoc();
+    var clientId = (doc.settings && doc.settings.googleClientId) || "";
+    if (!clientId) return openGoogleSetup();
+    toast("Opening Google sign-in…", "");
+    loadGIS().then(function () {
+      googleTokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: GOOGLE_SCOPE,
+        callback: function (resp) {
+          if (!resp || resp.error) { toast("Google sign-in was cancelled or failed" + (resp && resp.error ? " (" + resp.error + ")" : ""), "error"); return; }
+          toast("Fetching your Google contacts…", "");
+          fetchGoogleContacts(resp.access_token).then(function (contacts) {
+            if (!contacts.length) { toast("No phone numbers found in your Google contacts", "error"); return; }
+            var parsed = { headers: ["name", "phone"], rows: contacts };
+            var res = importContacts(parsed, "name", "phone", "Google Contacts");
+            toast(res.added + " imported from Google" + (res.skipped ? ", " + res.skipped + " skipped (no number)" : ""), "");
+            if (campaignState.open) refreshCamp();
+            refreshMsgHub();
+          }).catch(function (err) { toast("Could not read Google contacts: " + err.message, "error"); });
+        }
+      });
+      googleTokenClient.requestAccessToken({ prompt: "" });
+    }).catch(function () { toast("Could not load Google sign-in — check your connection", "error"); });
+  }
+
+  function openGoogleSetup() {
+    var doc = readDoc();
+    var body = '<div class="x97-help" style="margin-bottom:12px">Connects your real Google Contacts (name + phone) into a list here. This needs a free, one-time <b>Google API Client ID</b> for your own copy of the app — same idea as the Anthropic key for the AI Copilot. See the setup guide, then paste the Client ID below.</div>' +
+      '<form id="x97-google-form" data-x97-form="google-setup">' +
+      field("Google OAuth Client ID", '<input class="x97-input" name="clientId" value="' + attr((doc.settings && doc.settings.googleClientId) || "") + '" placeholder="xxxxxxxxxxxx.apps.googleusercontent.com">', "Ends in .apps.googleusercontent.com — from Google Cloud Console → Credentials.") +
+      '</form>';
+    var foot = '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button><button class="x97-btn primary" type="submit" form="x97-google-form">' + icon("check") + ' Save &amp; connect</button>';
+    openSheet("Connect Google Contacts", body, foot);
+  }
+  function submitGoogleSetup(form) {
+    var v = formValues(form), clientId = (v.clientId || "").trim();
+    updateDoc(function (doc) { doc.settings = doc.settings || {}; doc.settings.googleClientId = clientId; }, "google-setup");
     closeSheet();
+    if (clientId) connectGoogleContacts();
+  }
+
+  function campHomeHTML(doc) {
+    var lists = campLists(doc), campaigns = campCampaigns(doc);
+    var od = audienceContacts(doc, { type: "overdue" }).length;
+    var listRows = lists.map(function (l) {
+      var n = campContacts(doc).filter(function (c) { return (c.lists || []).indexOf(l.id) >= 0; }).length;
+      return '<div class="x97-camp-list"><div class="x97-camp-list-main" data-camp="use-list" data-id="' + attr(l.id) + '"><div class="x97-rm-name">' + esc(l.name) + '</div><div class="x97-rm-sub">' + n + ' contacts</div></div><button class="x97-rm-tool" data-camp="del-list" data-id="' + attr(l.id) + '">' + icon("trash", 13) + '</button></div>';
+    }).join("");
+    var histRows = campaigns.length ? campaigns.map(function (c) {
+      var st = c.stats || { sent: 0 }, total = (c.log || []).length;
+      return '<button class="x97-camp-hist" data-camp="report" data-id="' + attr(c.id) + '"><div style="flex:1;min-width:0"><div class="x97-rm-name">' + esc(c.name || "Untitled") + '</div><div class="x97-rm-sub">' + esc(audienceLabel(doc, c.audience)) + ' · ' + (st.sent || 0) + ' sent' + (st.failed ? ' · ' + st.failed + ' failed' : '') + '</div></div>' + icon("chevron") + '</button>';
+    }).join("") : '<div class="x97-empty x97-brand-empty" style="padding:18px 6px">' + brandMark(32, "x97-brand-watermark") + '<div class="x97-rm-sub">No campaigns yet.</div></div>';
+    return '<div class="x97-rm-list">' +
+      '<button class="x97-btn primary" data-camp="new" style="width:100%;justify-content:center;margin-bottom:14px">' + icon("plus") + ' New campaign</button>' +
+      '<div class="x97-camp-sec">Audiences</div>' +
+      '<div class="x97-camp-list"><div class="x97-camp-list-main" data-camp="use-overdue"><div class="x97-rm-name">Overdue clients</div><div class="x97-rm-sub">Auto-built from your finances · ' + od + ' with a number</div></div><span class="x97-pill">smart</span></div>' +
+      listRows +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="x97-rm-tool" data-camp="import">' + icon("plus", 13) + ' Import contacts (CSV)</button><button class="x97-rm-tool" data-camp="google-connect"><span class="x97-google-g">G</span> Connect Google Contacts</button>' + (campContacts(doc).length ? '<button class="x97-rm-tool" data-camp="match-numbers">' + icon("phone", 13) + ' Match against overdue clients</button>' : '') + '</div>' +
+      '<div class="x97-camp-sec" style="margin-top:18px">Campaigns</div>' + histRows +
+      '</div>';
+  }
+
+  function campImportHTML(doc) {
+    var parsed = campaignState.importText ? parseCSV(campaignState.importText) : { headers: [], rows: [] };
+    var mapping = "";
+    if (parsed.headers.length) {
+      var phoneCol = campaignState.phoneCol || detectPhoneCol(parsed.headers, parsed.rows);
+      var nameCol = campaignState.nameCol || detectNameCol(parsed.headers, phoneCol);
+      var valid = parsed.rows.filter(function (r) { return waNumber(r[phoneCol] || "", doc).length >= 10; }).length;
+      var opts = function (sel) { return parsed.headers.map(function (h) { return option(h, h, sel); }).join(""); };
+      mapping = '<div class="x97-camp-map"><div class="x97-fields-2">' +
+        field("Name column", '<select class="x97-select x97-camp-namecol">' + opts(nameCol) + '</select>') +
+        field("Phone column", '<select class="x97-select x97-camp-phonecol">' + opts(phoneCol) + '</select>') + '</div>' +
+        '<div class="x97-help"><b>' + parsed.rows.length + '</b> rows · <b>' + valid + '</b> valid WhatsApp numbers detected.</div></div>';
+    }
+    return '<div class="x97-rm-list">' +
+      field("List name", '<input class="x97-input x97-camp-listname" value="' + attr(campaignState.listName || "") + '" placeholder="e.g. October leads">') +
+      '<label class="x97-rm-tool" style="display:inline-flex;margin-bottom:8px;cursor:pointer">' + icon("plus", 13) + ' Choose CSV file<input type="file" class="x97-camp-file" accept=".csv,.tsv,.txt,text/csv" style="display:none"></label>' +
+      field("…or paste rows", '<textarea class="x97-textarea x97-camp-import" rows="6" placeholder="name,phone,amount&#10;Apollo,0772123456,500000">' + esc(campaignState.importText || "") + '</textarea>', "First row must be column headers. Comma, tab or semicolon separated.") +
+      mapping +
+      '<button class="x97-btn primary" data-camp="do-import" ' + (parsed.rows.length ? "" : "disabled") + ' style="width:100%;justify-content:center;margin-top:6px">' + icon("check") + ' Import ' + (parsed.rows.length ? parsed.rows.length + " contacts" : "") + '</button>' +
+      '</div>';
+  }
+
+  function campComposeHTML(doc) {
+    var contacts = audienceContacts(doc, campaignState.audience);
+    var valid = campaignJobs(doc).length;
+    var lists = campLists(doc);
+    var audVal = campaignState.audience.type + ":" + (campaignState.audience.id || "");
+    var audOpts = option("overdue:", "Overdue clients (" + audienceContacts(doc, { type: "overdue" }).length + ")", audVal) +
+      lists.map(function (l) { var n = campContacts(doc).filter(function (c) { return (c.lists || []).indexOf(l.id) >= 0; }).length; return option("list:" + l.id, l.name + " (" + n + ")", audVal); }).join("") +
+      option("all:", "All contacts (" + campContacts(doc).length + ")", audVal) +
+      option("manual:", "Type numbers manually", audVal);
+
+    /* ---- Message block ---- */
+    var tplMenu = campaignState.showTemplates ? '<div class="x97-ws-menu">' +
+      (campTemplates(doc).length ? campTemplates(doc).map(function (t) { return '<button class="x97-ws-menu-item" data-camp="load-tpl" data-id="' + attr(t.id) + '">' + esc(t.name) + '</button>'; }).join("") : '<div class="x97-ws-menu-empty">No saved templates yet</div>') +
+      '<button class="x97-ws-menu-item save" data-camp="save-tpl">＋ Save current as template</button></div>' : "";
+    var varMenu = campaignState.showVars ? '<div class="x97-ws-menu">' + variableKeys(doc).map(function (k) { return '<button class="x97-ws-menu-item" data-camp="var" data-var="' + attr(k) + '">{{' + esc(k) + '}}</button>'; }).join("") + '<button class="x97-ws-menu-item" data-camp="var" data-var="__spin">{Hi|Hello|Hey} spin</button></div>' : "";
+    var emojiMenu = campaignState.showEmoji ? '<div class="x97-ws-emoji">' + EMOJIS.map(function (e) { return '<button class="x97-ws-emoji-b" data-camp="emoji" data-e="' + attr(e) + '">' + e + '</button>'; }).join("") + '</div>' : "";
+    var toolbar = '<div class="x97-ws-tools">' +
+      '<button class="x97-ws-tool" data-camp="attach" title="Attach">' + icon("plus", 14) + ' Attachment</button>' +
+      '<div class="x97-ws-tw"><button class="x97-ws-tool ' + (campaignState.showTemplates ? "on" : "") + '" data-camp="tpl-menu">' + icon("edit", 14) + ' Templates ▾</button>' + tplMenu + '</div>' +
+      '<div class="x97-ws-tw"><button class="x97-ws-tool ' + (campaignState.showVars ? "on" : "") + '" data-camp="var-menu">@value ▾</button>' + varMenu + '</div>' +
+      '<button class="x97-ws-b" data-camp="fmt" data-m="*" title="Bold"><b>B</b></button>' +
+      '<button class="x97-ws-b" data-camp="fmt" data-m="_" title="Italic"><i>I</i></button>' +
+      '<button class="x97-ws-b" data-camp="fmt" data-m="~" title="Strikethrough"><s>S</s></button>' +
+      '<button class="x97-ws-b" data-camp="fmt" data-m="```" title="Monospace">&lt;/&gt;</button>' +
+      '<div class="x97-ws-tw"><button class="x97-ws-b ' + (campaignState.showEmoji ? "on" : "") + '" data-camp="emoji-menu" title="Emoji">😀</button>' + emojiMenu + '</div>' +
+      '<button class="x97-ws-tool ' + (campaignState.showPreview ? "on" : "") + '" data-camp="preview-toggle" style="margin-left:auto">' + icon("send", 13) + ' Format test</button>' +
+      '</div>';
+    var preview = "";
+    if (campaignState.showPreview && contacts.length) {
+      var pc = contacts[campaignState.previewIdx % contacts.length];
+      preview = '<div class="x97-camp-preview"><div class="x97-rm-sub" style="margin-bottom:6px">Preview → <b>' + esc(pc.name || pc.phone) + '</b> <button class="x97-rm-link" data-camp="shuffle">shuffle ↻</button></div><div class="x97-ws-bubble">' + renderWaFormat(stampMessage(resolveMessage(campaignState.message, pc))) + '</div><div class="x97-ws-signoff">' + brandMark(13) + ' Sent via 97 LIVE Messaging</div></div>';
+    }
+    var msgBlock = '<div class="x97-ws-card"><div class="x97-ws-h">' + icon("edit", 15) + ' Message</div>' + toolbar +
+      '<textarea class="x97-textarea x97-camp-msg" rows="5" placeholder="Enter message  ·  Hi {{name}}, …  ·  {Hi|Hello} adds variety">' + esc(campaignState.message) + '</textarea>' + preview + '</div>';
+
+    /* ---- Antiblock block ---- */
+    var ab = ANTIBLOCK[campaignState.antiblock] || ANTIBLOCK.balanced;
+    var seg = '<div class="x97-ws-seg">' + ["conservative", "balanced", "fast"].map(function (k) { return '<button data-camp="antiblock" data-k="' + k + '" class="' + (campaignState.antiblock === k ? "on" : "") + '">' + ANTIBLOCK[k].label + '</button>'; }).join("") + '</div>';
+    var detail = campaignState.showDetail ? '<div class="x97-ws-detail">' +
+      '<div class="x97-ws-note">' + ab.note + '</div>' +
+      field("Country code (for numbers without one)", '<input class="x97-input x97-camp-cc" inputmode="numeric" value="' + attr(campaignState.countryCode || waCountry(doc)) + '" placeholder="256">') +
+      '<label class="x97-ws-switch"><input type="checkbox" class="x97-camp-dup" ' + (campaignState.dupRemoval ? "checked" : "") + '><span><b>Duplicate removal</b><br>Skip repeated numbers to avoid double-messaging.</span></label>' +
+      '<label class="x97-ws-switch"><input type="checkbox" class="x97-camp-ts" ' + (campaignState.timestamp ? "checked" : "") + '><span><b>Add timestamp</b><br>Append the date &amp; time to each message.</span></label>' +
+      '</div>' : "";
+    var antiblock = '<div class="x97-ws-card"><div class="x97-ws-h"><span>' + icon("shield", 15) + ' Antiblock: <b>' + ab.label + '</b></span><button class="x97-rm-link" data-camp="detail-toggle">' + (campaignState.showDetail ? "Hide detail ▲" : "Show detail ▼") + '</button></div>' + seg + detail + '</div>';
+
+    /* ---- Phone Numbers block ---- */
+    var recipInner = campaignState.audience.type === "manual"
+      ? '<textarea class="x97-textarea x97-camp-manual" rows="4" placeholder="One number per line (with or without country code)&#10;0772123456&#10;+256700111222">' + esc(campaignState.manualNumbers || "") + '</textarea>'
+      : field("Send to", '<select class="x97-select x97-camp-aud">' + audOpts + '</select>');
+    var recipients = '<div class="x97-ws-card"><div class="x97-ws-h"><span>' + icon("phone", 15) + ' Phone Numbers</span><button class="x97-ws-tool" data-camp="import">' + icon("plus", 13) + ' Import Contacts</button></div>' +
+      (campaignState.audience.type === "manual" ? '<div class="x97-rm-sub" style="margin:0 0 8px"><button class="x97-rm-link" data-camp="use-saved">‹ use a saved list instead</button></div>' : "") +
+      recipInner +
+      '<div class="x97-ws-count"><b class="x97-green">' + valid + '</b> recipient' + (valid === 1 ? "" : "s") + ' will receive this' + (contacts.length > valid ? ' · ' + (contacts.length - valid) + ' skipped (no number or duplicate)' : '') + '</div></div>';
+
+    /* ---- Action bar ---- */
+    var modeSeg = '<div class="x97-ws-seg small"><button data-camp="mode-onetap" class="' + (campaignState.mode === "onetap" ? "on" : "") + '">One-tap</button><button data-camp="mode-auto" class="' + (campaignState.mode === "auto" ? "on" : "") + '">Auto</button></div>';
+    var sendBtn = campaignState.mode === "auto"
+      ? (remindExt.ready ? '<button class="x97-btn primary" data-camp="send" ' + (valid ? "" : "disabled") + '>' + icon("send") + ' Send now (' + valid + ')</button>' : '<button class="x97-btn primary" disabled style="opacity:.55">Open WhatsApp Web first</button>')
+      : '<button class="x97-btn primary" data-camp="send" ' + (valid ? "" : "disabled") + '>' + icon("send") + ' Send now (' + valid + ')</button>';
+
+    return '<div class="x97-rm-list">' +
+      field("Campaign name", '<input class="x97-input x97-camp-name" value="' + attr(campaignState.name || "") + '" placeholder="e.g. October promo">') +
+      msgBlock + antiblock + recipients +
+      '<div class="x97-ws-modebar"><span class="x97-rm-sub">Send mode</span>' + modeSeg + '</div>' +
+      '<div class="x97-ws-actions"><button class="x97-btn" data-camp="reset-compose">' + icon("trash", 14) + ' Reset</button><button class="x97-btn" data-camp="save">' + icon("check", 14) + ' Save</button>' + sendBtn + '</div>' +
+      '</div>';
+  }
+
+  function campReportHTML(doc) {
+    var c = campaignState.runId ? campCampaigns(doc).find(function (x) { return x.id === campaignState.runId; }) : (campaignState.editId ? campCampaigns(doc).find(function (x) { return x.id === campaignState.editId; }) : null);
+    var jobs = campaignState.jobs || [];
+    var st = (c && c.stats) || { sent: 0, failed: 0, skipped: 0 };
+    var total = jobs.length || (c ? (c.log || []).length : 0);
+    var progressing = campaignState.sending || (jobs.length && campaignState.oneTapIdx < jobs.length);
+    var rows;
+    if (jobs.length) {
+      rows = jobs.map(function (j) { var p = campaignState.progress[j.id]; return '<div class="x97-camp-logrow"><div style="flex:1;min-width:0"><div class="x97-rm-name">' + esc(j.name || j.phone) + '</div><div class="x97-rm-sub">' + esc(j.phone) + '</div></div><span class="x97-pill ' + (p === "sent" ? "good" : p === "error" ? "bad" : p ? "warn" : "") + '">' + esc(p ? progLabel(p) : "waiting") + '</span></div>'; }).join("");
+    } else if (c) {
+      rows = (c.log || []).map(function (e) { return '<div class="x97-camp-logrow"><div style="flex:1;min-width:0"><div class="x97-rm-name">' + esc(e.name || e.phone) + '</div><div class="x97-rm-sub">' + esc(e.phone) + '</div></div><span class="x97-pill ' + (e.status === "sent" ? "good" : e.status === "error" ? "bad" : "warn") + '">' + esc(progLabel(e.status)) + '</span></div>'; }).join("") || '<div class="x97-rm-sub">No sends logged yet.</div>';
+    } else rows = '<div class="x97-rm-sub">Nothing to show.</div>';
+    var tiles = '<div class="x97-camp-tiles"><div><b class="x97-green">' + (st.sent || 0) + '</b><span>Sent</span></div><div><b>' + total + '</b><span>Total</span></div><div><b class="' + (st.failed ? "x97-red" : "") + '">' + (st.failed || 0) + '</b><span>Failed</span></div><div><b>' + (st.skipped || 0) + '</b><span>Skipped</span></div></div>';
+    var actions = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">' +
+      (campaignState.mode !== "auto" && progressing ? '<button class="x97-btn primary" data-camp="onetap-next">' + icon("message") + ' Open next in WhatsApp</button>' : '') +
+      (c ? '<button class="x97-btn" data-camp="export" data-id="' + attr(c.id) + '">' + icon("arrow") + ' Export CSV</button>' : '') + '</div>';
+    return '<div class="x97-rm-list">' + tiles + actions + '<div class="x97-camp-sec" style="margin-top:16px">Recipients</div>' + rows + '</div>';
+  }
+
+  function insertAtCursor(token) {
+    var ta = document.querySelector("#x97-camp .x97-camp-msg");
+    if (ta) {
+      var s = ta.selectionStart == null ? ta.value.length : ta.selectionStart, e = ta.selectionEnd == null ? ta.value.length : ta.selectionEnd;
+      ta.value = ta.value.slice(0, s) + token + ta.value.slice(e);
+      campaignState.message = ta.value; ta.focus(); var pos = s + token.length; ta.setSelectionRange(pos, pos);
+      var bub = document.querySelector("#x97-camp .x97-ws-bubble"); if (bub) { var doc = readDoc(); var cs = audienceContacts(doc, campaignState.audience); if (cs.length) bub.innerHTML = renderWaFormat(stampMessage(resolveMessage(campaignState.message, cs[campaignState.previewIdx % cs.length]))); }
+    } else { campaignState.message += token; refreshCamp(); }
+  }
+  function insertVar(key) { insertAtCursor(key === "__spin" ? "{Hi|Hello|Hey}" : "{{" + key + "}}"); }
+  function wrapSelection(marker) {
+    var ta = document.querySelector("#x97-camp .x97-camp-msg"); if (!ta) return;
+    var s = ta.selectionStart, e = ta.selectionEnd, sel = ta.value.slice(s, e) || "text";
+    ta.value = ta.value.slice(0, s) + marker + sel + marker + ta.value.slice(e);
+    campaignState.message = ta.value; ta.focus();
+    ta.setSelectionRange(s + marker.length, s + marker.length + sel.length);
+  }
+
+  function wireCamp(el) {
+    el.addEventListener("click", function (e) {
+      var b = e.target.closest && e.target.closest("[data-camp]"); if (!b || !el.contains(b)) return;
+      onCampAction(b.dataset.camp, b);
+    });
+    el.addEventListener("input", function (e) {
+      var t = e.target;
+      if (t.classList.contains("x97-camp-msg")) { campaignState.message = t.value; var bub = el.querySelector(".x97-ws-bubble"); if (bub) { var doc = readDoc(); var cs = audienceContacts(doc, campaignState.audience); if (cs.length) bub.innerHTML = renderWaFormat(stampMessage(resolveMessage(campaignState.message, cs[campaignState.previewIdx % cs.length]))); } return; }
+      if (t.classList.contains("x97-camp-name")) { campaignState.name = t.value; return; }
+      if (t.classList.contains("x97-camp-manual")) { campaignState.manualNumbers = t.value; return; }
+      if (t.classList.contains("x97-camp-cc")) { campaignState.countryCode = t.value; return; }
+      if (t.classList.contains("x97-camp-import")) { campaignState.importText = t.value; campaignState.nameCol = ""; campaignState.phoneCol = ""; refreshCamp(); return; }
+      if (t.classList.contains("x97-camp-listname")) { campaignState.listName = t.value; return; }
+    });
+    el.addEventListener("change", function (e) {
+      var t = e.target;
+      if (t.classList.contains("x97-camp-aud")) { var parts = t.value.split(":"); campaignState.audience = { type: parts[0], id: parts[1] || "" }; campaignState.previewIdx = 0; refreshCamp(); return; }
+      if (t.classList.contains("x97-camp-namecol")) { campaignState.nameCol = t.value; return; }
+      if (t.classList.contains("x97-camp-phonecol")) { campaignState.phoneCol = t.value; refreshCamp(); return; }
+      if (t.classList.contains("x97-camp-dup")) { campaignState.dupRemoval = t.checked; return; }
+      if (t.classList.contains("x97-camp-ts")) { campaignState.timestamp = t.checked; if (campaignState.showPreview) refreshCamp(); return; }
+      if (t.classList.contains("x97-camp-cc")) { campaignState.countryCode = t.value; refreshCamp(); return; }
+      if (t.classList.contains("x97-camp-manual")) { campaignState.manualNumbers = t.value; refreshCamp(); return; }
+      if (t.classList.contains("x97-camp-file")) {
+        var f = t.files && t.files[0]; if (!f) return;
+        var r = new FileReader(); r.onload = function () { campaignState.importText = String(r.result || ""); campaignState.nameCol = ""; campaignState.phoneCol = ""; if (!campaignState.listName) campaignState.listName = f.name.replace(/\.[^.]+$/, ""); refreshCamp(); }; r.readAsText(f); return;
+      }
+    });
+  }
+
+  function onCampAction(a, node) {
+    var doc = readDoc();
+    if (a === "close") return closeCampaigns();
+    if (a === "hub") { closeCampaigns(); openMessaging(); return; }
+    if (a === "home") { campaignState.view = "home"; campaignState.jobs = null; return refreshCamp(); }
+    if (a === "import") { campaignState.view = "import"; return refreshCamp(); }
+    if (a === "google-connect") return connectGoogleContacts();
+    if (a === "match-numbers") return openNumbersManager();
+    if (a === "new") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: audienceContacts(doc, { type: "overdue" }).length ? "overdue" : "all", id: "" }; campaignState.previewIdx = 0; return refreshCamp(); }
+    if (a === "use-list") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: "list", id: node.dataset.id }; campaignState.previewIdx = 0; return refreshCamp(); }
+    if (a === "use-overdue") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: "overdue", id: "" }; campaignState.previewIdx = 0; return refreshCamp(); }
+    if (a === "del-list") { if (confirm("Delete this list? Contacts stay, only the grouping is removed.")) { updateDoc(function (d) { d.waLists = (d.waLists || []).filter(function (l) { return l.id !== node.dataset.id; }); (d.waContacts || []).forEach(function (c) { c.lists = (c.lists || []).filter(function (id) { return id !== node.dataset.id; }); }); }, "camp-dellist"); refreshCamp(); } return; }
+    if (a === "var") { insertVar(node.dataset.var); campaignState.showVars = false; return refreshCamp(); }
+    if (a === "emoji") return insertAtCursor(node.dataset.e);
+    if (a === "fmt") return wrapSelection(node.dataset.m);
+    if (a === "shuffle") { campaignState.previewIdx++; return refreshCamp(); }
+    if (a === "mode-onetap") { campaignState.mode = "onetap"; return refreshCamp(); }
+    if (a === "mode-auto") { campaignState.mode = "auto"; return refreshCamp(); }
+    if (a === "antiblock") { campaignState.antiblock = node.dataset.k; return refreshCamp(); }
+    if (a === "detail-toggle") { campaignState.showDetail = !campaignState.showDetail; return refreshCamp(); }
+    if (a === "preview-toggle") { campaignState.showPreview = !campaignState.showPreview; return refreshCamp(); }
+    if (a === "tpl-menu") { campaignState.showTemplates = !campaignState.showTemplates; campaignState.showVars = false; campaignState.showEmoji = false; return refreshCamp(); }
+    if (a === "var-menu") { campaignState.showVars = !campaignState.showVars; campaignState.showTemplates = false; campaignState.showEmoji = false; return refreshCamp(); }
+    if (a === "emoji-menu") { campaignState.showEmoji = !campaignState.showEmoji; campaignState.showVars = false; campaignState.showTemplates = false; return refreshCamp(); }
+    if (a === "load-tpl") { var t = campTemplates(doc).find(function (x) { return x.id === node.dataset.id; }); if (t) { campaignState.message = t.body; } campaignState.showTemplates = false; return refreshCamp(); }
+    if (a === "save-tpl") { var nm = (prompt("Name this template:", campaignState.name || "My template") || "").trim(); if (nm) { updateDoc(function (d) { d.settings = d.settings || {}; d.settings.waTemplates = (d.settings.waTemplates || []).concat([{ id: uid("tpl"), name: nm, body: campaignState.message }]); }, "camp-tpl-save"); toast("Template saved", ""); } campaignState.showTemplates = false; return refreshCamp(); }
+    if (a === "attach") { toast("Media attachments are coming soon — text, variables & emoji send now", ""); return; }
+    if (a === "use-saved") { var ls = campLists(doc); campaignState.audience = ls.length ? { type: "list", id: ls[0].id } : { type: "overdue", id: "" }; return refreshCamp(); }
+    if (a === "reset-compose") { if (confirm("Clear this campaign's message and name?")) { campaignState.message = ""; campaignState.name = ""; campaignState.manualNumbers = ""; refreshCamp(); } return; }
+    if (a === "save") { persistCampaign(); toast("Campaign saved", ""); campaignState.view = "home"; return refreshCamp(); }
+    if (a === "send") return startCampaign(campaignState.mode);
+    if (a === "onetap-next") return sendCampaignOneTapNext();
+    if (a === "report") { var c = campCampaigns(doc).find(function (x) { return x.id === node.dataset.id; }); if (c) { campaignState.runId = c.id; campaignState.editId = c.id; campaignState.name = c.name; campaignState.mode = c.mode || "onetap"; campaignState.jobs = null; campaignState.view = "report"; refreshCamp(); } return; }
+    if (a === "export") return exportCampaignCSV(node.dataset.id);
+    if (a === "do-import") {
+      var parsed = parseCSV(campaignState.importText || "");
+      if (!parsed.rows.length) { toast("Nothing to import", "error"); return; }
+      var phoneCol = campaignState.phoneCol || detectPhoneCol(parsed.headers, parsed.rows);
+      var nameCol = campaignState.nameCol || detectNameCol(parsed.headers, phoneCol);
+      var res = importContacts(parsed, nameCol, phoneCol, campaignState.listName || "Imported list");
+      toast(res.added + " imported" + (res.skipped ? ", " + res.skipped + " skipped (no number)" : ""), "");
+      campaignState.importText = ""; campaignState.listName = ""; campaignState.nameCol = ""; campaignState.phoneCol = "";
+      campaignState.view = "home"; refreshCamp();
+    }
+  }
+
+  function injectCampCSS() {
+    if (document.getElementById("x97-camp-css")) return;
+    var css =
+      ".x97-camp-sec{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:850;color:var(--tx3);margin:2px 2px 9px}" +
+      ".x97-camp-list{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:13px;padding:11px 12px;margin-bottom:8px;background:var(--card)}" +
+      ".x97-camp-list-main{flex:1;min-width:0;cursor:pointer}" +
+      ".x97-camp-hist{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:1px solid var(--line);border-radius:13px;padding:11px 12px;margin-bottom:8px;background:var(--card);color:var(--tx);cursor:pointer}" +
+      ".x97-camp-vars{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}" +
+      ".x97-camp-var{background:var(--card2);border:1px solid var(--line2);border-radius:8px;padding:5px 9px;font-size:11.5px;font-weight:750;color:var(--pos);cursor:pointer;font-family:inherit}" +
+      ".x97-camp-preview{background:var(--card2);border:1px dashed var(--line2);border-radius:12px;padding:12px;margin:4px 0 12px;font-size:12.5px;line-height:1.5;color:var(--tx);white-space:pre-wrap}" +
+      ".x97-camp-map{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}" +
+      ".x97-camp-tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:6px}" +
+      ".x97-camp-tiles div{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:11px 6px;text-align:center}" +
+      ".x97-camp-tiles b{display:block;font-size:20px;font-variant-numeric:tabular-nums}.x97-camp-tiles span{font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--tx3);font-weight:800}" +
+      ".x97-camp-logrow{display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line)}" +
+      ".x97-google-g{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:#fff;color:#4285F4;font-size:10px;font-weight:900;font-family:Georgia,serif;margin-right:2px}" +
+      ".x97-ws-card{border:1px solid var(--line);border-radius:15px;background:var(--card);padding:13px;margin-bottom:12px}" +
+      ".x97-ws-h{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:14px;font-weight:800;color:var(--tx);margin-bottom:11px}" +
+      ".x97-ws-h span{display:inline-flex;align-items:center;gap:7px}" +
+      ".x97-ws-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:9px}" +
+      ".x97-ws-tw{position:relative}" +
+      ".x97-ws-tool{display:inline-flex;align-items:center;gap:4px;background:var(--card2);border:1px solid var(--line2);border-radius:9px;padding:6px 9px;font-size:11.5px;font-weight:750;color:var(--tx2);cursor:pointer}" +
+      ".x97-ws-tool.on{border-color:var(--pos);color:var(--pos)}" +
+      ".x97-ws-b{width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;background:var(--card2);border:1px solid var(--line2);border-radius:9px;font-size:13px;color:var(--tx2);cursor:pointer;font-weight:700}" +
+      ".x97-ws-b.on{border-color:var(--pos);color:var(--pos)}" +
+      ".x97-ws-menu{position:absolute;top:calc(100% + 5px);left:0;z-index:5;background:var(--card);border:1px solid var(--line2);border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.35);padding:6px;min-width:170px;max-height:230px;overflow:auto}" +
+      ".x97-ws-menu-item{display:block;width:100%;text-align:left;background:0;border:0;border-radius:8px;padding:8px 10px;font-size:12.5px;color:var(--tx);cursor:pointer;font-family:inherit}" +
+      ".x97-ws-menu-item:hover{background:var(--card2)}.x97-ws-menu-item.save{color:var(--pos);font-weight:800;border-top:1px solid var(--line);margin-top:4px}" +
+      ".x97-ws-menu-empty{padding:8px 10px;font-size:11.5px;color:var(--tx3)}" +
+      ".x97-ws-emoji{position:absolute;top:calc(100% + 5px);left:0;z-index:5;background:var(--card);border:1px solid var(--line2);border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.35);padding:8px;width:242px;display:flex;flex-wrap:wrap;gap:2px}" +
+      "@media(max-width:759px){.x97-ws-menu,.x97-ws-emoji{position:fixed;left:12px;right:12px;bottom:12px;top:auto;width:auto;max-width:none;max-height:50vh}}" +
+      ".x97-ws-emoji-b{width:30px;height:30px;border:0;background:0;border-radius:7px;font-size:17px;cursor:pointer;line-height:1}.x97-ws-emoji-b:hover{background:var(--card2)}" +
+      ".x97-ws-seg{display:flex;gap:7px}.x97-ws-seg.small{flex:0 0 auto}" +
+      ".x97-ws-seg button{flex:1;border:1px solid var(--line2);background:var(--card2);border-radius:99px;padding:8px 12px;font-size:12.5px;font-weight:800;color:var(--tx2);cursor:pointer}" +
+      ".x97-ws-seg button.on{background:var(--pos);border-color:var(--pos);color:#fff}" +
+      ".x97-ws-detail{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line2)}" +
+      ".x97-ws-note{font-size:11.5px;color:var(--tx3);margin-bottom:12px}" +
+      ".x97-ws-switch{display:flex;gap:10px;align-items:flex-start;padding:9px 0;font-size:12px;color:var(--tx2);line-height:1.45}.x97-ws-switch input{width:18px;height:18px;accent-color:var(--pos);margin-top:1px}.x97-ws-switch b{color:var(--tx)}" +
+      ".x97-ws-count{margin-top:10px;font-size:12px;color:var(--tx2);font-weight:700}" +
+      ".x97-ws-bubble{background:#173d2e;color:#e8f5ee;border-radius:12px;border-top-right-radius:4px;padding:10px 12px;font-size:13px;line-height:1.5;white-space:normal;word-break:break-word}" +
+      ".x97-ws-bubble code{font-family:ui-monospace,Menlo,monospace;font-size:12px}" +
+      ".x97-ws-modebar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:2px 2px 12px}" +
+      ".x97-ws-actions{display:flex;gap:8px}.x97-ws-actions .x97-btn{flex:1;justify-content:center}.x97-ws-actions .x97-btn.primary{flex:2}";
+    var s = document.createElement("style"); s.id = "x97-camp-css"; s.textContent = css; document.head.appendChild(s);
   }
 
   function submitFilters(form) {
@@ -1079,7 +3228,7 @@
   }
 
   document.addEventListener("submit", function (e) {
-    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="filters")submitFilters(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);
+    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="payment")submitPayment(form);else if(type==="filters")submitFilters(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);else if(type==="wa-numbers")submitNumbers(form);else if(type==="google-setup")submitGoogleSetup(form);
   });
 
   document.addEventListener("input", function (e) {
@@ -1095,9 +3244,15 @@
     var navTarget=e.target.closest && e.target.closest("[data-x97-nav]");if(navTarget){var target=navTarget.dataset.x97Nav;var item=findNavItem(target);if(item)item.click();return;}
     var btn=e.target.closest && e.target.closest("[data-x97-action]");if(!btn)return;var action=btn.dataset.x97Action;
     if(action==="close-sheet"){closeSheet();return;}
+    if(action==="open-messaging"){openMessaging();return;}
+    if(action==="open-reminders"){openReminders();return;}
+    if(action==="open-campaigns"){openCampaigns();return;}
+    if(action==="reset-templates"){updateDoc(function(doc){if(doc.settings)doc.settings.reminderTemplates=null;},"reminder-templates-reset");closeSheet();openTemplateManager();return;}
     if(action==="add-upcoming"){openUpcomingForm();return;}
     if(action==="edit-upcoming"){e.stopPropagation();openUpcomingForm(btn.dataset.id);return;}
-    if(action==="mark-paid"){e.stopPropagation();updateDoc(function(doc){var x=doc.followups.find(function(i){return String(i.id)===String(btn.dataset.id);});if(x)x.status="Paid";},"upcoming-paid");return;}
+    if(action==="mark-paid"){e.stopPropagation();openPaymentForm(btn.dataset.id);return;}
+    if(action==="pay-part"){var pf=document.getElementById("x97-pay-form");if(pf){var cap=num(pf.amount.max);pf.amount.value=Math.max(1,Math.round(cap*num(btn.dataset.value)/100));}return;}
+    if(action==="undo-payment"){if(confirm("Undo this payment? The amount goes back to outstanding and any account credit is reversed.")){var pid=btn.dataset.id,fid="";updateDoc(function(doc){var p=(doc.payments||[]).find(function(x){return String(x.id)===String(pid);});if(p)fid=p.followupId;reversePayment(doc,pid);},"payment-undo");closeSheet();if(fid)openPaymentForm(fid);}return;}
     if(action==="delete-upcoming"){if(confirm("Delete this upcoming payment?")){updateDoc(function(doc){doc.followups=doc.followups.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"upcoming-delete");closeSheet();}return;}
     if(action==="quick-date"){var input=document.querySelector("#x97-upcoming-form [name=expectedBy]");if(input){input.value=btn.dataset.value==="month-end"?dateISO(endOfMonth(todayDate())):dateISO(addDays(todayDate(),num(btn.dataset.days)));}return;}
     if(action==="upcoming-view"){state.upcoming.view=btn.dataset.value;savePrefs();scheduleRender(0);return;}
@@ -1121,6 +3276,17 @@
     if(action==="borrow-percent"){var form=document.getElementById("x97-borrow-form");if(form){var max=num(form.amount.max);form.amount.value=Math.floor(max*num(btn.dataset.value)/100);form.amount.dispatchEvent(new Event("input",{bubbles:true}));}return;}
     if(action==="repay"){openRepayForm(btn.dataset.id);return;}
     if(action==="loan-details"){openLoanDetails(btn.dataset.id);return;}
+    if(action==="open-converter"){openConverter();return;}
+    if(action==="fx-refresh"){fxRefresh(true);return;}
+    if(action==="fx-swap"){fxSwap();return;}
+    if(action==="open-earnings"){openEarnings();return;}
+    if(action==="open-exports"){openExports();return;}
+    if(action==="export-csv"){exportCSV(btn.dataset.kind);return;}
+    if(action==="open-invoice"){e.stopPropagation();openDocument(btn.dataset.id,"invoice");return;}
+    if(action==="open-receipt"){e.stopPropagation();openDocument(btn.dataset.id,"receipt");return;}
+    if(action==="copy-document"){var ta=document.getElementById("x97-doc-text");if(ta){navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(ta.value).then(function(){toast("Copied","success");},function(){toast("Could not copy","error");}):(ta.style.display="block",ta.select(),toast("Select and copy","success"));}return;}
+    if(action==="send-document"){var sdoc=readDoc();var sitem=sdoc&&(sdoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(sitem){var body=documentText(sitem,sdoc,btn.dataset.kind);window.open("https://wa.me/"+waNumber(sitem.phone,sdoc)+"?text="+encodeURIComponent(body),"_blank");closeSheet();}return;}
+    if(action==="fx-amount"){fxConv.amount=btn.dataset.value;var amt=document.getElementById("x97-fx-amount");if(amt)amt.value=fxConv.amount;fxPaint();return;}
   }, true);
 
   function resumeOriginalTab() {
@@ -1139,7 +3305,7 @@
   }
 
   function boot() {
-    injectCSS();loadPrefs();resumeOriginalTab();
+    injectCSS();injectMsgCSS();injectFeatureCSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
     var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
     var observer=new MutationObserver(function(mutations){
       var relevant=mutations.some(function(m){
@@ -1155,7 +3321,7 @@
     observer.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:["class"]});
     watchData();
     window.addEventListener("pageshow",syncMode);window.addEventListener("focus",function(){setTimeout(syncMode,30);});
-    window.__x97v2={version:VERSION,render:scheduleRender,read:readDoc,analytics:function(){var d=readDoc();return d?analytics(d):null;},selfTest:function(){var d=readDoc();return {version:VERSION,dataReady:!!d,followups:d?d.followups.length:0,facilities:d?d.credit.length:0,loans:d?virtualLegacyLoans(d).length:0,screen:currentScreen};}};
+    window.__x97v2={version:VERSION,render:scheduleRender,read:readDoc,analytics:function(){var d=readDoc();return d?analytics(d):null;},fx:{rates:fxLoad,refresh:function(){fxRefresh(true);},convert:fxConvert},money:{gross:grossOf,paid:paidOf,outstanding:outstandingOf,earned:earnedIn,series:earningsSeries,csv:function(kind){return csvFor(readDoc(),kind).csv;},doc:function(id,kind){var d=readDoc();var i=(d.followups||[]).find(function(x){return String(x.id)===String(id);});return i?documentText(i,d,kind):"";}},selfTest:function(){var d=readDoc(),fx=fxLoad();return {version:VERSION,dataReady:!!d,followups:d?d.followups.length:0,payments:d?d.payments.length:0,facilities:d?d.credit.length:0,loans:d?virtualLegacyLoans(d).length:0,screen:currentScreen,fx:fx?{source:fx.source,day:fx.day,ugx:fx.rates.UGX,currencies:Object.keys(fx.rates).length,stale:fxStale(fx)}:null};}};
   }
 
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();
