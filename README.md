@@ -264,7 +264,29 @@ job was worth and the outstanding figure follows from it.
 
 ---
 
-## 8. Exports & documents
+## 8. Structured deals and parts
+
+Incoming work is stored as one deal with its payment schedule underneath it,
+instead of forcing you to create one unrelated row for every scene, episode,
+unit or milestone. The supported structures are:
+
+- **One payment** — one amount and one due date.
+- **Split — half and half** — two correctly dated payments.
+- **Monthly retainer** — one amount per month for a chosen number of months.
+- **Per part** — one amount per scene, episode, unit or milestone.
+
+The deal screen previews the full schedule before saving. Each part can have its
+own due date, and the schedule becomes read-only after money is recorded so the
+financial history cannot be accidentally rewritten. A deal card shows the
+total, the per-part amount, how many parts are paid, the next part due and what
+is still uncollected.
+
+For example, **UGX 700,000 × 12 scenes** becomes one Apollo Studios card worth
+**UGX 8,400,000**. After three scene payments, it shows **3 of 12 paid**,
+**UGX 2,100,000 received** and **UGX 6,300,000 uncollected**. A **$1,000
+half-and-half** contract becomes two **$500** payments with separate dates.
+
+## 9. Exports & documents
 **Earnings → Export** writes spreadsheet files your accountant can open
 directly — no formatting to unpick:
 
@@ -284,7 +306,7 @@ with it filled in. Set your business name once and it's reused on every document
 
 ---
 
-## 9. What it does — and doesn't
+## 10. What it does — and doesn't
 It **tracks, forecasts, advises**, **records what you actually get paid**,
 **converts currencies at live daily rates**, **exports your books** and
 **drafts and paces WhatsApp reminders**.

@@ -304,6 +304,7 @@
       }
     }
     doc.payments.unshift(payment);
+    if (item.dealType && item.parts) rebuildDealParts(doc, item);
     return payment;
   }
 
@@ -326,7 +327,148 @@
       var account = (doc.balances || []).find(function (b) { return String(b.id) === String(payment.accountId); });
       if (account) account.balance = roundMoney(num(account.balance) - num(payment.creditedUGX != null ? payment.creditedUGX : payment.amount));
     }
+    if (item && item.dealType && item.parts) {
+      rebuildDealParts(doc, item);
+      item.paid = (doc.payments || []).filter(function (p) { return String(p.followupId) === String(item.id); }).reduce(function (s, p) { return s + num(p.amount); }, 0);
+      item.amount = outstandingOf(item);
+      item.status = item.paid >= grossOf(item) - 0.5 ? "Paid" : item.paid > 0 ? "Part Paid" : "Pending";
+    }
     return true;
+  }
+
+  /* ── Structured deals ────────────────────────────────────────────────────
+     A deal is one parent record with a visible schedule underneath it. The
+     existing follow-up/payment fields remain the source of truth, so old
+     records, receipts, reminders, cloud sync and backups stay compatible. */
+
+  var DEAL_TYPES = {
+    one: "One payment",
+    split: "Split · half and half",
+    monthly: "Monthly retainer",
+    part: "Per part"
+  };
+
+  function isDeal(item) { return !!(item && item.dealType && item.dealType !== "one" && Array.isArray(item.parts)); }
+
+  function dealLabel(item) {
+    var raw = String(item && item.partLabel || "parts").trim().toLowerCase();
+    return raw === "scene" ? "scenes" : raw === "episode" ? "episodes" : raw === "unit" ? "units" : raw === "milestone" ? "milestones" : raw || "parts";
+  }
+
+  function dealLabelSingular(item) {
+    var plural = dealLabel(item);
+    return plural.replace(/s$/, "") || "part";
+  }
+
+  function addMonths(value, months) {
+    var d = value instanceof Date ? new Date(value) : parseLocalDate(value);
+    if (!d) d = todayDate();
+    var day = d.getDate();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + Number(months || 0));
+    d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
+    return d;
+  }
+
+  function dealPaidPartCount(item) {
+    return (item && Array.isArray(item.parts) ? item.parts : []).filter(function (p) { return num(p.paid) >= num(p.amount) - 0.5; }).length;
+  }
+
+  function dealHasRecordedMoney(item) {
+    return !!(item && (paidOf(item) > 0 || dealPaidPartCount(item) > 0));
+  }
+
+  function dealPartAmount(item) {
+    var parts = item && Array.isArray(item.parts) ? item.parts : [];
+    return parts.length ? num(parts[0].amount) : num(item && item.partAmount);
+  }
+
+  function dealPartsFor(item, values) {
+    var type = String(values && values.dealType || item && item.dealType || "one");
+    var count = Math.max(1, Math.round(num(values && values.partCount || item && item.partCount || (type === "split" ? 2 : 1))));
+    var label = String(values && values.partLabel || item && item.partLabel || (type === "monthly" ? "months" : "parts")).trim().toLowerCase() || "parts";
+    var start = String(values && (values.startDate || values.expectedBy) || item && item.expectedBy || todayISO());
+    var totalInput = roundMoney(values && values.amount != null ? values.amount : grossOf(item));
+    var unit = type === "monthly" || type === "part" ? totalInput : (type === "split" ? Math.floor(totalInput / 2) : totalInput);
+    if (type === "split") count = 2;
+    if (type === "one") count = 1;
+    var dates = [];
+    for (var i = 0; i < count; i++) {
+      var raw = values && values["partDate_" + i];
+      if (!raw && item && item.parts && item.parts[i]) raw = item.parts[i].dueDate;
+      if (!raw) raw = type === "monthly" ? dateISO(addMonths(start, i)) : dateISO(addDays(start, i * Math.max(1, Math.round(num(values && values.partEvery || item && item.partEvery || 7)))));
+      dates.push(raw);
+    }
+    if (type === "split") {
+      dates[0] = String(values && values.firstDue || dates[0]);
+      dates[1] = String(values && values.secondDue || dates[1] || dates[0]);
+    }
+    var parts = [];
+    for (var j = 0; j < count; j++) {
+      var previous = item && item.parts && item.parts[j] ? item.parts[j] : {};
+      var amount = unit;
+      if (type === "split" && j === 1) amount = Math.max(0, totalInput - unit);
+      if (type === "one") amount = totalInput;
+      parts.push({
+        id: previous.id || uid("part"),
+        index: j + 1,
+        label: label.replace(/s$/, "") + " " + (j + 1),
+        amount: amount,
+        dueDate: dates[j] || "",
+        paid: num(previous.paid),
+        status: previous.status || "Pending",
+        paidOn: previous.paidOn || ""
+      });
+    }
+    return parts;
+  }
+
+  function rebuildDealParts(doc, item) {
+    if (!item || !Array.isArray(item.parts)) return;
+    var payments = (doc.payments || []).filter(function (p) { return String(p.followupId) === String(item.id); });
+    item.parts.forEach(function (part) { part.paid = 0; part.status = "Pending"; part.paidOn = ""; });
+    var legacy = payments.length ? 0 : Math.max(0, num(item.paid));
+    var entries = payments.slice();
+    if (legacy > 0) entries.unshift({ amount: legacy, date: item.paidOn || todayISO() });
+    entries.forEach(function (payment) {
+      var remaining = Math.max(0, num(payment.amount));
+      item.parts.forEach(function (part) {
+        if (remaining <= 0) return;
+        var left = Math.max(0, num(part.amount) - num(part.paid));
+        var applied = Math.min(left, remaining);
+        part.paid = num(part.paid) + applied;
+        part.paidOn = payment.date || part.paidOn || "";
+        part.status = part.paid >= num(part.amount) - 0.5 ? "Paid" : "Part Paid";
+        remaining -= applied;
+      });
+    });
+  }
+
+  function dealScheduleHTML(item, editable) {
+    if (!isDeal(item)) return "";
+    var parts = item.parts || [], label = dealLabel(item), paidCount = dealPaidPartCount(item);
+    var visible = editable ? parts : parts.slice(0, 5);
+    var rows = visible.map(function (p, i) {
+      var paid = num(p.paid) >= num(p.amount) - 0.5;
+      var date = editable ? '<input class="x97-input x97-deal-date" name="partDate_' + i + '" type="date" value="' + attr(p.dueDate) + '"' + (editable === "locked" ? " disabled" : "") + '>' : esc(formatDate(p.dueDate, true));
+      return '<div class="x97-deal-row ' + (paid ? "paid" : "") + '"><span class="x97-deal-mark">' + (paid ? icon("check", 12) : (i + 1)) + '</span><div class="x97-deal-part"><b>' + esc(p.label || (dealLabelSingular(item) + " " + (i + 1))) + '</b><span>' + date + '</span></div><strong>' + money(p.amount, item.currency) + '</strong></div>';
+    }).join("");
+    if (!editable && parts.length > visible.length) rows += '<div class="x97-deal-more">+ ' + (parts.length - visible.length) + ' more ' + esc(label) + '</div>';
+    return '<div class="x97-deal-schedule"><div class="x97-deal-schedule-head"><b>' + esc(label) + ' schedule</b><span>' + paidCount + ' of ' + parts.length + ' paid</span></div>' + rows + '</div>';
+  }
+
+  function dealSummaryHTML(doc) {
+    var deals = (doc.followups || []).filter(isDeal);
+    if (!deals.length) return "";
+    var currencies = ["UGX", "USD"].filter(function (currency) { return deals.some(function (x) { return String(x.currency || "UGX").toUpperCase() === currency; }); });
+    var blocks = currencies.map(function (currency) {
+      var rows = deals.filter(function (x) { return String(x.currency || "UGX").toUpperCase() === currency; });
+      var booked = rows.reduce(function (s, x) { return s + grossOf(x); }, 0);
+      var received = rows.reduce(function (s, x) { return s + receivedOf(x); }, 0);
+      var left = rows.reduce(function (s, x) { return s + outstandingOf(x); }, 0);
+      return '<div class="x97-deal-metric-card x97-card"><div class="x97-deal-metric-currency">' + currency + '</div><div class="x97-deal-metric-main">' + money(booked, "", true) + '</div><div class="x97-deal-metric-grid"><span><b>' + money(received, "", true) + '</b> received</span><span><b>' + money(left, "", true) + '</b> uncollected</span></div></div>';
+    }).join("");
+    return '<section class="x97-section x97-deals-overview"><div class="x97-section-head"><div><div class="x97-section-title">Deal overview</div><div class="x97-row-sub">Booked work, received money and what is still uncollected</div></div><span class="x97-pill good">' + deals.length + ' deals</span></div><div class="x97-deal-metrics">' + blocks + '</div></section>';
   }
 
   // Everything received in a month, in shillings, dollars converted at today's rate.
@@ -986,6 +1128,18 @@
       ".x97-earn-row.head{background:var(--card2);font-size:9.5px;text-transform:uppercase;letter-spacing:.07em;font-weight:800;color:var(--tx3)}" +
       ".x97-earn-row-mon{font-size:12px;font-weight:750;color:var(--tx);overflow:hidden;text-overflow:ellipsis}" +
       ".x97-earn-row-num{font-size:12px;text-align:right;overflow:hidden;text-overflow:ellipsis}" +
+      ".x97-deal-builder{margin:14px 0;background:linear-gradient(180deg,var(--card),var(--bg2));border-color:var(--line2)}" +
+      ".x97-deal-builder-title{font-size:15px;font-weight:850;color:var(--tx)}.x97-deal-builder-sub{font-size:11.5px;line-height:1.45;color:var(--tx3);margin:5px 0 13px}" +
+      ".x97-deal-preview{margin-top:12px}.x97-deal-schedule{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card)}" +
+      ".x97-deal-schedule-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;background:var(--card2);font-size:11px;color:var(--tx2)}.x97-deal-schedule-head span{font-size:10px;color:var(--tx3)}" +
+      ".x97-deal-row{display:flex;align-items:center;gap:9px;padding:9px 11px;border-top:1px solid var(--line)}.x97-deal-row:first-of-type{border-top:0}.x97-deal-row.paid{background:var(--posdim)}" +
+      ".x97-deal-mark{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--card2);border:1px solid var(--line2);font-size:10px;font-weight:850;color:var(--tx2)}.x97-deal-row.paid .x97-deal-mark{background:var(--pos);color:#fff;border-color:var(--pos)}" +
+      ".x97-deal-part{flex:1;min-width:0}.x97-deal-part b{display:block;font-size:11.5px;color:var(--tx)}.x97-deal-part span{display:block;font-size:10.5px;color:var(--tx3);margin-top:2px}.x97-deal-part .x97-input{min-height:32px;padding:6px 8px;font-size:11px;margin-top:3px}" +
+      ".x97-deal-row>strong{font-size:11.5px;white-space:nowrap;color:var(--tx)}.x97-deal-total{display:flex;justify-content:space-between;gap:10px;margin-top:9px;padding:9px 11px;border-radius:11px;background:var(--posdim);color:var(--tx2);font-size:11.5px}.x97-deal-total b{color:var(--pos)}" +
+      ".x97-deal-more{padding:9px 12px;border-top:1px solid var(--line);font-size:10.5px;color:var(--tx3);font-weight:750}" +
+      ".x97-deal-card-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 0;padding:9px 10px;border-radius:11px;background:var(--card2);font-size:11px}.x97-deal-card-meta b{color:var(--tx)}.x97-deal-card-meta span{color:var(--tx3);font-size:10px;text-align:right}" +
+      ".x97-deal-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.x97-deal-metric-card{padding:13px 14px}.x97-deal-metric-currency{font-size:10px;font-weight:850;letter-spacing:.08em;color:var(--tx3)}.x97-deal-metric-main{font-size:25px;font-weight:850;letter-spacing:-.03em;margin-top:6px}.x97-deal-metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;border-top:1px solid var(--line);margin-top:10px;padding-top:9px}.x97-deal-metric-grid span{font-size:9.5px;color:var(--tx3);line-height:1.3}.x97-deal-metric-grid b{display:block;font-size:12px;color:var(--tx);margin-bottom:2px}.x97-deal-lock-note{margin-top:10px;padding:10px 11px;border-radius:11px;background:var(--warndim);color:var(--warn);font-size:11px;line-height:1.45}.x97-deals-overview{margin-top:16px}" +
+      "@media(max-width:560px){.x97-deal-metrics{grid-template-columns:1fr}.x97-deal-card-meta{align-items:flex-start;flex-direction:column}.x97-deal-card-meta span{text-align:left}}" +
       // Documents
       ".x97-doc-preview{border:1px solid var(--line);border-radius:13px;padding:14px;background:var(--card2);font-size:12.5px;line-height:1.6;color:var(--tx);white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto}" +
       ".x97-doc-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}.x97-doc-actions .x97-btn{flex:1;min-width:130px}" +
@@ -1595,7 +1749,10 @@
       ? '<div class="x97-pay-progress compact"><div class="x97-pay-bar"><i style="width:' + Math.min(100, Math.round(already / (gross || 1) * 100)) + '%"></i></div>' +
         '<div class="x97-pay-split"><span>' + esc(money(already, currency)) + ' in</span><b>of ' + esc(money(gross, currency)) + '</b></div></div>'
       : "";
-    return '<article class="x97-item x97-card" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '"><div class="x97-item-top"><div class="x97-item-main"><div class="x97-item-category">' + esc(item.category || "Uncategorised") + '</div><div class="x97-item-title">' + esc(item.client || "Untitled upcoming payment") + '</div></div><div class="x97-item-amount x97-money ' + (currency === "USD" ? "x97-teal" : isPaid(item.status) ? "x97-green" : "") + '">' + (num(item.amount) ? money(isPaid(item.status) ? gross : left, currency) : "Amount not set") + '</div></div>' + partHTML + '<div class="x97-item-foot"><span class="x97-pill ' + esc(t.cls) + '">' + icon("clock", 12) + esc(t.label) + '</span>' + (item.expectedBy ? '<span class="x97-pill">' + icon("calendar", 12) + esc(formatDate(item.expectedBy, false)) + '</span>' : '') + '<span class="x97-pill ' + (isPaid(item.status) ? "good" : part ? "warn" : "") + '">' + esc(normalizeStatus(item.status)) + '</span><div class="x97-item-actions">' + (!isPaid(item.status) && !isCancelled(item.status) ? '<button class="x97-mini" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("check", 12) + (part ? " Add payment" : " Paid") + '</button>' : '') + '<button class="x97-mini" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">' + icon("edit", 12) + ' Edit</button></div></div></article>';
+    var dealHTML = isDeal(item)
+      ? '<div class="x97-deal-card-meta"><b>' + esc(money(dealPartAmount(item), currency)) + ' × ' + esc(String(item.parts.length)) + ' ' + esc(dealLabel(item)) + '</b><span>' + dealPaidPartCount(item) + ' of ' + item.parts.length + ' ' + esc(dealLabel(item)) + ' paid' + (item.parts.find(function (p) { return num(p.paid) < num(p.amount) - 0.5; }) ? ' · next ' + esc(formatDate(item.parts.find(function (p) { return num(p.paid) < num(p.amount) - 0.5; }).dueDate, true)) : '') + '</span></div>' + dealScheduleHTML(item, false)
+      : "";
+    return '<article class="x97-item x97-card" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '"><div class="x97-item-top"><div class="x97-item-main"><div class="x97-item-category">' + esc(item.category || "Uncategorised") + '</div><div class="x97-item-title">' + esc(item.client || "Untitled upcoming payment") + '</div></div><div class="x97-item-amount x97-money ' + (currency === "USD" ? "x97-teal" : isPaid(item.status) ? "x97-green" : "") + '">' + (num(item.amount) ? money(isPaid(item.status) ? gross : left, currency) : "Amount not set") + '</div></div>' + dealHTML + partHTML + '<div class="x97-item-foot"><span class="x97-pill ' + esc(t.cls) + '">' + icon("clock", 12) + esc(t.label) + '</span>' + (item.expectedBy ? '<span class="x97-pill">' + icon("calendar", 12) + esc(formatDate(item.expectedBy, false)) + '</span>' : '') + '<span class="x97-pill ' + (isPaid(item.status) ? "good" : part ? "warn" : "") + '">' + esc(normalizeStatus(item.status)) + '</span><div class="x97-item-actions">' + (!isPaid(item.status) && !isCancelled(item.status) ? '<button class="x97-mini" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("check", 12) + (part ? " Add payment" : " Paid") + '</button>' : '') + '<button class="x97-mini" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">' + icon("edit", 12) + ' Edit</button></div></div></article>';
   }
 
   function groupFollowups(items) {
@@ -1648,7 +1805,8 @@
     }
 
     root.innerHTML = '<div class="x97-page">' +
-      pageHeader("Receivables", "Upcoming", "Expected payments, dates and follow-ups", '<button class="x97-icon-btn" data-x97-action="add-upcoming" title="Add upcoming">' + icon("plus") + '</button>') +
+      pageHeader("Receivables", "Incoming", "Deals, parts, payments and follow-ups", '<button class="x97-icon-btn" data-x97-action="add-upcoming" title="Add incoming deal">' + icon("plus") + '</button>') +
+      dealSummaryHTML(doc) +
       '<div class="x97-summary-grid" style="margin-bottom:14px"><div class="x97-card x97-summary"><div class="k">UGX pending</div><div class="v x97-money x97-green">' + money(ugx, "", true) + '</div><div class="s">Filtered view</div></div><div class="x97-card x97-summary"><div class="k">USD pending</div><div class="v x97-money x97-teal">' + money(usd, "", true) + '</div><div class="s">Filtered view</div></div><div class="x97-card x97-summary"><div class="k">Items</div><div class="v x97-money">' + filtered.length + '</div><div class="s">' + pending.length + ' pending</div></div><div class="x97-card x97-summary"><div class="k">Need attention</div><div class="v x97-money ' + (attention ? "x97-red" : "x97-green") + '">' + attention + '</div><div class="s">Dates, amounts or urgency</div></div></div>' +
       '<div class="x97-segment"><button class="' + (f.view === "list" ? "on" : "") + '" data-x97-action="upcoming-view" data-value="list">' + icon("list", 15) + ' List</button><button class="' + (f.view === "months" ? "on" : "") + '" data-x97-action="upcoming-view" data-value="months">' + icon("grid", 15) + ' Months</button></div>' +
       (f.view === "list" ? '<div class="x97-tools"><div class="x97-search">' + icon("search", 17) + '<input id="x97-up-search" autocomplete="off" placeholder="Search client, project or note" value="' + attr(f.search) + '"></div><button class="x97-icon-btn" data-x97-action="open-filters">' + icon("filter") + '<span>Filters</span>' + (activeFilterCount() ? '<b class="x97-badge-count">' + activeFilterCount() + '</b>' : '') + '</button></div><div class="x97-chips">' + quickChip("all","All") + quickChip("attention","Needs action",true) + quickChip("overdue","Overdue",true) + quickChip("today","Today") + quickChip("next7","Next 7 days") + quickChip("next30","Next 30 days") + quickChip("thisMonth","This month") + quickChip("nextMonth","Next month") + quickChip("unscheduled","Unscheduled") + quickChip("paid","Paid") + '</div><div class="x97-chips">' + monthChips + '</div>' + filterTagHTML() + '<div class="x97-count">Showing ' + filtered.length + ' of ' + all.length + ' records · Sorted by ' + esc(f.sort) + '</div>' : '<div class="x97-count">Rolling monthly view · tap a month to open its records</div>') +
@@ -1764,28 +1922,48 @@
 
   function openUpcomingForm(id) {
     var doc = readDoc(), existing = id ? (doc.followups || []).find(function(x){return String(x.id)===String(id);}) : null;
-    var item = existing ? clone(existing) : { id:"", client:"", category:"One Time", amount:"", currency:"UGX", status:"Pending", expectedBy:"", phone:"", note:"" };
+    var item = existing ? clone(existing) : { id:"", client:"", category:"One Time", amount:"", currency:"UGX", status:"Pending", expectedBy:"", phone:"", note:"", dealType:"one", partLabel:"parts", partCount:1, partEvery:7 };
+    var type = item.dealType || (Array.isArray(item.parts) ? "part" : "one");
+    var locked = !!(existing && dealHasRecordedMoney(item));
+    var partCount = item.partCount || (item.parts && item.parts.length) || (type === "split" ? 2 : 1);
+    var partLabel = item.partLabel || (type === "monthly" ? "months" : "parts");
+    var amountValue = type === "monthly" || type === "part" ? (dealPartAmount(item) || item.amount || "") : (existing ? grossOf(item) : item.amount);
+    var firstDue = item.expectedBy || (item.parts && item.parts[0] && item.parts[0].dueDate) || "";
+    var secondDue = (item.parts && item.parts[1] && item.parts[1].dueDate) || "";
     var categories = Array.from(new Set([].concat(doc.settings.categories || [], (doc.followups || []).map(function(x){return x.category;}), ["Design","One Time","Retainer"]).filter(Boolean))).sort();
     var statuses = Array.from(new Set([].concat(doc.settings.fuStatuses || [], ["Pending","Paid","Cancelled"]).filter(Boolean)));
     var hasContacts = campContacts(doc).length > 0;
+    var dealOptions = Object.keys(DEAL_TYPES).map(function (key) { return option(key, DEAL_TYPES[key], type); }).join("");
+    var labelOptions = ["parts","scenes","episodes","units","milestones"].map(function (x) { return option(x, x.charAt(0).toUpperCase() + x.slice(1), partLabel); }).join("");
+    var dealFields = '<div class="x97-deal-builder x97-card x97-pad"><div class="x97-deal-builder-title">Structure the money</div><div class="x97-deal-builder-sub">One deal can contain payments, months, scenes, episodes, units or milestones. The app creates the schedule for you.</div>' +
+      '<div class="x97-fields-2">' + field("Payment structure", '<select class="x97-select x97-deal-control" name="dealType"' + (locked ? " disabled" : "") + '>' + dealOptions + '</select>') + field("Part label", '<select class="x97-select x97-deal-control" name="partLabel"' + (locked ? " disabled" : "") + '>' + labelOptions + '</select>') + '</div>' +
+      '<div class="x97-fields-2"><div class="x97-deal-count-field">' + field("Number of parts", '<input class="x97-input x97-deal-control" name="partCount" type="number" min="1" max="120" step="1" value="' + attr(partCount) + '"' + (locked ? " disabled" : "") + '>') + '</div><div class="x97-deal-interval-field">' + field("Days between parts", '<input class="x97-input x97-deal-control" name="partEvery" type="number" min="1" max="365" step="1" value="' + attr(item.partEvery || 7) + '"' + (locked ? " disabled" : "") + '>') + '</div></div>' +
+      '<div class="x97-fields-2"><div>' + field(type === "monthly" || type === "part" ? "Amount per part" : "Total amount", '<input class="x97-input x97-deal-control" name="amount" inputmode="decimal" type="number" min="0" step="1" value="' + attr(amountValue) + '" placeholder="0"' + (locked ? " disabled" : "") + '>', locked ? "Schedule locked after money was recorded." : "The app calculates the full deal value and every payment.") + '</div><div>' + field("Currency", '<select class="x97-select x97-deal-control" name="currency"' + (locked ? " disabled" : "") + '>' + option("UGX","UGX",item.currency) + option("USD","USD",item.currency) + '</select>') + '</div></div>' +
+      '<div class="x97-fields-2"><div>' + field("First due date", '<input class="x97-input x97-deal-control" name="startDate" type="date" value="' + attr(firstDue) + '"' + (locked ? " disabled" : "") + '>') + '</div><div class="x97-deal-second-field">' + field("Second half due", '<input class="x97-input x97-deal-control" name="secondDue" type="date" value="' + attr(secondDue) + '"' + (locked ? " disabled" : "") + '>') + '</div></div>' +
+      '<div id="x97-deal-preview" class="x97-deal-preview"></div>' + (locked ? '<div class="x97-deal-lock-note">Money has already been recorded. Dates and financial structure are locked; you can still update the client, category, contact and note.</div>' : '') + '</div>';
     var body = '<form id="x97-upcoming-form" data-x97-form="upcoming"><input type="hidden" name="id" value="' + attr(item.id) + '">' +
-      field("Client / project", '<input class="x97-input" name="client" required maxlength="160" placeholder="e.g. Apollo — Scene 3" value="' + attr(item.client) + '">') +
+      field("Client / project", '<input class="x97-input" name="client" required maxlength="160" placeholder="e.g. Apollo Studios" value="' + attr(item.client) + '">') +
       field("WhatsApp number", '<input class="x97-input" name="phone" inputmode="tel" value="' + attr(item.phone || "") + '" placeholder="e.g. 0772 123 456">' +
         (hasContacts ? '<input class="x97-input x97-contact-search" style="margin-top:8px" placeholder="Or search any contact — e.g. a name, nickname, part of a number…">' : '') +
         '<div id="x97-contact-suggest">' + contactPickerHTML("", doc, item.client, item.phone) + '</div>', "Used for payment reminders. Local (0772…) or full (+256772…) both work.") +
-      '<div class="x97-fields-2">' + field(existing && paidOf(item) > 0 ? "Invoice total" : "Amount", '<input class="x97-input" name="amount" inputmode="decimal" type="number" min="0" step="1" value="' + attr(existing ? grossOf(item) : item.amount) + '" placeholder="0">', existing && paidOf(item) > 0 ? money(paidOf(item), item.currency) + " already received — outstanding follows from this total." : "") + field("Currency", '<select class="x97-select" name="currency">' + option("UGX","UGX",item.currency) + option("USD","USD",item.currency) + '</select>') + '</div>' +
+      dealFields +
       '<details class="x97-more"' + (existing ? " open" : "") + '><summary class="x97-more-summary">' + icon("chevron", 12) + ' More details</summary><div class="x97-more-body">' +
       '<div class="x97-fields-2">' +
       field("Category", '<select class="x97-select" name="category">' + categories.map(function(x){return option(x,x,item.category);}).join("") + '</select>') +
       field("Status", '<select class="x97-select" name="status">' + statuses.map(function(x){return option(x,x,item.status);}).join("") + '</select>') + '</div>' +
-      field("Expected date", '<input class="x97-input" name="expectedBy" type="date" value="' + attr(item.expectedBy) + '"><div class="x97-chips" style="padding-top:7px"><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="0">Today</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="7">+7 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="30">+30 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-value="month-end">Month end</button></div>') +
+      field("Expected date", '<input class="x97-input" name="expectedBy" type="date" value="' + attr(firstDue) + '"><div class="x97-chips" style="padding-top:7px"><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="0">Today</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="7">+7 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="30">+30 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-value="month-end">Month end</button></div>') +
       field("Note", '<textarea class="x97-textarea" name="note" maxlength="500" placeholder="Invoice, follow-up context, or next action">' + esc(item.note) + '</textarea>') + '</div></details></form>';
     if (existing) body += '<div class="x97-doc-actions"><button type="button" class="x97-btn" data-x97-action="open-invoice" data-id="' + attr(item.id) + '">' + icon("list", 15) + ' Invoice</button>' +
       (paidOf(item) > 0 ? '<button type="button" class="x97-btn" data-x97-action="open-receipt" data-id="' + attr(item.id) + '">' + icon("check", 15) + ' Receipt</button>' : '') +
       (!isPaid(item.status) && !isCancelled(item.status) ? '<button type="button" class="x97-btn teal" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("wallet", 15) + ' Record payment</button>' : '') + '</div>';
-    var foot = (existing ? '<button class="x97-btn danger" data-x97-action="delete-upcoming" data-id="' + attr(item.id) + '">' + icon("trash") + ' Delete</button>' : '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button>') + '<button class="x97-btn primary" type="submit" form="x97-upcoming-form">' + icon("check") + (existing ? " Save changes" : " Add upcoming") + '</button>';
+    var foot = (existing && !locked ? '<button class="x97-btn danger" data-x97-action="delete-upcoming" data-id="' + attr(item.id) + '">' + icon("trash") + ' Delete</button>' : '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button>') + '<button class="x97-btn primary" type="submit" form="x97-upcoming-form">' + icon("check") + (existing ? " Save changes" : " Add incoming deal") + '</button>';
     openSheet(existing ? "Edit upcoming" : "Add upcoming", body, foot, { afterOpen: function (back) {
       var clientInput = back.querySelector('input[name="client"]'), phoneInput = back.querySelector('input[name="phone"]'), searchInput = back.querySelector(".x97-contact-search"), box = back.querySelector("#x97-contact-suggest");
+      var form = back.querySelector("#x97-upcoming-form"), preview = back.querySelector("#x97-deal-preview"), typeInput = back.querySelector('[name="dealType"]');
+      function draftValues() { var values = formValues(form); Array.prototype.slice.call(back.querySelectorAll(".x97-deal-date")).forEach(function (el) { values[el.name] = el.value; }); return values; }
+      function refreshDealPreview() { if (!preview || !typeInput) return; var values = draftValues(); var draft = clone(item); draft.dealType = values.dealType || typeInput.value; draft.partLabel = values.partLabel || partLabel; draft.partCount = values.partCount || partCount; draft.partEvery = values.partEvery || item.partEvery || 7; draft.currency = values.currency || item.currency; draft.parts = locked && item.parts ? clone(item.parts) : dealPartsFor(item, values); preview.innerHTML = dealScheduleHTML(draft, locked ? "locked" : true) + '<div class="x97-deal-total"><span>Deal total</span><b>' + money(draft.parts.reduce(function (s, p) { return s + num(p.amount); }, 0), draft.currency) + '</b></div>'; if (!locked) Array.prototype.slice.call(preview.querySelectorAll(".x97-deal-date")).forEach(function (el) { el.addEventListener("input", refreshDealPreview); }); }
+      function toggleDealFields() { var value = typeInput ? typeInput.value : "one"; var count = back.querySelector(".x97-deal-count-field"), interval = back.querySelector(".x97-deal-interval-field"), second = back.querySelector(".x97-deal-second-field"); if (count) count.style.display = value === "one" || value === "split" ? "none" : "block"; if (interval) interval.style.display = value === "monthly" || value === "one" || value === "split" ? "none" : "block"; if (second) second.style.display = value === "split" ? "block" : "none"; refreshDealPreview(); }
+      if (typeInput) { typeInput.addEventListener("change", toggleDealFields); Array.prototype.slice.call(back.querySelectorAll(".x97-deal-control, .x97-deal-builder input")).forEach(function (el) { el.addEventListener("input", refreshDealPreview); el.addEventListener("change", refreshDealPreview); }); toggleDealFields(); }
       if (!clientInput || !phoneInput || !box) return;
       var timer = null;
       function refresh() {
@@ -1943,12 +2121,22 @@
     var v=formValues(form), id=v.id||uid("fu");
     updateDoc(function(doc){
       var i=doc.followups.findIndex(function(x){return String(x.id)===String(id);});
-      var gross=roundMoney(v.amount);
-      var already=i>=0?paidOf(doc.followups[i]):0;
-      // The form edits the invoiced total; what is still owed follows from it.
+      var old=i>=0?doc.followups[i]:null;
+      var locked=!!(old&&dealHasRecordedMoney(old));
+      if (locked) {
+        doc.followups[i]=Object.assign({},old,{client:v.client.trim(),category:v.category,phone:(v.phone||"").trim(),note:(v.note||"").trim()});
+        return;
+      }
+      var type=String(v.dealType||"one");
+      var structured=type!=="one";
+      var parts=structured?dealPartsFor(old||{},v):[];
+      var gross=structured?parts.reduce(function(s,p){return s+num(p.amount);},0):roundMoney(v.amount);
+      var already=old?paidOf(old):0;
+      var due=structured?(parts[0]&&parts[0].dueDate||v.expectedBy||""):(v.startDate||v.expectedBy||"");
       var settled=already>0&&already>=gross-0.5;
-      var item={id:id,client:v.client.trim(),category:v.category,gross:gross,paid:already,amount:already>0&&!settled?roundMoney(gross-already):gross,currency:v.currency,status:settled?"Paid":v.status,expectedBy:v.expectedBy,phone:(v.phone||"").trim(),note:v.note.trim()};
-      if(i>=0)doc.followups[i]=Object.assign({},doc.followups[i],item);else doc.followups.unshift(item);
+      var item={id:id,client:v.client.trim(),category:v.category,gross:gross,paid:already,amount:already>0&&!settled?roundMoney(gross-already):gross,currency:String(v.currency||"UGX").toUpperCase(),status:settled?"Paid":v.status,expectedBy:due,phone:(v.phone||"").trim(),note:(v.note||"").trim()};
+      if(structured){item.dealType=type;item.partLabel=dealLabel({partLabel:v.partLabel||"parts"});item.partCount=parts.length;item.partEvery=Math.max(1,Math.round(num(v.partEvery||7)));item.partAmount=parts[0]?num(parts[0].amount):0;item.parts=parts;rebuildDealParts(doc,item);}
+      if(i>=0)doc.followups[i]=Object.assign({},old,item);else doc.followups.unshift(item);
     },"upcoming-save");
     closeSheet(); if(remindState.open) refreshRemind();
   }
@@ -3253,7 +3441,7 @@
     if(action==="mark-paid"){e.stopPropagation();openPaymentForm(btn.dataset.id);return;}
     if(action==="pay-part"){var pf=document.getElementById("x97-pay-form");if(pf){var cap=num(pf.amount.max);pf.amount.value=Math.max(1,Math.round(cap*num(btn.dataset.value)/100));}return;}
     if(action==="undo-payment"){if(confirm("Undo this payment? The amount goes back to outstanding and any account credit is reversed.")){var pid=btn.dataset.id,fid="";updateDoc(function(doc){var p=(doc.payments||[]).find(function(x){return String(x.id)===String(pid);});if(p)fid=p.followupId;reversePayment(doc,pid);},"payment-undo");closeSheet();if(fid)openPaymentForm(fid);}return;}
-    if(action==="delete-upcoming"){if(confirm("Delete this upcoming payment?")){updateDoc(function(doc){doc.followups=doc.followups.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"upcoming-delete");closeSheet();}return;}
+    if(action==="delete-upcoming"){var targetDoc=readDoc(),targetItem=targetDoc&&(targetDoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(targetItem&&dealHasRecordedMoney(targetItem)){toast("A deal with recorded money cannot be deleted","error");return;}if(confirm("Delete this upcoming payment?")){updateDoc(function(doc){doc.followups=doc.followups.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"upcoming-delete");closeSheet();}return;}
     if(action==="quick-date"){var input=document.querySelector("#x97-upcoming-form [name=expectedBy]");if(input){input.value=btn.dataset.value==="month-end"?dateISO(endOfMonth(todayDate())):dateISO(addDays(todayDate(),num(btn.dataset.days)));}return;}
     if(action==="upcoming-view"){state.upcoming.view=btn.dataset.value;savePrefs();scheduleRender(0);return;}
     if(action==="quick-filter"){state.upcoming.quick=btn.dataset.value;savePrefs();scheduleRender(0);return;}
