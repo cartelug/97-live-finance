@@ -229,7 +229,130 @@
     if (!Array.isArray(doc.expenses.entries)) doc.expenses.entries = [];
     if (!doc.settings || typeof doc.settings !== "object") doc.settings = {};
     if (!Array.isArray(doc.creditLoans)) doc.creditLoans = [];
+    if (!Array.isArray(doc.payments)) doc.payments = [];
     return doc;
+  }
+
+  /* ── Money received ───────────────────────────────────────────────────────
+     `amount` stays what it has always meant to every reader of this document
+     — what is still owed — so the React screens and the copilot keep summing
+     it correctly with no changes. `gross` remembers the invoiced total and
+     `paid` what has come in, which is what makes part payments honest. */
+
+  function grossOf(item) {
+    var gross = num(item.gross);
+    return gross > 0 ? gross : num(item.amount) + num(item.paid);
+  }
+
+  function paidOf(item) { return Math.max(0, num(item.paid)); }
+
+  function outstandingOf(item) { return Math.max(0, grossOf(item) - paidOf(item)); }
+
+  function isPartPaid(item) { return paidOf(item) > 0 && outstandingOf(item) > 0; }
+
+  function paymentsFor(doc, followupId) {
+    return (doc.payments || []).filter(function (p) { return String(p.followupId) === String(followupId); });
+  }
+
+  // What actually landed. Items settled before payments existed have no ledger
+  // entry, so fall back to their face value rather than reporting zero earned.
+  function receivedOf(item) {
+    var paid = paidOf(item);
+    if (paid > 0) return paid;
+    return isPaid(item.status) ? grossOf(item) : 0;
+  }
+
+  // Records money in against a receivable and rewrites the item so that
+  // `amount` keeps meaning "still owed" while it is open, and returns to the
+  // invoiced total once settled (paid items are excluded from every sum, and
+  // the Paid list should show what the job was worth, not zero).
+  function applyPayment(doc, followupId, entry) {
+    var item = (doc.followups || []).find(function (x) { return String(x.id) === String(followupId); });
+    if (!item) return null;
+    var gross = grossOf(item);
+    var received = Math.min(Math.max(0, roundMoney(entry.amount)), Math.max(0, gross - paidOf(item)));
+    if (received <= 0) return null;
+    var payment = {
+      id: uid("pay"),
+      followupId: item.id,
+      client: item.client || "",
+      category: item.category || "",
+      amount: received,
+      currency: String(item.currency || "UGX").toUpperCase(),
+      date: entry.date || todayISO(),
+      accountId: entry.accountId || "",
+      accountName: "",
+      note: (entry.note || "").trim(),
+      createdAt: new Date().toISOString()
+    };
+    item.gross = gross;
+    item.paid = paidOf(item) + received;
+    item.paidOn = payment.date;
+    var settled = item.paid >= gross - 0.5;
+    item.amount = settled ? gross : roundMoney(gross - item.paid);
+    item.status = settled ? "Paid" : "Part Paid";
+    if (entry.accountId) {
+      var account = (doc.balances || []).find(function (b) { return String(b.id) === String(entry.accountId); });
+      if (account) {
+        payment.accountName = account.account || "";
+        // Accounts are held in shillings; dollar receipts land at today's rate.
+        var credited = payment.currency === "USD" ? fxConvert(received, "USD", FX_HOME) : received;
+        if (credited != null) {
+          account.balance = roundMoney(num(account.balance) + credited);
+          payment.creditedUGX = roundMoney(credited);
+        }
+      }
+    }
+    doc.payments.unshift(payment);
+    return payment;
+  }
+
+  function reversePayment(doc, paymentId) {
+    var idx = (doc.payments || []).findIndex(function (p) { return String(p.id) === String(paymentId); });
+    if (idx < 0) return false;
+    var payment = doc.payments[idx];
+    doc.payments.splice(idx, 1);
+    var item = (doc.followups || []).find(function (x) { return String(x.id) === String(payment.followupId); });
+    if (item) {
+      var gross = grossOf(item);
+      item.gross = gross;
+      item.paid = Math.max(0, paidOf(item) - num(payment.amount));
+      item.amount = item.paid > 0 ? roundMoney(gross - item.paid) : gross;
+      item.status = item.paid <= 0 ? "Pending" : "Part Paid";
+      var rest = paymentsFor(doc, item.id);
+      item.paidOn = rest.length ? rest[0].date : "";
+    }
+    if (payment.accountId) {
+      var account = (doc.balances || []).find(function (b) { return String(b.id) === String(payment.accountId); });
+      if (account) account.balance = roundMoney(num(account.balance) - num(payment.creditedUGX != null ? payment.creditedUGX : payment.amount));
+    }
+    return true;
+  }
+
+  // Everything received in a month, in shillings, dollars converted at today's rate.
+  function earnedIn(doc, key) {
+    return (doc.payments || []).filter(function (p) { return monthKey(p.date) === key; }).reduce(function (sum, p) {
+      if (String(p.currency).toUpperCase() !== "USD") return sum + num(p.amount);
+      var ugx = p.creditedUGX != null ? num(p.creditedUGX) : fxConvert(p.amount, "USD", FX_HOME);
+      return sum + (ugx == null ? 0 : ugx);
+    }, 0);
+  }
+
+  function spentIn(doc, key) {
+    return ((doc.expenses && doc.expenses.entries) || []).filter(function (e) {
+      return monthKey(e.date) === key && String(e.kind || "").toLowerCase() === "actual";
+    }).reduce(function (sum, e) { return sum + num(e.amount); }, 0);
+  }
+
+  function earningsSeries(doc, months) {
+    var out = [];
+    var start = startOfMonth(todayDate());
+    for (var i = num(months) - 1; i >= 0; i--) {
+      var d = new Date(start.getFullYear(), start.getMonth() - i, 1, 12, 0, 0, 0);
+      var key = monthKey(d);
+      out.push({ key: key, label: monthLabel(key, true), earned: earnedIn(doc, key), spent: spentIn(doc, key) });
+    }
+    return out;
   }
 
   function writeDoc(doc, reason, quiet) {
@@ -458,6 +581,210 @@
     return "≈ " + money(value, FX_HOME, true) + " today";
   }
 
+  /* ── Earnings ─────────────────────────────────────────────────────────────
+     Earned and spent are the same unit on one scale, so they share one axis.
+     Green-in / red-out matches every other inflow/outflow cue in the app, but
+     that pair sits at ΔE 6.4 for deuteranopia — so identity never rests on
+     colour alone: earned is always the left bar, both are labelled in the key,
+     and the sheet carries the same numbers as a table. */
+
+  function earnChartHTML(series) {
+    var peak = series.reduce(function (m, r) { return Math.max(m, r.earned, r.spent); }, 0);
+    if (peak <= 0) return '<div class="x97-empty">' + icon("trend", 25) + '<strong>No payments recorded yet</strong><p>Mark a receivable paid and this fills in month by month.</p></div>';
+    var current = series[series.length - 1];
+    var cols = series.map(function (r, i) {
+      var last = i === series.length - 1;
+      var earnedH = Math.max(r.earned > 0 ? 3 : 0, Math.round(r.earned / peak * 100));
+      var spentH = Math.max(r.spent > 0 ? 3 : 0, Math.round(r.spent / peak * 100));
+      return '<div class="x97-earn-col' + (last ? " now" : "") + '">' +
+        '<div class="x97-earn-bars">' +
+          '<i class="in" style="height:' + earnedH + '%" title="' + attr(r.label + " earned " + money(r.earned, FX_HOME)) + '"></i>' +
+          '<i class="out" style="height:' + spentH + '%" title="' + attr(r.label + " spent " + money(r.spent, FX_HOME)) + '"></i>' +
+        '</div><span class="x97-earn-mon">' + esc(r.label.split(" ")[0]) + '</span></div>';
+    }).join("");
+    return '<div class="x97-earn-key"><span class="in">Earned</span><span class="out">Spent</span></div>' +
+      '<div class="x97-earn-chart" role="img" aria-label="' + attr("Earned versus spent for the last " + series.length + " months. " + series.map(function (r) { return r.label + ": earned " + money(r.earned, FX_HOME) + ", spent " + money(r.spent, FX_HOME); }).join(". ")) + '">' + cols + '</div>' +
+      '<div class="x97-earn-now">' + esc(current.label) + ' · <b class="x97-green">' + esc(money(current.earned, FX_HOME, true)) + '</b> in · <b class="x97-red">' + esc(money(current.spent, FX_HOME, true)) + '</b> out</div>';
+  }
+
+  function earnCardHTML(doc) {
+    var series = earningsSeries(doc, 6);
+    var current = series[series.length - 1], prev = series[series.length - 2];
+    var delta = prev && prev.earned > 0 ? Math.round((current.earned - prev.earned) / prev.earned * 100) : null;
+    var net = current.earned - current.spent;
+    var pill = delta == null ? "" : '<span class="x97-pill ' + (delta >= 0 ? "good" : "bad") + '">' + (delta >= 0 ? "+" : "") + delta + '% vs ' + esc(prev.label.split(" ")[0]) + '</span>';
+    return '<section class="x97-section x97-dashboard-wide">' + sectionHead("Earnings", "History", "open-earnings") +
+      '<div class="x97-card x97-pad">' +
+        '<div class="x97-earn-top"><div><div class="x97-fx-label">Received this month</div>' +
+        '<div class="x97-earn-value x97-money x97-green">' + money(current.earned, FX_HOME) + '</div></div>' + pill + '</div>' +
+        '<div class="x97-hero-meta" style="margin:13px 0 4px"><div class="x97-stat"><span>Spent</span><b class="x97-red">' + money(current.spent, FX_HOME, true) + '</b></div>' +
+        '<div class="x97-stat"><span>Kept</span><b class="' + (net < 0 ? "x97-red" : "x97-green") + '">' + money(net, FX_HOME, true) + '</b></div></div>' +
+        earnChartHTML(series) +
+      '</div></section>';
+  }
+
+  function openEarnings() {
+    var doc = readDoc();
+    if (!doc) return;
+    var series = earningsSeries(doc, 12).slice().reverse();
+    var payments = (doc.payments || []).slice(0, 60);
+    var rows = series.filter(function (r) { return r.earned > 0 || r.spent > 0; }).map(function (r) {
+      var net = r.earned - r.spent;
+      return '<div class="x97-earn-row"><div class="x97-earn-row-mon">' + esc(r.label) + '</div>' +
+        '<div class="x97-earn-row-num x97-money x97-green">' + money(r.earned, "", true) + '</div>' +
+        '<div class="x97-earn-row-num x97-money x97-red">' + money(r.spent, "", true) + '</div>' +
+        '<div class="x97-earn-row-num x97-money ' + (net < 0 ? "x97-red" : "") + '"><b>' + money(net, "", true) + '</b></div></div>';
+    }).join("");
+    var log = payments.length ? payments.map(function (p) {
+      return '<div class="x97-row" style="border-left:0;border-right:0;border-top:0"><div class="x97-row-icon good">' + icon("check") + '</div>' +
+        '<div class="x97-row-main"><div class="x97-row-title">' + esc(p.client || "Payment") + '</div>' +
+        '<div class="x97-row-sub">' + esc(formatDate(p.date)) + (p.accountName ? " · " + esc(p.accountName) : "") + (p.note ? " · " + esc(p.note) : "") + '</div></div>' +
+        '<div class="x97-row-value x97-money x97-green">' + money(p.amount, p.currency) + '</div></div>';
+    }).join("") : '<div class="x97-empty"><strong>No payments yet</strong><p>Recording payments builds your earnings history.</p></div>';
+    var body =
+      '<div class="x97-card x97-pad" style="margin-bottom:15px">' + earnChartHTML(earningsSeries(doc, 6)) + '</div>' +
+      (rows ? '<div class="x97-field"><label>Month by month</label><div class="x97-earn-table">' +
+        '<div class="x97-earn-row head"><div class="x97-earn-row-mon">Month</div><div class="x97-earn-row-num">In</div><div class="x97-earn-row-num">Out</div><div class="x97-earn-row-num">Kept</div></div>' +
+        rows + '</div></div>' : "") +
+      '<div class="x97-field"><label>Payments received</label><div class="x97-card" style="overflow:hidden">' + log + '</div></div>';
+    var foot = '<button class="x97-btn" data-x97-action="open-exports">' + icon("list", 15) + ' Export</button>' +
+      '<button class="x97-btn primary" data-x97-action="close-sheet">Done</button>';
+    openSheet("Earnings", body, foot);
+  }
+
+  /* ── Books: exports and documents ─────────────────────────────────────── */
+
+  function csvCell(value) {
+    var s = String(value == null ? "" : value);
+    // Excel reads a leading =, +, - or @ as a formula; prefix so it stays text.
+    if (/^[=+\-@]/.test(s)) s = "'" + s;
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  function toCSV(headers, rows) {
+    return [headers.map(csvCell).join(",")].concat(rows.map(function (r) { return r.map(csvCell).join(","); })).join("\r\n");
+  }
+
+  function csvFor(doc, kind) {
+    if (kind === "payments") {
+      return {
+        name: "97-payments",
+        csv: toCSV(["Date", "Client", "Category", "Amount", "Currency", "Amount UGX", "Account", "Note"],
+          (doc.payments || []).map(function (p) {
+            var ugx = p.creditedUGX != null ? num(p.creditedUGX) : (String(p.currency).toUpperCase() === "USD" ? fxConvert(p.amount, "USD", FX_HOME) : num(p.amount));
+            return [p.date, p.client, p.category, num(p.amount), p.currency, ugx == null ? "" : Math.round(ugx), p.accountName, p.note];
+          }))
+      };
+    }
+    if (kind === "expenses") {
+      return {
+        name: "97-expenses",
+        csv: toCSV(["Date", "Type", "Kind", "Item", "Amount", "Note"],
+          ((doc.expenses && doc.expenses.entries) || []).map(function (e) { return [e.date, e.type, e.kind, e.item, num(e.amount), e.note]; }))
+      };
+    }
+    return {
+      name: "97-receivables",
+      csv: toCSV(["Client", "Category", "Invoice total", "Received", "Outstanding", "Currency", "Status", "Expected by", "Last payment", "Note"],
+        (doc.followups || []).map(function (x) {
+          return [x.client, x.category, grossOf(x), paidOf(x), outstandingOf(x), String(x.currency || "UGX").toUpperCase(), normalizeStatus(x.status), x.expectedBy, x.paidOn || "", x.note];
+        }))
+    };
+  }
+
+  function exportCSV(kind) {
+    var doc = readDoc();
+    if (!doc) return;
+    var out = csvFor(doc, kind);
+    // A BOM keeps Excel from mangling shillings and accented client names.
+    downloadCSV(out.name + "-" + todayISO() + ".csv", "﻿" + out.csv);
+    toast("Exported " + out.name.replace("97-", ""), "success");
+  }
+
+  function openExports() {
+    var doc = readDoc();
+    if (!doc) return;
+    var counts = {
+      receivables: (doc.followups || []).length,
+      payments: (doc.payments || []).length,
+      expenses: ((doc.expenses && doc.expenses.entries) || []).length
+    };
+    function row(kind, title, sub) {
+      return '<button class="x97-row" style="width:100%;border-left:0;border-right:0;border-top:0;background:transparent;text-align:left" data-x97-action="export-csv" data-kind="' + attr(kind) + '">' +
+        '<div class="x97-row-icon good">' + icon("list") + '</div><div class="x97-row-main"><div class="x97-row-title">' + esc(title) + '</div>' +
+        '<div class="x97-row-sub">' + esc(sub) + '</div></div>' + icon("chevron") + '</button>';
+    }
+    var body = '<div class="x97-help" style="margin-bottom:12px">Spreadsheet files your accountant can open directly — amounts, dates and references, no formatting to unpick.</div>' +
+      '<div class="x97-card" style="overflow:hidden">' +
+        row("receivables", "Receivables", counts.receivables + " records · invoice total, received and outstanding") +
+        row("payments", "Payments received", counts.payments + " payments · with UGX value of dollar receipts") +
+        row("expenses", "Expenses", counts.expenses + " entries · planned and actual") +
+      '</div>';
+    openSheet("Export for the books", body, '<button class="x97-btn primary" data-x97-action="close-sheet">Done</button>');
+  }
+
+  function docNumber(prefix, item, doc) {
+    var list = (doc.followups || []).slice().reverse();
+    var seq = Math.max(1, list.findIndex(function (x) { return String(x.id) === String(item.id); }) + 1);
+    var d = parseLocalDate(item.expectedBy) || todayDate();
+    return prefix + "-" + d.getFullYear() + "-" + String(seq).padStart(3, "0");
+  }
+
+  // Invoices and receipts go out over WhatsApp, so they are plain text the
+  // client can read in the chat rather than a file they have to open.
+  function documentText(item, doc, kind) {
+    var currency = String(item.currency || "UGX").toUpperCase();
+    var business = String((doc.settings && doc.settings.businessName) || doc.meta.appName || "97 LIVE").trim();
+    var receipt = kind === "receipt";
+    var lines = [];
+    lines.push("*" + (receipt ? "RECEIPT" : "INVOICE") + "*  " + docNumber(receipt ? "RCT" : "INV", item, doc));
+    lines.push(business);
+    lines.push("");
+    lines.push("*Billed to:* " + (item.client || "—"));
+    lines.push("*Date:* " + formatDate(todayISO()));
+    if (!receipt && item.expectedBy) lines.push("*Due:* " + formatDate(item.expectedBy));
+    lines.push("");
+    lines.push((item.category || "Services") + " — " + money(grossOf(item), currency));
+    if (item.note) lines.push("_" + item.note + "_");
+    lines.push("");
+    lines.push("*Total:* " + money(grossOf(item), currency));
+    if (paidOf(item) > 0) {
+      lines.push("*Received:* " + money(paidOf(item), currency));
+      var left = outstandingOf(item);
+      lines.push(left > 0 ? "*Still due:* " + money(left, currency) : "*Settled in full — thank you.*");
+    }
+    var pays = paymentsFor(doc, item.id);
+    if (receipt && pays.length) {
+      lines.push("");
+      lines.push("*Payments*");
+      pays.slice().reverse().forEach(function (p) { lines.push("· " + formatDate(p.date, true) + " — " + money(p.amount, p.currency) + (p.accountName ? " (" + p.accountName + ")" : "")); });
+    }
+    return lines.join("\n");
+  }
+
+  function openDocument(id, kind) {
+    var doc = readDoc();
+    var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(id); });
+    if (!item) { toast("That record is no longer there", "error"); return; }
+    var text = documentText(item, doc, kind);
+    var body = '<div class="x97-field"><label>' + (kind === "receipt" ? "Receipt" : "Invoice") + ' preview</label>' +
+      '<div class="x97-doc-preview">' + renderWaFormat(esc(text)).replace(/\n/g, "<br>") + '</div></div>' +
+      field("Your business name", '<input class="x97-input" id="x97-doc-business" value="' + attr((doc.settings && doc.settings.businessName) || "") + '" placeholder="' + attr(doc.meta.appName || "97 LIVE") + '">', "Saved and reused on every document.") +
+      '<textarea id="x97-doc-text" class="x97-textarea" style="display:none">' + esc(text) + '</textarea>';
+    var wa = hasWa(item, doc);
+    var foot = '<button class="x97-btn" data-x97-action="copy-document">' + icon("list", 15) + ' Copy</button>' +
+      (wa ? '<button class="x97-btn primary" data-x97-action="send-document" data-id="' + attr(item.id) + '" data-kind="' + attr(kind) + '">' + icon("send", 15) + ' Send on WhatsApp</button>'
+          : '<button class="x97-btn primary" data-x97-action="close-sheet">Done</button>');
+    openSheet(kind === "receipt" ? "Receipt" : "Invoice", body, foot, { afterOpen: function (back) {
+      var input = back.querySelector("#x97-doc-business");
+      if (input) input.addEventListener("change", function () {
+        var name = input.value.trim();
+        updateDoc(function (d) { d.settings.businessName = name; }, "business-name", true);
+        closeSheet(); openDocument(id, kind);
+      });
+    } });
+  }
+
   function fxStamp(store) {
     if (fxBusy) return "Updating…";
     if (!store) return navigator.onLine ? "Tap to load rates" : "Offline · no rates yet";
@@ -590,10 +917,10 @@
     fxRefresh(false);
   }
 
-  function injectFxCSS() {
-    if (document.getElementById("x97-fx-css")) return;
+  function injectFeatureCSS() {
+    if (document.getElementById("x97-feature-css")) return;
     var style = document.createElement("style");
-    style.id = "x97-fx-css";
+    style.id = "x97-feature-css";
     style.textContent =
       ".x97-fx-card{display:block;width:100%;text-align:left;padding:17px 17px 15px;background:linear-gradient(180deg,var(--card) 0%,var(--bg2) 135%);border:1px solid var(--line);border-radius:22px;box-shadow:var(--toplit),var(--elev-1);transition:border-color .2s ease,box-shadow .24s ease,transform .24s cubic-bezier(.22,1,.36,1);cursor:pointer}" +
       "@media(hover:hover){.x97-fx-card:hover{border-color:var(--line2);box-shadow:var(--toplit),var(--elev-2);transform:translateY(-2px)}}" +
@@ -627,7 +954,42 @@
       ".x97-fx-meta{font-size:10.5px;color:var(--tx3);line-height:1.5;margin-top:9px}" +
       ".x97-fx-manual{margin-top:14px;align-items:flex-start}" +
       ".x97-fx-manual span{display:block}.x97-fx-manual em{display:block;font-style:normal;font-weight:600;font-size:10.5px;color:var(--tx3);margin-top:3px;line-height:1.45}" +
-      "@media(max-width:560px){.x97-fx-value{font-size:25px}.x97-fx-ticks{grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.x97-fx-leg-row{grid-template-columns:1fr}.x97-fx-amount{text-align:left}.x97-fx-result{justify-content:flex-start}}";
+      // Part payments
+      ".x97-pay-progress{margin-top:12px}.x97-pay-progress.compact{margin:11px 0 0}" +
+      ".x97-pay-bar{height:6px;border-radius:99px;background:var(--card3);overflow:hidden}" +
+      ".x97-pay-bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#17A468,var(--pos2))}" +
+      ".x97-pay-split{display:flex;justify-content:space-between;gap:10px;margin-top:6px;font-size:10.5px;font-weight:700;color:var(--tx3)}" +
+      ".x97-pay-split b{color:var(--tx)}" +
+      ".x97-pay-log{border:1px solid var(--line);border-radius:13px;overflow:hidden}" +
+      ".x97-pay-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}" +
+      ".x97-pay-row:last-child{border-bottom:0}.x97-pay-row b{display:block;font-size:13px}" +
+      ".x97-pay-row span{display:block;font-size:10.5px;color:var(--tx3);margin-top:2px}" +
+      ".x97-mini.danger{color:var(--neg)}" +
+      // Earnings chart — earned is always the left bar, so identity never rests on hue
+      ".x97-earn-top{display:flex;align-items:flex-start;justify-content:space-between;gap:11px}" +
+      ".x97-earn-value{font-size:29px;line-height:1.05;margin-top:8px;letter-spacing:-.03em}" +
+      ".x97-earn-key{display:flex;gap:14px;margin:4px 0 9px}" +
+      ".x97-earn-key span{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:750;color:var(--tx3)}" +
+      ".x97-earn-key span::before{content:'';width:9px;height:9px;border-radius:3px}" +
+      ".x97-earn-key .in::before{background:var(--pos)}.x97-earn-key .out::before{background:var(--neg)}" +
+      ".x97-earn-chart{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:9px;align-items:end;height:96px}" +
+      ".x97-earn-col{display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;min-width:0}" +
+      ".x97-earn-bars{flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center;gap:2px}" +
+      ".x97-earn-bars i{width:38%;max-width:15px;border-radius:4px 4px 0 0;min-height:0;transition:height .3s cubic-bezier(.22,1,.36,1)}" +
+      ".x97-earn-bars .in{background:var(--pos)}.x97-earn-bars .out{background:var(--neg)}" +
+      ".x97-earn-mon{font-size:9.5px;font-weight:750;color:var(--tx3);white-space:nowrap}" +
+      ".x97-earn-col.now .x97-earn-mon{color:var(--tx);font-weight:850}" +
+      ".x97-earn-now{margin-top:11px;font-size:11px;color:var(--tx3);font-weight:650}" +
+      ".x97-earn-table{border:1px solid var(--line);border-radius:13px;overflow:hidden}" +
+      ".x97-earn-row{display:grid;grid-template-columns:minmax(0,1.2fr) repeat(3,minmax(0,1fr));gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);align-items:center}" +
+      ".x97-earn-row:last-child{border-bottom:0}" +
+      ".x97-earn-row.head{background:var(--card2);font-size:9.5px;text-transform:uppercase;letter-spacing:.07em;font-weight:800;color:var(--tx3)}" +
+      ".x97-earn-row-mon{font-size:12px;font-weight:750;color:var(--tx);overflow:hidden;text-overflow:ellipsis}" +
+      ".x97-earn-row-num{font-size:12px;text-align:right;overflow:hidden;text-overflow:ellipsis}" +
+      // Documents
+      ".x97-doc-preview{border:1px solid var(--line);border-radius:13px;padding:14px;background:var(--card2);font-size:12.5px;line-height:1.6;color:var(--tx);white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto}" +
+      ".x97-doc-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}.x97-doc-actions .x97-btn{flex:1;min-width:130px}" +
+      "@media(max-width:560px){.x97-earn-value{font-size:25px}.x97-earn-chart{height:84px}.x97-earn-row{grid-template-columns:minmax(0,1.1fr) repeat(3,minmax(0,1fr));gap:6px;padding:9px 10px}.x97-earn-row-num{font-size:11px}.x97-fx-value{font-size:25px}.x97-fx-ticks{grid-template-columns:repeat(2,minmax(0,1fr));gap:11px}.x97-fx-leg-row{grid-template-columns:1fr}.x97-fx-amount{text-align:left}.x97-fx-result{justify-content:flex-start}}";
     document.head.appendChild(style);
   }
 
@@ -1091,7 +1453,7 @@
     var paid = records.filter(function (x) { return isPaid(x.status); });
     var ugx = pending.filter(function (x) { return String(x.currency).toUpperCase() !== "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
     var usd = pending.filter(function (x) { return String(x.currency).toUpperCase() === "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
-    var paidAmount = paid.reduce(function (a, x) { return a + num(x.amount); }, 0);
+    var paidAmount = records.reduce(function (a, x) { return a + receivedOf(x); }, 0);
     var attention = pending.filter(function (x) { var t = timing(x); return t.key === "overdue" || t.key === "today" || t.key === "very-soon" || !x.expectedBy || num(x.amount) <= 0; }).length;
     return { key: key, records: records, pending: pending, paid: paid, ugx: ugx, usd: usd, paidAmount: paidAmount, attention: attention };
   }
@@ -1135,6 +1497,7 @@
         '<section class="x97-section">' + sectionHead("Needs attention", "View Upcoming", "go-upcoming") + '<div class="x97-card x97-pad">' + attentionRows + '</div></section>' +
         (function(){var s=messagingSummary(doc);var pillOd=s.overdue?'<span class="x97-pill bad">'+s.overdue+' overdue</span>':(s.dueSoon?'<span class="x97-pill warn">'+s.dueSoon+' due soon</span>':'<span class="x97-pill good">'+icon("check",11)+'All clear</span>');return '<section class="x97-section">' + sectionHead("Messaging", "Open", "open-messaging") + '<button class="x97-msg-card" data-x97-action="open-messaging"><div class="x97-msg-icon">' + icon("send") + '</div><div class="x97-msg-body"><div class="x97-msg-title">WhatsApp reminders &amp; campaigns</div><div class="x97-msg-sub">' + s.contacts + ' contacts · ' + s.campaigns + ' campaigns' + (remindExt.ready?' · sender connected':'') + '</div><div class="x97-msg-pills">' + pillOd + '</div></div>' + icon("chevron") + '</button></section>';})() +
         '<section class="x97-section">' + sectionHead("Next 7 days") + '<div class="x97-card x97-pad"><div class="x97-hero-meta" style="margin-bottom:4px"><div class="x97-stat"><span>Expected in</span><b class="x97-green">' + money(in7, "UGX") + '</b></div><div class="x97-stat"><span>Expected out</span><b class="x97-red">' + money(out7, "UGX") + '</b></div></div>' + timelineRows + '</div></section>' +
+        earnCardHTML(doc) +
         fxCardHTML(doc) +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Accounts", "Add account", "add-account") + '<div class="x97-card x97-pad">' + (accountRows || '<div class="x97-empty"><strong>No accounts yet</strong><p>Add your bank, mobile money or cash balance.</p></div>') + '</div></section>' +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Incoming pipeline", "View all months", "go-upcoming-months") + '<div class="x97-grid x97-pipeline">' + pipeline + '</div></section>' +
@@ -1226,7 +1589,13 @@
 
   function upcomingCard(item) {
     var t = timing(item), currency = String(item.currency || "UGX").toUpperCase();
-    return '<article class="x97-item x97-card" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '"><div class="x97-item-top"><div class="x97-item-main"><div class="x97-item-category">' + esc(item.category || "Uncategorised") + '</div><div class="x97-item-title">' + esc(item.client || "Untitled upcoming payment") + '</div></div><div class="x97-item-amount x97-money ' + (currency === "USD" ? "x97-teal" : isPaid(item.status) ? "x97-green" : "") + '">' + (num(item.amount) ? money(item.amount, currency) : "Amount not set") + '</div></div><div class="x97-item-foot"><span class="x97-pill ' + esc(t.cls) + '">' + icon("clock", 12) + esc(t.label) + '</span>' + (item.expectedBy ? '<span class="x97-pill">' + icon("calendar", 12) + esc(formatDate(item.expectedBy, false)) + '</span>' : '') + '<span class="x97-pill ' + (isPaid(item.status) ? "good" : "") + '">' + esc(normalizeStatus(item.status)) + '</span><div class="x97-item-actions">' + (!isPaid(item.status) && !isCancelled(item.status) ? '<button class="x97-mini" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("check", 12) + ' Paid</button>' : '') + '<button class="x97-mini" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">' + icon("edit", 12) + ' Edit</button></div></div></article>';
+    var part = isPartPaid(item);
+    var gross = grossOf(item), already = paidOf(item), left = outstandingOf(item);
+    var partHTML = part
+      ? '<div class="x97-pay-progress compact"><div class="x97-pay-bar"><i style="width:' + Math.min(100, Math.round(already / (gross || 1) * 100)) + '%"></i></div>' +
+        '<div class="x97-pay-split"><span>' + esc(money(already, currency)) + ' in</span><b>of ' + esc(money(gross, currency)) + '</b></div></div>'
+      : "";
+    return '<article class="x97-item x97-card" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '"><div class="x97-item-top"><div class="x97-item-main"><div class="x97-item-category">' + esc(item.category || "Uncategorised") + '</div><div class="x97-item-title">' + esc(item.client || "Untitled upcoming payment") + '</div></div><div class="x97-item-amount x97-money ' + (currency === "USD" ? "x97-teal" : isPaid(item.status) ? "x97-green" : "") + '">' + (num(item.amount) ? money(isPaid(item.status) ? gross : left, currency) : "Amount not set") + '</div></div>' + partHTML + '<div class="x97-item-foot"><span class="x97-pill ' + esc(t.cls) + '">' + icon("clock", 12) + esc(t.label) + '</span>' + (item.expectedBy ? '<span class="x97-pill">' + icon("calendar", 12) + esc(formatDate(item.expectedBy, false)) + '</span>' : '') + '<span class="x97-pill ' + (isPaid(item.status) ? "good" : part ? "warn" : "") + '">' + esc(normalizeStatus(item.status)) + '</span><div class="x97-item-actions">' + (!isPaid(item.status) && !isCancelled(item.status) ? '<button class="x97-mini" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("check", 12) + (part ? " Add payment" : " Paid") + '</button>' : '') + '<button class="x97-mini" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">' + icon("edit", 12) + ' Edit</button></div></div></article>';
   }
 
   function groupFollowups(items) {
@@ -1404,13 +1773,16 @@
       field("WhatsApp number", '<input class="x97-input" name="phone" inputmode="tel" value="' + attr(item.phone || "") + '" placeholder="e.g. 0772 123 456">' +
         (hasContacts ? '<input class="x97-input x97-contact-search" style="margin-top:8px" placeholder="Or search any contact — e.g. a name, nickname, part of a number…">' : '') +
         '<div id="x97-contact-suggest">' + contactPickerHTML("", doc, item.client, item.phone) + '</div>', "Used for payment reminders. Local (0772…) or full (+256772…) both work.") +
-      '<div class="x97-fields-2">' + field("Amount", '<input class="x97-input" name="amount" inputmode="decimal" type="number" min="0" step="1" value="' + attr(item.amount) + '" placeholder="0">') + field("Currency", '<select class="x97-select" name="currency">' + option("UGX","UGX",item.currency) + option("USD","USD",item.currency) + '</select>') + '</div>' +
+      '<div class="x97-fields-2">' + field(existing && paidOf(item) > 0 ? "Invoice total" : "Amount", '<input class="x97-input" name="amount" inputmode="decimal" type="number" min="0" step="1" value="' + attr(existing ? grossOf(item) : item.amount) + '" placeholder="0">', existing && paidOf(item) > 0 ? money(paidOf(item), item.currency) + " already received — outstanding follows from this total." : "") + field("Currency", '<select class="x97-select" name="currency">' + option("UGX","UGX",item.currency) + option("USD","USD",item.currency) + '</select>') + '</div>' +
       '<details class="x97-more"' + (existing ? " open" : "") + '><summary class="x97-more-summary">' + icon("chevron", 12) + ' More details</summary><div class="x97-more-body">' +
       '<div class="x97-fields-2">' +
       field("Category", '<select class="x97-select" name="category">' + categories.map(function(x){return option(x,x,item.category);}).join("") + '</select>') +
       field("Status", '<select class="x97-select" name="status">' + statuses.map(function(x){return option(x,x,item.status);}).join("") + '</select>') + '</div>' +
       field("Expected date", '<input class="x97-input" name="expectedBy" type="date" value="' + attr(item.expectedBy) + '"><div class="x97-chips" style="padding-top:7px"><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="0">Today</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="7">+7 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="30">+30 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-value="month-end">Month end</button></div>') +
       field("Note", '<textarea class="x97-textarea" name="note" maxlength="500" placeholder="Invoice, follow-up context, or next action">' + esc(item.note) + '</textarea>') + '</div></details></form>';
+    if (existing) body += '<div class="x97-doc-actions"><button type="button" class="x97-btn" data-x97-action="open-invoice" data-id="' + attr(item.id) + '">' + icon("list", 15) + ' Invoice</button>' +
+      (paidOf(item) > 0 ? '<button type="button" class="x97-btn" data-x97-action="open-receipt" data-id="' + attr(item.id) + '">' + icon("check", 15) + ' Receipt</button>' : '') +
+      (!isPaid(item.status) && !isCancelled(item.status) ? '<button type="button" class="x97-btn teal" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("wallet", 15) + ' Record payment</button>' : '') + '</div>';
     var foot = (existing ? '<button class="x97-btn danger" data-x97-action="delete-upcoming" data-id="' + attr(item.id) + '">' + icon("trash") + ' Delete</button>' : '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button>') + '<button class="x97-btn primary" type="submit" form="x97-upcoming-form">' + icon("check") + (existing ? " Save changes" : " Add upcoming") + '</button>';
     openSheet(existing ? "Edit upcoming" : "Add upcoming", body, foot, { afterOpen: function (back) {
       var clientInput = back.querySelector('input[name="client"]'), phoneInput = back.querySelector('input[name="phone"]'), searchInput = back.querySelector(".x97-contact-search"), box = back.querySelector("#x97-contact-suggest");
@@ -1429,6 +1801,58 @@
         refresh();
       });
     } });
+  }
+
+  function openPaymentForm(id) {
+    var doc = readDoc();
+    var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(id); });
+    if (!item) { toast("That payment is no longer there", "error"); return; }
+    var currency = String(item.currency || "UGX").toUpperCase();
+    var gross = grossOf(item), already = paidOf(item), left = outstandingOf(item);
+    var history = paymentsFor(doc, item.id);
+    var accounts = (doc.balances || []).map(function (b) { return option(b.id, b.account + " · " + money(b.balance, FX_HOME), ""); }).join("");
+    var progress = already > 0
+      ? '<div class="x97-pay-progress"><div class="x97-pay-bar"><i style="width:' + Math.min(100, Math.round(already / (gross || 1) * 100)) + '%"></i></div>' +
+        '<div class="x97-pay-split"><span>Paid ' + money(already, currency) + '</span><b>' + money(left, currency) + ' left</b></div></div>'
+      : "";
+    var historyHTML = history.length
+      ? '<div class="x97-field"><label>Payments so far</label><div class="x97-pay-log">' + history.map(function (p) {
+          return '<div class="x97-pay-row"><div><b class="x97-money">' + money(p.amount, p.currency) + '</b><span>' + esc(formatDate(p.date, true)) + (p.accountName ? " · " + esc(p.accountName) : "") + '</span></div>' +
+            '<button type="button" class="x97-mini danger" data-x97-action="undo-payment" data-id="' + attr(p.id) + '">' + icon("trash", 12) + ' Undo</button></div>';
+        }).join("") + '</div></div>'
+      : "";
+    var body = '<form id="x97-pay-form" data-x97-form="payment"><input type="hidden" name="id" value="' + attr(item.id) + '">' +
+      '<div class="x97-card x97-pad" style="margin-bottom:14px"><div class="x97-row-sub">' + esc(item.client || "Receivable") + '</div>' +
+        '<div class="x97-money" style="font-size:28px;margin-top:5px">' + money(left, currency) + '</div>' +
+        '<div class="x97-row-sub">Still owed of ' + esc(money(gross, currency)) + '</div>' + progress + '</div>' +
+      field("Amount received", '<input class="x97-input" name="amount" type="number" required min="1" max="' + attr(left) + '" step="1" value="' + attr(left) + '">' +
+        '<div class="x97-chips" style="padding-top:7px"><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="25">25%</button><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="50">50%</button><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="75">75%</button><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="100">Full amount</button></div>',
+        "Enter less than the full amount to record a part payment — the rest stays outstanding.") +
+      field("Date received", '<input class="x97-input" name="date" type="date" required value="' + todayISO() + '">') +
+      field("Into which account", '<select class="x97-select" name="accountId"><option value="">Don\'t change any balance</option>' + accounts + '</select>',
+        currency === "USD" ? "Dollars are converted at today's live rate before the balance moves." : "The selected account balance goes up by this amount.") +
+      field("Note", '<input class="x97-input" name="note" maxlength="200" placeholder="Optional — e.g. MoMo ref, deposit slip">') +
+      historyHTML + '</form>';
+    var foot = '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button>' +
+      '<button class="x97-btn primary" type="submit" form="x97-pay-form">' + icon("check") + ' Record payment</button>';
+    openSheet("Record payment", body, foot);
+  }
+
+  function submitPayment(form) {
+    var v = formValues(form);
+    var received = roundMoney(v.amount);
+    if (received <= 0) { toast("Enter how much came in", "error"); return; }
+    var saved = null;
+    updateDoc(function (doc) {
+      saved = applyPayment(doc, v.id, { amount: received, date: v.date, accountId: v.accountId, note: v.note });
+    }, "payment-record");
+    closeSheet();
+    if (saved) {
+      var doc = readDoc();
+      var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(v.id); });
+      var left = item ? outstandingOf(item) : 0;
+      toast(left > 0 ? money(left, String(saved.currency)) + " still outstanding" : "Settled in full — nice one", "success");
+    }
   }
 
   function openFilters(doc) {
@@ -1517,7 +1941,15 @@
 
   function submitUpcoming(form) {
     var v=formValues(form), id=v.id||uid("fu");
-    updateDoc(function(doc){var i=doc.followups.findIndex(function(x){return String(x.id)===String(id);});var item={id:id,client:v.client.trim(),category:v.category,amount:roundMoney(v.amount),currency:v.currency,status:v.status,expectedBy:v.expectedBy,phone:(v.phone||"").trim(),note:v.note.trim()};if(i>=0)doc.followups[i]=Object.assign({},doc.followups[i],item);else doc.followups.unshift(item);},"upcoming-save");
+    updateDoc(function(doc){
+      var i=doc.followups.findIndex(function(x){return String(x.id)===String(id);});
+      var gross=roundMoney(v.amount);
+      var already=i>=0?paidOf(doc.followups[i]):0;
+      // The form edits the invoiced total; what is still owed follows from it.
+      var settled=already>0&&already>=gross-0.5;
+      var item={id:id,client:v.client.trim(),category:v.category,gross:gross,paid:already,amount:already>0&&!settled?roundMoney(gross-already):gross,currency:v.currency,status:settled?"Paid":v.status,expectedBy:v.expectedBy,phone:(v.phone||"").trim(),note:v.note.trim()};
+      if(i>=0)doc.followups[i]=Object.assign({},doc.followups[i],item);else doc.followups.unshift(item);
+    },"upcoming-save");
     closeSheet(); if(remindState.open) refreshRemind();
   }
 
@@ -2796,7 +3228,7 @@
   }
 
   document.addEventListener("submit", function (e) {
-    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="filters")submitFilters(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);else if(type==="wa-numbers")submitNumbers(form);else if(type==="google-setup")submitGoogleSetup(form);
+    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="payment")submitPayment(form);else if(type==="filters")submitFilters(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);else if(type==="wa-numbers")submitNumbers(form);else if(type==="google-setup")submitGoogleSetup(form);
   });
 
   document.addEventListener("input", function (e) {
@@ -2818,7 +3250,9 @@
     if(action==="reset-templates"){updateDoc(function(doc){if(doc.settings)doc.settings.reminderTemplates=null;},"reminder-templates-reset");closeSheet();openTemplateManager();return;}
     if(action==="add-upcoming"){openUpcomingForm();return;}
     if(action==="edit-upcoming"){e.stopPropagation();openUpcomingForm(btn.dataset.id);return;}
-    if(action==="mark-paid"){e.stopPropagation();updateDoc(function(doc){var x=doc.followups.find(function(i){return String(i.id)===String(btn.dataset.id);});if(x)x.status="Paid";},"upcoming-paid");return;}
+    if(action==="mark-paid"){e.stopPropagation();openPaymentForm(btn.dataset.id);return;}
+    if(action==="pay-part"){var pf=document.getElementById("x97-pay-form");if(pf){var cap=num(pf.amount.max);pf.amount.value=Math.max(1,Math.round(cap*num(btn.dataset.value)/100));}return;}
+    if(action==="undo-payment"){if(confirm("Undo this payment? The amount goes back to outstanding and any account credit is reversed.")){var pid=btn.dataset.id,fid="";updateDoc(function(doc){var p=(doc.payments||[]).find(function(x){return String(x.id)===String(pid);});if(p)fid=p.followupId;reversePayment(doc,pid);},"payment-undo");closeSheet();if(fid)openPaymentForm(fid);}return;}
     if(action==="delete-upcoming"){if(confirm("Delete this upcoming payment?")){updateDoc(function(doc){doc.followups=doc.followups.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"upcoming-delete");closeSheet();}return;}
     if(action==="quick-date"){var input=document.querySelector("#x97-upcoming-form [name=expectedBy]");if(input){input.value=btn.dataset.value==="month-end"?dateISO(endOfMonth(todayDate())):dateISO(addDays(todayDate(),num(btn.dataset.days)));}return;}
     if(action==="upcoming-view"){state.upcoming.view=btn.dataset.value;savePrefs();scheduleRender(0);return;}
@@ -2845,6 +3279,13 @@
     if(action==="open-converter"){openConverter();return;}
     if(action==="fx-refresh"){fxRefresh(true);return;}
     if(action==="fx-swap"){fxSwap();return;}
+    if(action==="open-earnings"){openEarnings();return;}
+    if(action==="open-exports"){openExports();return;}
+    if(action==="export-csv"){exportCSV(btn.dataset.kind);return;}
+    if(action==="open-invoice"){e.stopPropagation();openDocument(btn.dataset.id,"invoice");return;}
+    if(action==="open-receipt"){e.stopPropagation();openDocument(btn.dataset.id,"receipt");return;}
+    if(action==="copy-document"){var ta=document.getElementById("x97-doc-text");if(ta){navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(ta.value).then(function(){toast("Copied","success");},function(){toast("Could not copy","error");}):(ta.style.display="block",ta.select(),toast("Select and copy","success"));}return;}
+    if(action==="send-document"){var sdoc=readDoc();var sitem=sdoc&&(sdoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(sitem){var body=documentText(sitem,sdoc,btn.dataset.kind);window.open("https://wa.me/"+waNumber(sitem.phone,sdoc)+"?text="+encodeURIComponent(body),"_blank");closeSheet();}return;}
     if(action==="fx-amount"){fxConv.amount=btn.dataset.value;var amt=document.getElementById("x97-fx-amount");if(amt)amt.value=fxConv.amount;fxPaint();return;}
   }, true);
 
@@ -2864,7 +3305,7 @@
   }
 
   function boot() {
-    injectCSS();injectMsgCSS();injectFxCSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
+    injectCSS();injectMsgCSS();injectFeatureCSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
     var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
     var observer=new MutationObserver(function(mutations){
       var relevant=mutations.some(function(m){
@@ -2880,7 +3321,7 @@
     observer.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:["class"]});
     watchData();
     window.addEventListener("pageshow",syncMode);window.addEventListener("focus",function(){setTimeout(syncMode,30);});
-    window.__x97v2={version:VERSION,render:scheduleRender,read:readDoc,analytics:function(){var d=readDoc();return d?analytics(d):null;},fx:{rates:fxLoad,refresh:function(){fxRefresh(true);},convert:fxConvert},selfTest:function(){var d=readDoc(),fx=fxLoad();return {version:VERSION,dataReady:!!d,followups:d?d.followups.length:0,facilities:d?d.credit.length:0,loans:d?virtualLegacyLoans(d).length:0,screen:currentScreen,fx:fx?{source:fx.source,day:fx.day,ugx:fx.rates.UGX,currencies:Object.keys(fx.rates).length,stale:fxStale(fx)}:null};}};
+    window.__x97v2={version:VERSION,render:scheduleRender,read:readDoc,analytics:function(){var d=readDoc();return d?analytics(d):null;},fx:{rates:fxLoad,refresh:function(){fxRefresh(true);},convert:fxConvert},money:{gross:grossOf,paid:paidOf,outstanding:outstandingOf,earned:earnedIn,series:earningsSeries,csv:function(kind){return csvFor(readDoc(),kind).csv;},doc:function(id,kind){var d=readDoc();var i=(d.followups||[]).find(function(x){return String(x.id)===String(id);});return i?documentText(i,d,kind):"";}},selfTest:function(){var d=readDoc(),fx=fxLoad();return {version:VERSION,dataReady:!!d,followups:d?d.followups.length:0,payments:d?d.payments.length:0,facilities:d?d.credit.length:0,loans:d?virtualLegacyLoans(d).length:0,screen:currentScreen,fx:fx?{source:fx.source,day:fx.day,ugx:fx.rates.UGX,currencies:Object.keys(fx.rates).length,stale:fxStale(fx)}:null};}};
   }
 
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();

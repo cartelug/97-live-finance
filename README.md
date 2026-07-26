@@ -237,8 +237,56 @@ so a provider having a bad day can never overwrite a good rate with a broken one
 
 ---
 
-## 7. What it does — and doesn't
-It **tracks, forecasts, advises**, **converts currencies at live daily rates** and
+## 7. Payments, part payments & earnings
+Marking something **Paid** now records an actual payment instead of just
+flipping a label. Tap **Paid** (or **Record payment**) on any upcoming item and
+you get: how much came in, the date, and which account it landed in.
+
+- **Part payments are real.** Enter less than the full amount and the rest
+  stays outstanding — the dashboard, the overdue count and the WhatsApp chase
+  message all quote **what's still owed**, not the original invoice. The card
+  shows a progress bar: *UGX 4,000,000 in — of UGX 10,000,000*.
+- **Money lands somewhere.** Pick an account and its balance goes up by the
+  amount received. Dollar payments are converted at the day's live rate first
+  (see the converter above), so shilling balances stay honest.
+- **Nothing is one-way.** Every payment is listed on the item with an **Undo**
+  that reverses both the ledger entry and the account credit.
+- **Earnings history.** The dashboard carries an **Earnings** card — received
+  this month, spent, kept, and a six-month bar chart of in vs out. **History**
+  opens the full month-by-month table and every payment received.
+
+The invoice total lives on the record too, so editing an item edits what the
+job was worth and the outstanding figure follows from it.
+
+> Under the hood the item's `amount` field keeps meaning *what is still owed*,
+> which is what every existing screen and the AI copilot already assumed — so
+> they all became correct the moment part payments arrived, with no changes.
+
+---
+
+## 8. Exports & documents
+**Earnings → Export** writes spreadsheet files your accountant can open
+directly — no formatting to unpick:
+
+- **Receivables** — invoice total, received, outstanding, status, dates.
+- **Payments received** — every payment, with the UGX value of dollar receipts.
+- **Expenses** — planned and actual.
+
+Files are UTF-8 with a BOM so Excel gets shillings and accented client names
+right, and any cell that starts with `=`, `+`, `-` or `@` is written as text so
+a spreadsheet can't treat imported data as a formula.
+
+**Invoices and receipts** come off any upcoming item (**Edit → Invoice** /
+**Receipt**). They're formatted WhatsApp text rather than a file to download —
+the client reads it straight in the chat. Numbering is automatic (`INV-2026-004`),
+receipts list every payment received, and **Send on WhatsApp** opens the chat
+with it filled in. Set your business name once and it's reused on every document.
+
+---
+
+## 9. What it does — and doesn't
+It **tracks, forecasts, advises**, **records what you actually get paid**,
+**converts currencies at live daily rates**, **exports your books** and
 **drafts and paces WhatsApp reminders**.
 It does **not** move money or connect to your mobile-money or bank accounts. You
 update balances and mark items paid; it does the maths, the alerts, the
