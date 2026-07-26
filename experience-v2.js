@@ -8,7 +8,7 @@
   if (window.__S97_EXPERIENCE_V2__) return;
   window.__S97_EXPERIENCE_V2__ = true;
 
-  var VERSION = "experience-v2.2";
+  var VERSION = "experience-v2.3";
   var DATA_KEY = "ns97-finance-v1";
   var PREF_KEY = "ns97.v2.upcoming.filters";
   var REFRESH_KEY = "ns97.v2.react-refresh";
@@ -230,6 +230,12 @@
     if (!doc.settings || typeof doc.settings !== "object") doc.settings = {};
     if (!Array.isArray(doc.creditLoans)) doc.creditLoans = [];
     if (!Array.isArray(doc.payments)) doc.payments = [];
+    // Recalculate structured deals in memory whenever a screen reads the
+    // document. This keeps old records compatible while making the derived
+    // amount/status/next-date fields agree with the payment ledger.
+    doc.followups.forEach(function (item) {
+      if (Array.isArray(item.parts) || paymentsFor(doc, item.id).length) rebuildDealParts(doc, item);
+    });
     return doc;
   }
 
@@ -240,18 +246,33 @@
      `paid` what has come in, which is what makes part payments honest. */
 
   function grossOf(item) {
+    if (item && Array.isArray(item.parts) && item.parts.length) {
+      return roundMoney(item.parts.reduce(function (sum, part) { return sum + num(part.amount); }, 0));
+    }
     var gross = num(item.gross);
     return gross > 0 ? gross : num(item.amount) + num(item.paid);
   }
 
-  function paidOf(item) { return Math.max(0, num(item.paid)); }
+  function paidOf(item) {
+    var paid = Math.max(0, num(item && item.paid));
+    // Older versions marked a record Paid without creating a payment ledger
+    // entry. Treat that legacy state as received, but keep real ledger values
+    // authoritative for every newer record.
+    return paid > 0 ? paid : item && isPaid(item.status) ? grossOf(item) : 0;
+  }
 
   function outstandingOf(item) { return Math.max(0, grossOf(item) - paidOf(item)); }
 
   function isPartPaid(item) { return paidOf(item) > 0 && outstandingOf(item) > 0; }
 
-  function paymentsFor(doc, followupId) {
+  function isReversedPayment(payment) { return !!(payment && (payment.reversedAt || /reversed/i.test(String(payment.status || "")))); }
+
+  function allPaymentsFor(doc, followupId) {
     return (doc.payments || []).filter(function (p) { return String(p.followupId) === String(followupId); });
+  }
+
+  function paymentsFor(doc, followupId) {
+    return allPaymentsFor(doc, followupId).filter(function (p) { return !isReversedPayment(p); });
   }
 
   // What actually landed. Items settled before payments existed have no ledger
@@ -266,12 +287,119 @@
   // `amount` keeps meaning "still owed" while it is open, and returns to the
   // invoiced total once settled (paid items are excluded from every sum, and
   // the Paid list should show what the job was worth, not zero).
+  function scheduleRowsFor(item) {
+    if (item && Array.isArray(item.parts) && item.parts.length) return item.parts.map(function (part, index) {
+      return {
+        id: String(part.id || (item.id + "::part-" + index)),
+        index: index + 1,
+        label: part.label || (dealLabelSingular(item) + " " + (index + 1)),
+        amount: roundMoney(part.amount),
+        dueDate: part.dueDate || "",
+        paid: num(part.paid),
+        paidOn: part.paidOn || "",
+        status: part.status || "Pending"
+      };
+    });
+    return [{ id: String(item && item.id || "single") + "::single", index: 1, label: "Payment", amount: grossOf(item), dueDate: item && item.expectedBy || "", paid: 0, paidOn: "", status: "Pending" }];
+  }
+
+  function orderedPayments(doc, item) {
+    return paymentsFor(doc, item.id).slice().sort(function (a, b) {
+      var ac = String(a.createdAt || a.date || ""), bc = String(b.createdAt || b.date || "");
+      return ac.localeCompare(bc);
+    });
+  }
+
+  function applyAllocationToRows(rows, partId, amount, date) {
+    var remaining = Math.max(0, num(amount));
+    var start = rows.findIndex(function (row) { return String(row.id) === String(partId); });
+    if (start < 0) start = 0;
+    for (var i = start; i < rows.length && remaining > 0; i++) {
+      var row = rows[i], left = Math.max(0, num(row.amount) - num(row.paid));
+      if (left <= 0) continue;
+      var applied = Math.min(left, remaining);
+      row.paid = roundMoney(num(row.paid) + applied);
+      row.paidOn = date || row.paidOn || "";
+      remaining = roundMoney(remaining - applied);
+    }
+    return remaining;
+  }
+
+  function projectSchedule(doc, item) {
+    var rows = scheduleRowsFor(item);
+    var payments = orderedPayments(doc, item);
+    if (payments.length) rows.forEach(function (row) { row.paid = 0; row.paidOn = ""; row.status = "Pending"; });
+    if (!payments.length && paidOf(item) > 0) {
+      var seeded = rows.reduce(function (sum, row) { return sum + num(row.paid); }, 0);
+      applyAllocationToRows(rows, null, Math.max(0, paidOf(item) - seeded), item.paidOn || todayISO());
+    }
+    payments.forEach(function (payment) {
+      var amount = Math.max(0, num(payment.amount));
+      var allocations = Array.isArray(payment.allocations) ? payment.allocations : [];
+      if (allocations.length) {
+        allocations.forEach(function (allocation) {
+          amount = applyAllocationToRows(rows, allocation.partId, allocation.amount, payment.date);
+        });
+      } else {
+        applyAllocationToRows(rows, null, amount, payment.date);
+      }
+    });
+    rows.forEach(function (row) {
+      row.status = row.paid >= num(row.amount) - 0.5 ? "Paid" : row.paid > 0 ? "Part Paid" : "Pending";
+    });
+    return rows;
+  }
+
+  function buildPaymentAllocations(doc, item, amount, targetPartId) {
+    var rows = projectSchedule(doc, item);
+    var remaining = Math.max(0, num(amount));
+    var start = targetPartId ? rows.findIndex(function (row) { return String(row.id) === String(targetPartId); }) : -1;
+    if (start < 0) start = rows.findIndex(function (row) { return num(row.paid) < num(row.amount) - 0.5; });
+    if (start < 0) start = 0;
+    var allocations = [];
+    for (var i = start; i < rows.length && remaining > 0; i++) {
+      var row = rows[i], left = Math.max(0, num(row.amount) - num(row.paid));
+      if (left <= 0) continue;
+      var applied = Math.min(left, remaining);
+      allocations.push({ partId: row.id, amount: roundMoney(applied) });
+      remaining = roundMoney(remaining - applied);
+    }
+    return { allocations: allocations, remaining: remaining };
+  }
+
+  function rebuildDealParts(doc, item) {
+    if (!item) return;
+    var schedule = projectSchedule(doc, item);
+    var gross = schedule.reduce(function (sum, row) { return sum + num(row.amount); }, 0);
+    var ledger = paymentsFor(doc, item.id);
+    var paid = ledger.length
+      ? ledger.reduce(function (sum, payment) { return sum + num(payment.amount); }, 0)
+      : Math.max(num(item.paid), schedule.reduce(function (sum, row) { return sum + num(row.paid); }, 0));
+    item.gross = roundMoney(gross || item.gross || item.amount);
+    item.paid = roundMoney(paid || (paymentsFor(doc, item.id).length ? 0 : num(item.paid)));
+    item.amount = roundMoney(Math.max(0, item.gross - item.paid));
+    if (!isCancelled(item.status)) item.status = item.paid >= item.gross - 0.5 ? "Paid" : item.paid > 0 ? "Part Paid" : "Pending";
+    var next = schedule.find(function (row) { return num(row.paid) < num(row.amount) - 0.5; });
+    if (next && next.dueDate) item.expectedBy = next.dueDate;
+    if (Array.isArray(item.parts)) item.parts.forEach(function (part, index) {
+      var row = schedule[index];
+      if (!row) return;
+      part.id = row.id;
+      part.paid = row.paid;
+      part.status = row.status;
+      part.paidOn = row.paidOn;
+    });
+  }
+
   function applyPayment(doc, followupId, entry) {
     var item = (doc.followups || []).find(function (x) { return String(x.id) === String(followupId); });
     if (!item) return null;
     var gross = grossOf(item);
-    var received = Math.min(Math.max(0, roundMoney(entry.amount)), Math.max(0, gross - paidOf(item)));
-    if (received <= 0) return null;
+    var outstanding = Math.max(0, gross - paidOf(item));
+    var received = roundMoney(entry.amount);
+    if (received <= 0 || received > outstanding + 0.5) return null;
+    var allocationPlan = buildPaymentAllocations(doc, item, received, entry.targetPartId);
+    if (allocationPlan.remaining > 0.5) return null;
     var payment = {
       id: uid("pay"),
       followupId: item.id,
@@ -283,6 +411,7 @@
       accountId: entry.accountId || "",
       accountName: "",
       note: (entry.note || "").trim(),
+      allocations: allocationPlan.allocations,
       createdAt: new Date().toISOString()
     };
     item.gross = gross;
@@ -304,7 +433,7 @@
       }
     }
     doc.payments.unshift(payment);
-    if (item.dealType && item.parts) rebuildDealParts(doc, item);
+    rebuildDealParts(doc, item);
     return payment;
   }
 
@@ -312,14 +441,12 @@
     var idx = (doc.payments || []).findIndex(function (p) { return String(p.id) === String(paymentId); });
     if (idx < 0) return false;
     var payment = doc.payments[idx];
-    doc.payments.splice(idx, 1);
+    if (isReversedPayment(payment)) return false;
+    payment.status = "Reversed";
+    payment.reversedAt = new Date().toISOString();
     var item = (doc.followups || []).find(function (x) { return String(x.id) === String(payment.followupId); });
     if (item) {
-      var gross = grossOf(item);
-      item.gross = gross;
-      item.paid = Math.max(0, paidOf(item) - num(payment.amount));
-      item.amount = item.paid > 0 ? roundMoney(gross - item.paid) : gross;
-      item.status = item.paid <= 0 ? "Pending" : "Part Paid";
+      rebuildDealParts(doc, item);
       var rest = paymentsFor(doc, item.id);
       item.paidOn = rest.length ? rest[0].date : "";
     }
@@ -327,12 +454,7 @@
       var account = (doc.balances || []).find(function (b) { return String(b.id) === String(payment.accountId); });
       if (account) account.balance = roundMoney(num(account.balance) - num(payment.creditedUGX != null ? payment.creditedUGX : payment.amount));
     }
-    if (item && item.dealType && item.parts) {
-      rebuildDealParts(doc, item);
-      item.paid = (doc.payments || []).filter(function (p) { return String(p.followupId) === String(item.id); }).reduce(function (s, p) { return s + num(p.amount); }, 0);
-      item.amount = outstandingOf(item);
-      item.status = item.paid >= grossOf(item) - 0.5 ? "Paid" : item.paid > 0 ? "Part Paid" : "Pending";
-    }
+    if (item) rebuildDealParts(doc, item);
     return true;
   }
 
@@ -343,13 +465,17 @@
 
   var DEAL_TYPES = {
     one: "One payment",
-    split: "Split · half and half",
+    deposit: "Deposit + balance",
+    split: "Equal split",
+    custom: "Custom schedule",
     monthly: "Monthly retainer",
     part: "Per part"
   };
 
   function normalizeDealType(value) {
     var raw = String(value || "one").trim().toLowerCase();
+    if (/deposit|balance/.test(raw)) return "deposit";
+    if (/custom|schedule|installment|instalment/.test(raw)) return "custom";
     if (/split|half/.test(raw)) return "split";
     if (/monthly|retainer|month/.test(raw)) return "monthly";
     if (/part|scene|episode|unit|milestone/.test(raw)) return "part";
@@ -360,12 +486,15 @@
     var normalized = normalizeDealType(type);
     if (normalized === "monthly") return "Amount per month";
     if (normalized === "part") return "Amount per " + dealLabelSingular({ partLabel: label || "parts" });
-    return "Total amount";
+    if (normalized === "deposit") return "Full deal total";
+    return "Deal total";
   }
 
   function dealTypeHint(type, label) {
     var normalized = normalizeDealType(type);
+    if (normalized === "deposit") return "Enter the full deal total and the deposit. The balance is calculated automatically.";
     if (normalized === "split") return "Enter the full contract total — the app divides it into two equal payments.";
+    if (normalized === "custom") return "Add each promised payment manually. The schedule must add up to the deal total.";
     if (normalized === "monthly") return "Enter the amount for each month — the deal total is calculated from the number of months.";
     if (normalized === "part") return "Enter the amount for each " + dealLabelSingular({ partLabel: label || "parts" }) + " — the deal total is calculated below.";
     return "Enter one total amount and one due date.";
@@ -408,12 +537,13 @@
 
   function dealPartsFor(item, values) {
     var type = normalizeDealType(values && values.dealType || item && item.dealType || "one");
-    var count = Math.max(1, Math.round(num(values && values.partCount || item && item.partCount || (type === "split" ? 2 : 1))));
+    var count = Math.max(1, Math.round(num(values && (values.partCount || values.scheduleCount) || item && item.partCount || ((type === "split" || type === "deposit") ? 2 : 1))));
     var label = String(values && values.partLabel || item && item.partLabel || (type === "monthly" ? "months" : "parts")).trim().toLowerCase() || "parts";
     var start = String(values && (values.startDate || values.expectedBy) || item && item.expectedBy || todayISO());
     var totalInput = roundMoney(values && values.amount != null ? values.amount : grossOf(item));
     var unit = type === "monthly" || type === "part" ? totalInput : (type === "split" ? Math.floor(totalInput / 2) : totalInput);
     if (type === "split") count = 2;
+    if (type === "deposit") count = 2;
     if (type === "one") count = 1;
     var dates = [];
     for (var i = 0; i < count; i++) {
@@ -426,16 +556,28 @@
       dates[0] = String(values && values.firstDue || dates[0]);
       dates[1] = String(values && values.secondDue || dates[1] || dates[0]);
     }
+    if (type === "deposit") {
+      dates[0] = String(values && (values.depositDue || values.firstDue) || dates[0]);
+      dates[1] = String(values && (values.balanceDue || values.secondDue) || dates[1] || dates[0]);
+    }
     var parts = [];
     for (var j = 0; j < count; j++) {
       var previous = item && item.parts && item.parts[j] ? item.parts[j] : {};
       var amount = unit;
       if (type === "split" && j === 1) amount = Math.max(0, totalInput - unit);
+      if (type === "deposit" && j === 0) amount = roundMoney(values && (values.depositAmount != null ? values.depositAmount : values.partAmount_0) != null ? (values.depositAmount != null ? values.depositAmount : values.partAmount_0) : (item && item.parts && item.parts[0] ? item.parts[0].amount : Math.floor(totalInput / 2)));
+      if (type === "deposit" && j === 1) amount = Math.max(0, totalInput - num(parts[0] && parts[0].amount));
+      if (type === "custom") {
+        var customAmount = values && values["partAmount_" + j];
+        if (customAmount == null && item && item.parts && item.parts[j]) customAmount = item.parts[j].amount;
+        amount = roundMoney(customAmount);
+      }
+      var rowLabel = type === "deposit" ? (j === 0 ? "Deposit" : "Balance") : type === "custom" ? String(values && values["partLabel_" + j] || previous.label || "Payment " + (j + 1)).trim() : label.replace(/s$/, "") + " " + (j + 1);
       if (type === "one") amount = totalInput;
       parts.push({
         id: previous.id || uid("part"),
         index: j + 1,
-        label: label.replace(/s$/, "") + " " + (j + 1),
+        label: rowLabel || ("Payment " + (j + 1)),
         amount: amount,
         dueDate: dates[j] || "",
         paid: num(previous.paid),
@@ -446,38 +588,31 @@
     return parts;
   }
 
-  function rebuildDealParts(doc, item) {
-    if (!item || !Array.isArray(item.parts)) return;
-    var payments = (doc.payments || []).filter(function (p) { return String(p.followupId) === String(item.id); });
-    item.parts.forEach(function (part) { part.paid = 0; part.status = "Pending"; part.paidOn = ""; });
-    var legacy = payments.length ? 0 : Math.max(0, num(item.paid));
-    var entries = payments.slice();
-    if (legacy > 0) entries.unshift({ amount: legacy, date: item.paidOn || todayISO() });
-    entries.forEach(function (payment) {
-      var remaining = Math.max(0, num(payment.amount));
-      item.parts.forEach(function (part) {
-        if (remaining <= 0) return;
-        var left = Math.max(0, num(part.amount) - num(part.paid));
-        var applied = Math.min(left, remaining);
-        part.paid = num(part.paid) + applied;
-        part.paidOn = payment.date || part.paidOn || "";
-        part.status = part.paid >= num(part.amount) - 0.5 ? "Paid" : "Part Paid";
-        remaining -= applied;
-      });
-    });
-  }
-
   function dealScheduleHTML(item, editable) {
     if (!item || !Array.isArray(item.parts) || (!isDeal(item) && !editable)) return "";
     var parts = item.parts || [], label = dealLabel(item), paidCount = dealPaidPartCount(item);
     var visible = editable ? parts : parts.slice(0, 5);
     var rows = visible.map(function (p, i) {
       var paid = num(p.paid) >= num(p.amount) - 0.5;
+      var partial = !paid && num(p.paid) > 0;
       var date = editable ? '<input class="x97-input x97-deal-date" name="partDate_' + i + '" type="date" value="' + attr(p.dueDate) + '"' + (editable === "locked" ? " disabled" : "") + '>' : esc(formatDate(p.dueDate, true));
-      return '<div class="x97-deal-row ' + (paid ? "paid" : "") + '"><span class="x97-deal-mark">' + (paid ? icon("check", 12) : (i + 1)) + '</span><div class="x97-deal-part"><b>' + esc(p.label || (dealLabelSingular(item) + " " + (i + 1))) + '</b><span>' + date + '</span></div><strong>' + money(p.amount, item.currency) + '</strong></div>';
+      var labelHTML = editable && normalizeDealType(item.dealType) === "custom" ? '<input class="x97-input x97-deal-label" name="partLabel_' + i + '" value="' + attr(p.label || "Payment " + (i + 1)) + '"' + (editable === "locked" ? " disabled" : "") + '>' : '<b>' + esc(p.label || (dealLabelSingular(item) + " " + (i + 1))) + '</b>';
+      var amountHTML = editable && normalizeDealType(item.dealType) === "custom" ? '<input class="x97-input x97-deal-amount" name="partAmount_' + i + '" type="number" min="0" step="1" value="' + attr(p.amount) + '"' + (editable === "locked" ? " disabled" : "") + '>' : '<strong>' + money(p.amount, item.currency) + '</strong>';
+      var paidText = partial ? ' · ' + money(p.paid, item.currency) + ' received' : '';
+      return '<div class="x97-deal-row ' + (paid ? "paid " : "") + (partial ? "partial" : "") + '"><span class="x97-deal-mark">' + (paid ? icon("check", 12) : (partial ? "·" : (i + 1))) + '</span><div class="x97-deal-part">' + labelHTML + '<span>' + date + paidText + '</span></div>' + amountHTML + '</div>';
     }).join("");
     if (!editable && parts.length > visible.length) rows += '<div class="x97-deal-more">+ ' + (parts.length - visible.length) + ' more ' + esc(label) + '</div>';
     return '<div class="x97-deal-schedule"><div class="x97-deal-schedule-head"><b>' + esc(label) + ' schedule</b><span>' + paidCount + ' of ' + parts.length + ' paid</span></div>' + rows + '</div>';
+  }
+
+  function customBuilderRows(item, count, start, locked) {
+    var rows = [];
+    for (var i = 0; i < Math.max(1, Math.min(24, Math.round(num(count) || 1))); i++) {
+      var previous = item && item.parts && item.parts[i] ? item.parts[i] : {};
+      var due = previous.dueDate || dateISO(addDays(start || todayISO(), i * 7));
+      rows.push('<div class="x97-custom-row"><span class="x97-custom-index">' + (i + 1) + '</span><div class="x97-custom-fields"><input class="x97-input" name="partLabel_' + i + '" value="' + attr(previous.label || "Payment " + (i + 1)) + '" placeholder="What is this payment for?"' + (locked ? " disabled" : "") + '><div class="x97-fields-2"><input class="x97-input" name="partAmount_' + i + '" type="number" min="0" step="1" value="' + attr(previous.amount || "") + '" placeholder="Amount"' + (locked ? " disabled" : "") + '><input class="x97-input" name="partDate_' + i + '" type="date" value="' + attr(due) + '"' + (locked ? " disabled" : "") + '></div></div></div>');
+    }
+    return rows.join("");
   }
 
   function dealSummaryHTML(doc) {
@@ -834,10 +969,11 @@
     if (kind === "payments") {
       return {
         name: "97-payments",
-        csv: toCSV(["Date", "Client", "Category", "Amount", "Currency", "Amount UGX", "Account", "Note"],
+        csv: toCSV(["Date", "Client", "Category", "Amount", "Currency", "Amount UGX", "Account", "Status", "Applied to", "Note"],
           (doc.payments || []).map(function (p) {
             var ugx = p.creditedUGX != null ? num(p.creditedUGX) : (String(p.currency).toUpperCase() === "USD" ? fxConvert(p.amount, "USD", FX_HOME) : num(p.amount));
-            return [p.date, p.client, p.category, num(p.amount), p.currency, ugx == null ? "" : Math.round(ugx), p.accountName, p.note];
+            var applied = Array.isArray(p.allocations) ? p.allocations.map(function (a) { return a.partId + ": " + num(a.amount); }).join(" | ") : "";
+            return [p.date, p.client, p.category, num(p.amount), p.currency, ugx == null ? "" : Math.round(ugx), p.accountName, p.status || "Received", applied, p.note];
           }))
       };
     }
@@ -850,9 +986,11 @@
     }
     return {
       name: "97-receivables",
-      csv: toCSV(["Client", "Category", "Invoice total", "Received", "Outstanding", "Currency", "Status", "Expected by", "Last payment", "Note"],
+      csv: toCSV(["Client", "Category", "Deal type", "Invoice total", "Received", "Outstanding", "Currency", "Status", "Next payment", "Next due", "Schedule", "Last payment", "Note"],
         (doc.followups || []).map(function (x) {
-          return [x.client, x.category, grossOf(x), paidOf(x), outstandingOf(x), String(x.currency || "UGX").toUpperCase(), normalizeStatus(x.status), x.expectedBy, x.paidOn || "", x.note];
+          var schedule = projectSchedule(doc, x), next = nextScheduledPayment(doc, x);
+          var text = schedule.length > 1 ? schedule.map(function (p) { return p.label + ": " + num(p.amount) + " " + (p.dueDate || "no date") + " (" + p.status + ")"; }).join(" | ") : "";
+          return [x.client, x.category, DEAL_TYPES[normalizeDealType(x.dealType)] || "One payment", grossOf(x), paidOf(x), outstandingOf(x), String(x.currency || "UGX").toUpperCase(), normalizeStatus(x.status), next ? next.label : "", next ? next.dueDate : x.expectedBy, text, x.paidOn || "", x.note];
         }))
     };
   }
@@ -891,7 +1029,7 @@
   function docNumber(prefix, item, doc) {
     var list = (doc.followups || []).slice().reverse();
     var seq = Math.max(1, list.findIndex(function (x) { return String(x.id) === String(item.id); }) + 1);
-    var d = parseLocalDate(item.expectedBy) || todayDate();
+    var d = parseLocalDate((nextScheduledPayment(doc, item) || {}).dueDate || item.expectedBy) || todayDate();
     return prefix + "-" + d.getFullYear() + "-" + String(seq).padStart(3, "0");
   }
 
@@ -907,9 +1045,16 @@
     lines.push("");
     lines.push("*Billed to:* " + (item.client || "—"));
     lines.push("*Date:* " + formatDate(todayISO()));
-    if (!receipt && item.expectedBy) lines.push("*Due:* " + formatDate(item.expectedBy));
+    var next = nextScheduledPayment(doc, item);
+    if (!receipt && next && next.dueDate) lines.push("*Next due:* " + (next.label ? next.label + " · " : "") + formatDate(next.dueDate));
     lines.push("");
-    lines.push((item.category || "Services") + " — " + money(grossOf(item), currency));
+    if (Array.isArray(item.parts) && item.parts.length > 1) {
+      lines.push("*Schedule*");
+      projectSchedule(doc, item).forEach(function (p) {
+        var left = Math.max(0, num(p.amount) - num(p.paid));
+        lines.push("· " + p.label + " — " + money(p.amount, currency) + (p.dueDate ? " · due " + formatDate(p.dueDate, true) : "") + (left <= 0.5 ? " · paid" : num(p.paid) > 0 ? " · " + money(p.paid, currency) + " received" : ""));
+      });
+    } else lines.push((item.category || "Services") + " — " + money(grossOf(item), currency));
     if (item.note) lines.push("_" + item.note + "_");
     lines.push("");
     lines.push("*Total:* " + money(grossOf(item), currency));
@@ -1448,6 +1593,14 @@
       .x97-field label{font-size:9.5px;letter-spacing:.1em}
       .x97-input,.x97-select,.x97-textarea{min-height:46px;border-radius:14px;font-size:13.5px}
       .x97-btn{min-height:44px;border-radius:14px}
+      .x97-deal-mode-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:0 0 15px}
+      .x97-deal-mode{min-width:0;min-height:66px;padding:9px 8px;text-align:left;border:1px solid var(--line);border-radius:13px;background:var(--card2);color:var(--tx2);cursor:pointer;transition:background .15s,border-color .15s,transform .15s}
+      .x97-deal-mode:hover{border-color:var(--line2);transform:translateY(-1px)}.x97-deal-mode.on{background:var(--posdim);border-color:var(--pos);color:var(--pos);box-shadow:var(--ring)}
+      .x97-deal-mode b{display:block;font-size:10.5px;line-height:1.2}.x97-deal-mode span{display:block;margin-top:5px;color:var(--tx3);font-size:9px;line-height:1.25}.x97-deal-mode.on span{color:var(--pos)}
+      .x97-custom-editor{display:none;margin:3px 0 14px}.x97-custom-editor:has([name^=partAmount_]){display:block}.x97-custom-editor-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:5px 0 8px}.x97-custom-editor-head b{display:block;font-size:12px;color:var(--tx)}.x97-custom-editor-head span:not(.x97-pill){display:block;color:var(--tx3);font-size:10px;margin-top:3px}
+      .x97-custom-row{display:flex;gap:8px;padding:9px 0;border-top:1px solid var(--line);align-items:flex-start}.x97-custom-index{width:24px;height:24px;display:grid;place-items:center;border-radius:50%;background:var(--card2);border:1px solid var(--line2);font-size:10px;font-weight:850;color:var(--tx2);flex:none;margin-top:4px}.x97-custom-fields{flex:1;min-width:0}.x97-custom-fields .x97-input{min-height:40px;font-size:12px;margin-bottom:7px}.x97-custom-fields .x97-fields-2{gap:7px}.x97-custom-fields .x97-fields-2 .x97-input{margin-bottom:0}.x97-single-preview{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:13px;border:1px solid var(--line);border-radius:14px;background:var(--card);font-size:11.5px;color:var(--tx2)}.x97-single-preview strong{font-size:15px;color:var(--pos)}
+      .x97-item-next{margin-top:5px;color:var(--tx3);font-size:10.5px}.x97-payment-target-list{border:1px solid var(--line);border-radius:13px;overflow:hidden;background:var(--card)}.x97-payment-target-row{display:flex;align-items:center;gap:8px;padding:9px 10px;border-top:1px solid var(--line)}.x97-payment-target-row:first-child{border-top:0}.x97-payment-target-row>span:nth-child(2){min-width:0;flex:1}.x97-payment-target-row b{display:block;font-size:11px;color:var(--tx)}.x97-payment-target-row small{display:block;margin-top:3px;font-size:9.5px;color:var(--tx3)}.x97-payment-target-row>strong{font-size:10.5px;color:var(--tx2);white-space:nowrap}.x97-deal-mark.good{background:var(--posdim);color:var(--pos);border-color:transparent}.x97-payment-hero{background:linear-gradient(145deg,var(--card),var(--posdim));border-color:rgba(14,117,72,.16)}
+      @media(max-width:620px){.x97-deal-mode-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.x97-deal-mode{min-height:60px}.x97-custom-editor-head{align-items:flex-start;flex-direction:column;gap:5px}}
       @media(min-width:760px){
         #x97-v2-root{padding:34px 30px 124px}
         .x97-dashboard-main{grid-template-columns:minmax(0,1.04fr) minmax(330px,.96fr);gap:20px}
@@ -1614,16 +1767,27 @@
     } else exitManagedMode();
   }
 
-  function timing(item) {
-    if (isPaid(item.status)) return { key: "paid", label: "Paid", cls: "good", days: null };
-    if (isCancelled(item.status)) return { key: "cancelled", label: "Cancelled", cls: "", days: null };
-    if (!item.expectedBy) return { key: "unscheduled", label: "Unscheduled", cls: "warn", days: null };
-    var days = daysBetween(todayDate(), parseLocalDate(item.expectedBy));
-    if (days < 0) return { key: "overdue", label: Math.abs(days) + (Math.abs(days) === 1 ? " day overdue" : " days overdue"), cls: "bad", days: days };
-    if (days === 0) return { key: "today", label: "Due today", cls: "bad", days: 0 };
-    if (days <= 4) return { key: "very-soon", label: "Due in " + days + " days", cls: "warn", days: days };
-    if (days <= 11) return { key: "soon", label: "Due in " + days + " days", cls: "warn", days: days };
-    return { key: "later", label: "Due in " + days + " days", cls: "", days: days };
+  function nextScheduledPayment(doc, item) {
+    if (!item || isCancelled(item.status)) return null;
+    var rows = doc ? projectSchedule(doc, item) : scheduleRowsFor(item);
+    return rows.filter(function (row) { return num(row.paid) < num(row.amount) - 0.5; }).sort(function (a, b) {
+      var ad = a.dueDate || "9999-12-31", bd = b.dueDate || "9999-12-31";
+      return ad.localeCompare(bd) || num(a.index) - num(b.index);
+    })[0] || null;
+  }
+
+  function timing(item, doc) {
+    if (isCancelled(item.status)) return { key: "cancelled", label: "Cancelled", cls: "", days: null, next: null };
+    var next = nextScheduledPayment(doc, item);
+    if (!next) return { key: "paid", label: "Paid", cls: "good", days: null, next: null };
+    var expectedBy = next.dueDate || item.expectedBy;
+    if (!expectedBy) return { key: "unscheduled", label: "Unscheduled", cls: "warn", days: null, next: next };
+    var days = daysBetween(todayDate(), parseLocalDate(expectedBy));
+    if (days < 0) return { key: "overdue", label: Math.abs(days) + (Math.abs(days) === 1 ? " day overdue" : " days overdue"), cls: "bad", days: days, next: next };
+    if (days === 0) return { key: "today", label: "Due today", cls: "bad", days: 0, next: next };
+    if (days <= 4) return { key: "very-soon", label: "Due in " + days + " days", cls: "warn", days: days, next: next };
+    if (days <= 11) return { key: "soon", label: "Due in " + days + " days", cls: "warn", days: days, next: next };
+    return { key: "later", label: "Due in " + days + " days", cls: "", days: days, next: next };
   }
 
   function expenseStats(doc) {
@@ -1700,6 +1864,31 @@
 
   function isActiveLoan(loan) { return !/repaid|cancel/i.test(String(loan.status || "Active")); }
 
+  function scheduledEvents(doc, includeSettled) {
+    var events = [];
+    (doc.followups || []).forEach(function (item) {
+      if (isCancelled(item.status)) return;
+      projectSchedule(doc, item).forEach(function (row) {
+        var outstanding = Math.max(0, num(row.amount) - num(row.paid));
+        if (!includeSettled && outstanding <= 0.5) return;
+        events.push({
+          id: item.id + "::" + row.id,
+          itemId: item.id,
+          client: item.client || "Incoming payment",
+          label: row.label || "Payment",
+          date: row.dueDate || "",
+          amount: includeSettled ? num(row.amount) : outstanding,
+          scheduledAmount: num(row.amount),
+          paid: num(row.paid),
+          currency: String(item.currency || "UGX").toUpperCase(),
+          item: item,
+          row: row
+        });
+      });
+    });
+    return events;
+  }
+
   function analytics(doc) {
     var balances = doc.balances || [];
     var cash = balances.reduce(function (a, b) { return a + num(b.balance); }, 0);
@@ -1707,22 +1896,23 @@
     var activeLoans = loans.filter(isActiveLoan);
     var debt = activeLoans.reduce(function (a, loan) { return a + estimateLoan(loan, todayISO()); }, 0);
     var open = (doc.followups || []).filter(isOpenFollowup);
-    var overdue = open.filter(function (x) { var t = timing(x); return t.key === "overdue"; });
-    var next7 = open.filter(function (x) { var t = timing(x); return t.days != null && t.days >= 0 && t.days <= 7; });
+    var events = scheduledEvents(doc, false);
+    var overdue = events.filter(function (x) { var d = daysBetween(todayDate(), parseLocalDate(x.date)); return d != null && d < 0; });
+    var next7 = events.filter(function (x) { var d = daysBetween(todayDate(), parseLocalDate(x.date)); return d != null && d >= 0 && d <= 7; });
     var currentMonth = monthKey(todayDate());
-    var thisMonth = open.filter(function (x) { return monthKey(x.expectedBy) === currentMonth; });
+    var thisMonth = events.filter(function (x) { return monthKey(x.date) === currentMonth; });
     var ugxMonth = thisMonth.filter(function (x) { return String(x.currency).toUpperCase() !== "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
     var usdMonth = thisMonth.filter(function (x) { return String(x.currency).toUpperCase() === "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
     var creditAvailable = (doc.credit || []).filter(isFacilityLive).reduce(function (a, f) {
       var borrowed = activeLoans.filter(function (l) { return String(l.facilityId) === String(f.id); }).reduce(function (s, l) { return s + num(l.principal); }, 0);
       return a + Math.max(0, num(f.limitOffer) - borrowed);
     }, 0);
-    return { cash: cash, loans: loans, activeLoans: activeLoans, debt: debt, open: open, overdue: overdue, next7: next7, ugxMonth: ugxMonth, usdMonth: usdMonth, creditAvailable: creditAvailable, expenses: expenseStats(doc) };
+    return { cash: cash, loans: loans, activeLoans: activeLoans, debt: debt, open: open, events: events, overdue: overdue, next7: next7, ugxMonth: ugxMonth, usdMonth: usdMonth, creditAvailable: creditAvailable, expenses: expenseStats(doc) };
   }
 
   function dashboardAttention(doc, a) {
     var items = [];
-    if (a.overdue.length) items.push({ type: "bad", title: a.overdue.length + " overdue incoming payment" + (a.overdue.length === 1 ? "" : "s"), sub: "Open Upcoming to follow up", nav: "upcoming" });
+    if (a.overdue.length) items.push({ type: "bad", title: a.overdue.length + " overdue incoming payment" + (a.overdue.length === 1 ? "" : "s"), sub: "Open Incoming to follow up", nav: "upcoming" });
     var overdueLoans = a.activeLoans.filter(function (l) { return daysBetween(todayDate(), parseLocalDate(dueDateForLoan(l))) < 0; });
     if (overdueLoans.length) items.push({ type: "bad", title: overdueLoans.length + " overdue credit repayment" + (overdueLoans.length === 1 ? "" : "s"), sub: "Review active borrowing", nav: "credit" });
     var soonLoans = a.activeLoans.filter(function (l) { var d = daysBetween(todayDate(), parseLocalDate(dueDateForLoan(l))); return d >= 0 && d <= 4; });
@@ -1730,16 +1920,15 @@
     if (a.next7.length) items.push({ type: "warn", title: a.next7.length + " incoming payment" + (a.next7.length === 1 ? "" : "s") + " due in 7 days", sub: "Review dates and clients", nav: "upcoming" });
     if (a.expenses.personalSafe < 0) items.push({ type: "bad", title: "Personal budget is overcommitted", sub: money(Math.abs(a.expenses.personalSafe), "UGX") + " above the safe amount", nav: "expenses" });
     if (a.expenses.businessSafe < 0) items.push({ type: "bad", title: "Business budget is overcommitted", sub: money(Math.abs(a.expenses.businessSafe), "UGX") + " above the safe amount", nav: "expenses" });
-    var unscheduled = a.open.filter(function (x) { return !x.expectedBy; }).length;
+    var unscheduled = a.open.filter(function (x) { var next = nextScheduledPayment(doc, x); return !next || !next.dueDate; }).length;
     if (unscheduled) items.push({ type: "warn", title: unscheduled + " incoming item" + (unscheduled === 1 ? " needs" : "s need") + " a date", sub: "Set an expected payment date", nav: "upcoming" });
     return items.slice(0, 4);
   }
 
   function timeline(doc, a) {
     var out = [];
-    a.open.forEach(function (x) {
-      var t = timing(x);
-      if (t.days != null && t.days >= 0 && t.days <= 7) out.push({ date: x.expectedBy, title: x.client || "Incoming payment", amount: num(x.amount), currency: x.currency || "UGX", direction: "in", source: "upcoming", id: x.id });
+    a.next7.forEach(function (x) {
+      out.push({ date: x.date, title: x.client || "Incoming payment", label: x.label, amount: num(x.amount), currency: x.currency || "UGX", direction: "in", source: "upcoming", id: x.itemId });
     });
     (doc.expenses.entries || []).forEach(function (x) {
       if (String(x.kind).toLowerCase() !== "planned") return;
@@ -1755,13 +1944,14 @@
   }
 
   function monthSummary(doc, key) {
-    var records = (doc.followups || []).filter(function (x) { return key === "unscheduled" ? !x.expectedBy : monthKey(x.expectedBy) === key; });
+    var events = scheduledEvents(doc, false).filter(function (x) { return key === "unscheduled" ? !x.date : monthKey(x.date) === key; });
+    var records = (doc.followups || []).filter(function (x) { return events.some(function (event) { return String(event.itemId) === String(x.id); }) || (key === "unscheduled" && !nextScheduledPayment(doc, x)); });
     var pending = records.filter(isOpenFollowup);
     var paid = records.filter(function (x) { return isPaid(x.status); });
-    var ugx = pending.filter(function (x) { return String(x.currency).toUpperCase() !== "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
-    var usd = pending.filter(function (x) { return String(x.currency).toUpperCase() === "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
+    var ugx = events.filter(function (x) { return String(x.currency).toUpperCase() !== "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
+    var usd = events.filter(function (x) { return String(x.currency).toUpperCase() === "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
     var paidAmount = records.reduce(function (a, x) { return a + receivedOf(x); }, 0);
-    var attention = pending.filter(function (x) { var t = timing(x); return t.key === "overdue" || t.key === "today" || t.key === "very-soon" || !x.expectedBy || num(x.amount) <= 0; }).length;
+    var attention = pending.filter(function (x) { var t = timing(x, doc); return t.key === "overdue" || t.key === "today" || t.key === "very-soon" || !t.next || !t.next.dueDate || num(x.amount) <= 0; }).length;
     return { key: key, records: records, pending: pending, paid: paid, ugx: ugx, usd: usd, paidAmount: paidAmount, attention: attention };
   }
 
@@ -1770,7 +1960,12 @@
     var attention = dashboardAttention(doc, a);
     var events = timeline(doc, a);
     var in7 = events.filter(function (x) { return x.direction === "in" && String(x.currency).toUpperCase() !== "USD"; }).reduce(function (s, x) { return s + x.amount; }, 0);
+    var in7USD = events.filter(function (x) { return x.direction === "in" && String(x.currency).toUpperCase() === "USD"; }).reduce(function (s, x) { return s + x.amount; }, 0);
     var out7 = events.filter(function (x) { return x.direction === "out"; }).reduce(function (s, x) { return s + x.amount; }, 0);
+    var collectedThisMonth = earnedIn(doc, monthKey(todayDate()));
+    var outstandingUGX = a.open.filter(function (x) { return String(x.currency || "UGX").toUpperCase() !== "USD"; }).reduce(function (s, x) { return s + outstandingOf(x); }, 0);
+    var outstandingUSD = a.open.filter(function (x) { return String(x.currency || "UGX").toUpperCase() === "USD"; }).reduce(function (s, x) { return s + outstandingOf(x); }, 0);
+    var actualSpend = (a.expenses.personalActual || 0) + (a.expenses.businessActual || 0);
     var months = [0, 1, 2].map(function (offset) { var d = startOfMonth(todayDate()); d.setMonth(d.getMonth() + offset); return monthKey(d); });
     var accountRows = (doc.balances || []).map(function (b) {
       return '<button class="x97-row" style="width:100%;border-left:0;border-right:0;border-top:0;background:transparent;text-align:left" data-x97-action="edit-account" data-id="' + attr(b.id) + '">' + accountIconBox(b.account) + '<div class="x97-row-main"><div class="x97-row-title">' + esc(b.account || "Account") + '</div><div class="x97-row-sub">' + esc(b.line || b.notes || "Tap to update balance") + '</div></div><div class="x97-row-value">' + money(b.balance, "UGX") + '</div></button>';
@@ -1787,7 +1982,7 @@
       var mon = dd ? dd.toLocaleDateString(undefined, { month: "short" }).toUpperCase() : "";
       return '<button class="x97-tl-row ' + tone + '" data-x97-nav="' + attr(x.source === "upcoming" ? "upcoming" : x.source) + '">'
         + '<div class="x97-tl-date"><span class="x97-tl-day x97-money">' + day + '</span><span class="x97-tl-mon">' + esc(mon) + '</span></div>'
-        + '<div class="x97-tl-body"><div class="x97-tl-title">' + esc(x.title) + '</div><div class="x97-tl-sub"><span class="x97-tl-dir">' + (din ? "IN" : "OUT") + '</span>' + esc(relDay(x.date)) + '</div></div>'
+        + '<div class="x97-tl-body"><div class="x97-tl-title">' + esc(x.title) + '</div><div class="x97-tl-sub"><span class="x97-tl-dir">' + (din ? "IN" : "OUT") + '</span>' + (x.label ? esc(x.label) + ' · ' : '') + esc(relDay(x.date)) + '</div></div>'
         + '<div class="x97-tl-amt x97-money">' + (din ? "+" : "−") + money(x.amount, x.currency) + '</div>'
         + '</button>';
     }).join("") + '</div>' : '<div class="x97-empty">' + icon("calendar", 25) + '<strong>No movement in the next 7 days</strong><p>Add dates to Upcoming or planned expenses to build this timeline.</p></div>';
@@ -1800,9 +1995,9 @@
       pageHeader("Financial command", "Dashboard", "Your cash position, next actions and upcoming money") +
       '<div class="x97-dashboard-main">' +
         '<section class="x97-card x97-hero x97-hero-command"><div class="x97-hero-topline"><div class="x97-hero-label">Available now</div><span class="x97-hero-live">Live position</span></div><div class="x97-hero-value x97-money">' + money(a.cash, "UGX") + '</div><div class="x97-hero-caption">Cash across your tracked accounts, before outstanding client money.</div><div class="x97-hero-meta"><div class="x97-stat"><span>Net position</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
-        '<section class="x97-command-actions x97-dashboard-wide"><button class="x97-command-action primary" data-x97-action="add-upcoming"><span class="x97-command-icon">' + icon("plus", 17) + '</span><span><b>Add incoming</b><small>Build a deal schedule</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="go-upcoming"><span class="x97-command-icon teal">' + icon("calendar", 17) + '</span><span><b>Review receivables</b><small>See what needs chasing</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="go-credit"><span class="x97-command-icon warn">' + icon("credit", 17) + '</span><span><b>Open credit</b><small>Available offers and debt</small></span>' + icon("chevron", 14) + '</button></section>' +
+        '<section class="x97-command-actions x97-dashboard-wide"><button class="x97-command-action primary" data-x97-action="record-payment"><span class="x97-command-icon">' + icon("wallet", 17) + '</span><span><b>Record payment</b><small>Update money received</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="add-upcoming"><span class="x97-command-icon teal">' + icon("plus", 17) + '</span><span><b>Add incoming deal</b><small>Build a payment schedule</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="go-expenses"><span class="x97-command-icon warn">' + icon("trend", 17) + '</span><span><b>Add expense</b><small>Keep cash position honest</small></span>' + icon("chevron", 14) + '</button></section>' +
         dealSummaryHTML(doc) +
-        '<section class="x97-section x97-glance-section x97-dashboard-wide">' + sectionHead("At a glance") + '<div class="x97-summary-grid"><div class="x97-card x97-summary"><div class="k">This month UGX</div><div class="v x97-money x97-green">' + money(a.ugxMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">This month USD</div><div class="v x97-money x97-teal">' + money(a.usdMonth, "", true) + '</div><div class="s">' + esc(usdEquivalent(a.usdMonth)) + '</div></div><div class="x97-card x97-summary"><div class="k">Safe personal</div><div class="v x97-money ' + (a.expenses.personalSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.personalSafe, "", true) + '</div><div class="s">After plans</div></div><div class="x97-card x97-summary"><div class="k">Safe business</div><div class="v x97-money ' + (a.expenses.businessSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.businessSafe, "", true) + '</div><div class="s">After plans</div></div></div></section>' +
+        '<section class="x97-section x97-glance-section x97-dashboard-wide">' + sectionHead("At a glance") + '<div class="x97-summary-grid"><div class="x97-card x97-summary"><div class="k">Collected this month</div><div class="v x97-money x97-green">' + money(collectedThisMonth, "UGX", true) + '</div><div class="s">Actual money received</div></div><div class="x97-card x97-summary"><div class="k">Due next 7 days</div><div class="v x97-money x97-teal">' + money(in7, "UGX", true) + '</div><div class="s">' + (in7USD ? '<span class="x97-teal">' + money(in7USD, "USD", true) + '</span> · ' : '') + 'Scheduled incoming</div></div><div class="x97-card x97-summary"><div class="k">Outstanding</div><div class="v x97-money x97-amber">' + money(outstandingUGX, "UGX", true) + '</div><div class="s">' + (outstandingUSD ? '<span class="x97-teal">' + money(outstandingUSD, "USD", true) + '</span> · ' : '') + 'Still owed by clients</div></div><div class="x97-card x97-summary"><div class="k">Actual spending</div><div class="v x97-money x97-red">' + money(actualSpend, "UGX", true) + '</div><div class="s">This month</div></div></div></section>' +
         '<section class="x97-section">' + sectionHead("Needs attention", "View Upcoming", "go-upcoming") + '<div class="x97-card x97-pad">' + attentionRows + '</div></section>' +
         (function(){var s=messagingSummary(doc);var pillOd=s.overdue?'<span class="x97-pill bad">'+s.overdue+' overdue</span>':(s.dueSoon?'<span class="x97-pill warn">'+s.dueSoon+' due soon</span>':'<span class="x97-pill good">'+icon("check",11)+'All clear</span>');return '<section class="x97-section">' + sectionHead("Messaging", "Open", "open-messaging") + '<button class="x97-msg-card" data-x97-action="open-messaging"><div class="x97-msg-icon">' + icon("send") + '</div><div class="x97-msg-body"><div class="x97-msg-title">WhatsApp reminders &amp; campaigns</div><div class="x97-msg-sub">' + s.contacts + ' contacts · ' + s.campaigns + ' campaigns' + (remindExt.ready?' · sender connected':'') + '</div><div class="x97-msg-pills">' + pillOd + '</div></div>' + icon("chevron") + '</button></section>';})() +
         '<section class="x97-section">' + sectionHead("Next 7 days") + '<div class="x97-card x97-pad"><div class="x97-hero-meta" style="margin-bottom:4px"><div class="x97-stat"><span>Expected in</span><b class="x97-green">' + money(in7, "UGX") + '</b></div><div class="x97-stat"><span>Expected out</span><b class="x97-red">' + money(out7, "UGX") + '</b></div></div>' + timelineRows + '</div></section>' +
@@ -1822,7 +2017,9 @@
 
   function availableMonths(doc) {
     var seen = {};
-    (doc.followups || []).forEach(function (x) { var k = monthKey(x.expectedBy); if (k) seen[k] = true; });
+    (doc.followups || []).forEach(function (x) {
+      scheduleRowsFor(x).forEach(function (row) { var k = monthKey(row.dueDate); if (k) seen[k] = true; });
+    });
     var base = startOfMonth(todayDate());
     for (var i = -2; i <= 11; i++) { var d = new Date(base); d.setMonth(d.getMonth() + i); seen[monthKey(d)] = true; }
     return Object.keys(seen).sort();
@@ -1839,43 +2036,45 @@
     return count;
   }
 
-  function followupMatches(item) {
+  function followupMatches(item, doc) {
     var f = state.upcoming;
     var q = String(f.search || "").trim().toLowerCase();
     if (q && [item.client, item.category, item.note, item.currency, item.status].join(" ").toLowerCase().indexOf(q) < 0) return false;
-    if (f.month === "unscheduled" && item.expectedBy) return false;
-    if (f.month !== "all" && f.month !== "unscheduled" && monthKey(item.expectedBy) !== f.month) return false;
+    var t = timing(item, doc), next = t.next, expectedBy = next ? next.dueDate : item.expectedBy;
+    if (f.month === "unscheduled" && expectedBy) return false;
+    if (f.month !== "all" && f.month !== "unscheduled" && monthKey(expectedBy) !== f.month) return false;
     if (f.statuses.length && f.statuses.indexOf(normalizeStatus(item.status)) < 0) return false;
     if (f.currencies.length && f.currencies.indexOf(String(item.currency || "UGX").toUpperCase()) < 0) return false;
     if (f.categories.length && f.categories.indexOf(String(item.category || "")) < 0) return false;
-    if (f.from && (!item.expectedBy || item.expectedBy < f.from)) return false;
-    if (f.to && (!item.expectedBy || item.expectedBy > f.to)) return false;
+    if (f.from && (!expectedBy || expectedBy < f.from)) return false;
+    if (f.to && (!expectedBy || expectedBy > f.to)) return false;
     if (f.minAmount !== "" && num(item.amount) < num(f.minAmount)) return false;
     if (f.maxAmount !== "" && num(item.amount) > num(f.maxAmount)) return false;
-    var t = timing(item), today = todayDate(), nowMonth = monthKey(today), next = new Date(startOfMonth(today)); next.setMonth(next.getMonth() + 1);
+    var today = todayDate(), nowMonth = monthKey(today), nextMonthDate = new Date(startOfMonth(today)); nextMonthDate.setMonth(nextMonthDate.getMonth() + 1);
     if (f.quick === "attention" && !(isOpenFollowup(item) && (t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7) || !item.expectedBy || num(item.amount) <= 0))) return false;
     if (f.quick === "overdue" && t.key !== "overdue") return false;
     if (f.quick === "today" && t.key !== "today") return false;
     if (f.quick === "next7" && !(isOpenFollowup(item) && t.days != null && t.days >= 0 && t.days <= 7)) return false;
     if (f.quick === "next30" && !(isOpenFollowup(item) && t.days != null && t.days >= 0 && t.days <= 30)) return false;
-    if (f.quick === "thisMonth" && monthKey(item.expectedBy) !== nowMonth) return false;
-    if (f.quick === "nextMonth" && monthKey(item.expectedBy) !== monthKey(next)) return false;
-    if (f.quick === "unscheduled" && item.expectedBy) return false;
+    if (f.quick === "thisMonth" && monthKey(expectedBy) !== nowMonth) return false;
+    if (f.quick === "nextMonth" && monthKey(expectedBy) !== monthKey(nextMonthDate)) return false;
+    if (f.quick === "unscheduled" && expectedBy) return false;
     if (f.quick === "paid" && !isPaid(item.status)) return false;
     return true;
   }
 
-  function sortFollowups(items) {
+  function sortFollowups(items, doc) {
     var mode = state.upcoming.sort;
     return items.sort(function (a, b) {
-      if (mode === "dateAsc") return String(a.expectedBy || "9999-12-31").localeCompare(String(b.expectedBy || "9999-12-31"));
-      if (mode === "dateDesc") return String(b.expectedBy || "0000-00-00").localeCompare(String(a.expectedBy || "0000-00-00"));
+      var at = timing(a, doc), bt = timing(b, doc), ad = at.next ? at.next.dueDate : a.expectedBy, bd = bt.next ? bt.next.dueDate : b.expectedBy;
+      if (mode === "dateAsc") return String(ad || "9999-12-31").localeCompare(String(bd || "9999-12-31"));
+      if (mode === "dateDesc") return String(bd || "0000-00-00").localeCompare(String(ad || "0000-00-00"));
       if (mode === "amountDesc") return num(b.amount) - num(a.amount);
       if (mode === "amountAsc") return num(a.amount) - num(b.amount);
       if (mode === "client") return String(a.client || "").localeCompare(String(b.client || ""));
-      function rank(x) { var t = timing(x); if (t.key === "overdue") return 0; if (t.key === "today") return 1; if (t.days != null && t.days <= 7) return 2; if (!x.expectedBy) return 3; if (isPaid(x.status)) return 5; return 4; }
+      function rank(x) { var t = timing(x, doc); if (t.key === "overdue") return 0; if (t.key === "today") return 1; if (t.days != null && t.days <= 7) return 2; if (!t.next || !t.next.dueDate) return 3; if (isPaid(x.status)) return 5; return 4; }
       var r = rank(a) - rank(b);
-      return r || String(a.expectedBy || "9999-12-31").localeCompare(String(b.expectedBy || "9999-12-31"));
+      return r || String(ad || "9999-12-31").localeCompare(String(bd || "9999-12-31"));
     });
   }
 
@@ -1896,24 +2095,25 @@
     return '<button class="x97-chip ' + (alert ? "alert " : "") + (state.upcoming.quick === key ? "on" : "") + '" data-x97-action="quick-filter" data-value="' + attr(key) + '">' + esc(label) + '</button>';
   }
 
-  function upcomingCard(item) {
-    var t = timing(item), currency = String(item.currency || "UGX").toUpperCase();
+  function upcomingCard(item, doc) {
+    var t = timing(item, doc), currency = String(item.currency || "UGX").toUpperCase();
     var part = isPartPaid(item);
     var gross = grossOf(item), already = paidOf(item), left = outstandingOf(item);
+    var next = t.next || nextScheduledPayment(doc, item);
     var partHTML = part
       ? '<div class="x97-pay-progress compact"><div class="x97-pay-bar"><i style="width:' + Math.min(100, Math.round(already / (gross || 1) * 100)) + '%"></i></div>' +
         '<div class="x97-pay-split"><span>' + esc(money(already, currency)) + ' in</span><b>of ' + esc(money(gross, currency)) + '</b></div></div>'
       : "";
     var dealHTML = isDeal(item)
-      ? '<div class="x97-deal-card-meta"><b>' + esc(money(dealPartAmount(item), currency)) + ' × ' + esc(String(item.parts.length)) + ' ' + esc(dealLabel(item)) + '</b><span>' + dealPaidPartCount(item) + ' of ' + item.parts.length + ' ' + esc(dealLabel(item)) + ' paid' + (item.parts.find(function (p) { return num(p.paid) < num(p.amount) - 0.5; }) ? ' · next ' + esc(formatDate(item.parts.find(function (p) { return num(p.paid) < num(p.amount) - 0.5; }).dueDate, true)) : '') + '</span></div>' + dealScheduleHTML(item, false)
+      ? '<div class="x97-deal-card-meta"><b>' + (normalizeDealType(item.dealType) === "part" ? esc(money(dealPartAmount(item), currency)) + ' × ' + esc(String(item.parts.length)) + ' ' + esc(dealLabel(item)) : esc(String(item.parts.length)) + ' scheduled payments') + '</b><span>' + dealPaidPartCount(item) + ' of ' + item.parts.length + ' paid' + (next ? ' · next ' + esc(next.label || "payment") + ' ' + esc(money(Math.max(0, num(next.amount) - num(next.paid)), currency)) : '') + '</span></div>' + dealScheduleHTML(item, false)
       : "";
-    return '<article class="x97-item x97-card" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '"><div class="x97-item-top"><div class="x97-item-main"><div class="x97-item-category">' + esc(item.category || "Uncategorised") + '</div><div class="x97-item-title">' + esc(item.client || "Untitled upcoming payment") + '</div></div><div class="x97-item-amount x97-money ' + (currency === "USD" ? "x97-teal" : isPaid(item.status) ? "x97-green" : "") + '">' + (num(item.amount) ? money(isPaid(item.status) ? gross : left, currency) : "Amount not set") + '</div></div>' + dealHTML + partHTML + '<div class="x97-item-foot"><span class="x97-pill ' + esc(t.cls) + '">' + icon("clock", 12) + esc(t.label) + '</span>' + (item.expectedBy ? '<span class="x97-pill">' + icon("calendar", 12) + esc(formatDate(item.expectedBy, false)) + '</span>' : '') + '<span class="x97-pill ' + (isPaid(item.status) ? "good" : part ? "warn" : "") + '">' + esc(normalizeStatus(item.status)) + '</span><div class="x97-item-actions">' + (!isPaid(item.status) && !isCancelled(item.status) ? '<button class="x97-mini" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("check", 12) + (part ? " Add payment" : " Paid") + '</button>' : '') + '<button class="x97-mini" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">' + icon("edit", 12) + ' Edit</button></div></div></article>';
+    return '<article class="x97-item x97-card" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '"><div class="x97-item-top"><div class="x97-item-main"><div class="x97-item-category">' + esc(item.category || "Uncategorised") + '</div><div class="x97-item-title">' + esc(item.client || "Untitled upcoming payment") + '</div>' + (next ? '<div class="x97-item-next">Next: ' + esc(next.label || "payment") + ' · ' + esc(formatDate(next.dueDate, true)) + '</div>' : '') + '</div><div class="x97-item-amount x97-money ' + (currency === "USD" ? "x97-teal" : isPaid(item.status) ? "x97-green" : "") + '">' + (num(item.amount) ? money(isPaid(item.status) ? gross : left, currency) : "Amount not set") + '</div></div>' + dealHTML + partHTML + '<div class="x97-item-foot"><span class="x97-pill ' + esc(t.cls) + '">' + icon("clock", 12) + esc(t.label) + '</span>' + (next && next.dueDate ? '<span class="x97-pill">' + icon("calendar", 12) + esc(formatDate(next.dueDate, false)) + '</span>' : '') + '<span class="x97-pill ' + (isPaid(item.status) ? "good" : part ? "warn" : "") + '">' + esc(normalizeStatus(item.status)) + '</span><div class="x97-item-actions">' + (!isPaid(item.status) && !isCancelled(item.status) ? '<button class="x97-mini" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("check", 12) + (part ? " Add payment" : " Record payment") + '</button>' : '') + '<button class="x97-mini" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">' + icon("edit", 12) + ' Edit</button></div></div></article>';
   }
 
-  function groupFollowups(items) {
+  function groupFollowups(items, doc) {
     var groups = { overdue: [], today: [], soon: [], later: [], unscheduled: [], paid: [], cancelled: [] };
     items.forEach(function (item) {
-      var t = timing(item);
+      var t = timing(item, doc);
       if (t.key === "overdue") groups.overdue.push(item);
       else if (t.key === "today") groups.today.push(item);
       else if (t.key === "very-soon" || t.key === "soon") groups.soon.push(item);
@@ -1928,11 +2128,11 @@
   function renderUpcoming(doc) {
     var f = state.upcoming;
     var all = doc.followups || [];
-    var filtered = sortFollowups(all.filter(followupMatches));
+    var filtered = sortFollowups(all.filter(function (item) { return followupMatches(item, doc); }), doc);
     var pending = filtered.filter(isOpenFollowup);
     var ugx = pending.filter(function (x) { return String(x.currency).toUpperCase() !== "USD"; }).reduce(function (s,x){return s+num(x.amount);},0);
     var usd = pending.filter(function (x) { return String(x.currency).toUpperCase() === "USD"; }).reduce(function (s,x){return s+num(x.amount);},0);
-    var attention = pending.filter(function (x) { var t=timing(x); return t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7) || !x.expectedBy || num(x.amount)<=0; }).length;
+    var attention = pending.filter(function (x) { var t=timing(x, doc); return t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7) || !t.next || !t.next.dueDate || num(x.amount)<=0; }).length;
     var months = availableMonths(doc);
     var monthChips = '<button class="x97-chip ' + (f.month === "all" ? "on" : "") + '" data-x97-action="month-filter" data-value="all">All months</button>' + months.map(function (key) { return '<button class="x97-chip ' + (f.month === key ? "on" : "") + '" data-x97-action="month-filter" data-value="' + attr(key) + '">' + esc(monthLabel(key, true)) + '</button>'; }).join("") + '<button class="x97-chip ' + (f.month === "unscheduled" ? "on" : "") + '" data-x97-action="month-filter" data-value="unscheduled">Unscheduled</button>';
     var content;
@@ -1947,14 +2147,14 @@
       if (uns.records.length) cards += '<button class="x97-month-card x97-card" style="text-align:left;width:100%" data-x97-action="open-month" data-month="unscheduled"><div class="x97-month-head"><div><div class="x97-month-title">Unscheduled</div><div class="x97-month-count">' + uns.pending.length + ' items need dates</div></div>' + icon("chevron") + '</div><div class="x97-month-money"><div><span>UGX pending</span><b>' + money(uns.ugx, "UGX", true) + '</b></div><div><span>USD pending</span><b class="x97-teal">' + money(uns.usd, "USD", true) + '</b></div></div></button>';
       content = '<div class="x97-grid x97-grid-2">' + cards + '</div>';
     } else {
-      var groups = groupFollowups(filtered);
+      var groups = groupFollowups(filtered, doc);
       var specs = [
         ["overdue","Overdue"],["today","Due today"],["soon","Due soon"],["unscheduled","Unscheduled"],["later","Later"],["paid","Paid"],["cancelled","Cancelled"]
       ];
       content = specs.map(function (spec) {
         var items = groups[spec[0]];
         if (!items.length) return "";
-        return '<div class="x97-group"><b>' + esc(spec[1]) + '</b><span>' + items.length + ' item' + (items.length === 1 ? "" : "s") + '</span></div>' + items.map(upcomingCard).join("");
+        return '<div class="x97-group"><b>' + esc(spec[1]) + '</b><span>' + items.length + ' item' + (items.length === 1 ? "" : "s") + '</span></div>' + items.map(function (item) { return upcomingCard(item, doc); }).join("");
       }).join("");
       if (!content) content = '<div class="x97-card x97-empty">' + icon("search", 26) + '<strong>No matching upcoming payments</strong><p>Clear a filter or add a new expected payment.</p><button class="x97-btn primary" style="margin-top:14px" data-x97-action="add-upcoming">' + icon("plus") + ' Add upcoming</button></div>';
     }
@@ -2037,7 +2237,7 @@
       root.innerHTML = '<div class="x97-page"><div class="x97-card x97-empty"><strong>Loading your finance data…</strong><p>Sign in and wait for the cloud copy to finish loading.</p></div></div>';
       return;
     }
-    lastRaw = JSON.stringify(doc);
+    try { lastRaw = localStorage.getItem(DATA_KEY) || JSON.stringify(doc); } catch (_) { lastRaw = JSON.stringify(doc); }
     if (currentScreen === "dashboard") renderDashboard(doc);
     else if (currentScreen === "upcoming") renderUpcoming(doc);
     else if (currentScreen === "credit") renderCredit(doc);
@@ -2077,7 +2277,7 @@
     return chips + more;
   }
 
-  function openUpcomingForm(id) {
+  function openUpcomingFormLegacy(id) {
     var doc = readDoc(), existing = id ? (doc.followups || []).find(function(x){return String(x.id)===String(id);}) : null;
     var item = existing ? clone(existing) : { id:"", client:"", category:"One Time", amount:"", currency:"UGX", status:"Pending", expectedBy:"", phone:"", note:"", dealType:"one", partLabel:"parts", partCount:1, partEvery:7 };
     var type = normalizeDealType(item.dealType || (Array.isArray(item.parts) ? "part" : "one"));
@@ -2140,7 +2340,110 @@
     } });
   }
 
-  function openPaymentForm(id) {
+  function openUpcomingForm(id) {
+    var doc = readDoc(), existing = id ? (doc.followups || []).find(function (x) { return String(x.id) === String(id); }) : null;
+    var item = existing ? clone(existing) : { id: "", client: "", category: "One Time", amount: "", currency: "UGX", status: "Pending", expectedBy: "", phone: "", note: "", dealType: "one", partLabel: "parts", partCount: 1, partEvery: 7 };
+    var type = normalizeDealType(item.dealType || "one");
+    var locked = !!(existing && dealHasRecordedMoney(item));
+    var partLabel = item.partLabel || (type === "monthly" ? "months" : "parts");
+    var partCount = item.partCount || (item.parts && item.parts.length) || (type === "split" || type === "deposit" ? 2 : 1);
+    var firstDue = (item.parts && item.parts[0] && item.parts[0].dueDate) || item.expectedBy || todayISO();
+    var secondDue = (item.parts && item.parts[1] && item.parts[1].dueDate) || dateISO(addDays(firstDue, item.partEvery || 7));
+    var depositAmount = item.parts && item.parts[0] ? item.parts[0].amount : "";
+    var amountValue = existing ? (type === "monthly" || type === "part" ? dealPartAmount(item) : grossOf(item)) : "";
+    var categories = Array.from(new Set([].concat(doc.settings.categories || [], (doc.followups || []).map(function (x) { return x.category; }), ["Design", "One Time", "Retainer"]).filter(Boolean))).sort();
+    var statuses = Array.from(new Set([].concat(doc.settings.fuStatuses || [], ["Pending", "Cancelled"]).filter(Boolean)));
+    if (isCancelled(item.status) && statuses.indexOf("Cancelled") < 0) statuses.push("Cancelled");
+    if (isPaid(item.status) && statuses.indexOf("Paid") < 0) statuses.push("Paid");
+    var hasContacts = campContacts(doc).length > 0;
+    var modeButtons = Object.keys(DEAL_TYPES).map(function (key) {
+      return '<button type="button" class="x97-deal-mode' + (key === type ? " on" : "") + '" data-deal-mode="' + attr(key) + '" aria-pressed="' + (key === type ? "true" : "false") + '"><b>' + esc(DEAL_TYPES[key]) + '</b><span>' + esc(key === "one" ? "One total" : key === "deposit" ? "Deposit + balance" : key === "split" ? "Two equal payments" : key === "custom" ? "You set every amount" : key === "monthly" ? "Repeats each month" : "Repeats per part") + '</span></button>';
+    }).join("");
+    var dealOptions = Object.keys(DEAL_TYPES).map(function (key) { return option(key, DEAL_TYPES[key], type); }).join("");
+    var labelOptions = ["parts", "scenes", "episodes", "months", "units", "milestones"].map(function (x) { return option(x, x.charAt(0).toUpperCase() + x.slice(1), partLabel); }).join("");
+    var customRows = type === "custom" ? customBuilderRows(item, partCount, firstDue, locked) : "";
+    var dealFields = '<div class="x97-deal-builder x97-card x97-pad"><div class="x97-deal-builder-top"><div><div class="x97-deal-eyebrow">Deal builder</div><div class="x97-deal-builder-title">Structure the money</div></div><span class="x97-deal-live-badge">Live preview</span></div><div class="x97-deal-builder-sub">Choose what the client promised. The app keeps one deal together and shows each payment separately.</div>' +
+      '<div class="x97-deal-steps"><span class="active"><i>1</i> Structure</span><span><i>2</i> Amount</span><span><i>3</i> Schedule</span></div>' +
+      '<div class="x97-deal-mode-grid">' + modeButtons + '</div><select class="x97-deal-control" name="dealType" style="display:none" aria-hidden="true">' + dealOptions + '</select>' +
+      '<div class="x97-fields-2"><div>' + fieldWithLabelId("x97-deal-amount-label", dealAmountLabel(type, partLabel), '<input class="x97-input x97-deal-control" name="amount" inputmode="decimal" type="number" min="0" step="1" value="' + attr(amountValue) + '" placeholder="0"' + (locked ? " disabled" : "") + '>', locked ? "Structure is locked because money has already been recorded." : (type === "monthly" || type === "part" ? "This is the amount for each scheduled " + dealLabelSingular({ partLabel: partLabel }) + "." : type === "custom" ? "Enter the full deal total; the rows below must add up to it." : "The app calculates the schedule from this total.")) + '</div><div>' + field("Currency", '<select class="x97-select x97-deal-control" name="currency"' + (locked ? " disabled" : "") + '>' + option("UGX", "UGX", item.currency) + option("USD", "USD", item.currency) + '</select>') + '</div></div>' +
+      '<div class="x97-fields-2"><div class="x97-deal-label-field">' + field("Part label", '<select class="x97-select x97-deal-control" name="partLabel"' + (locked ? " disabled" : "") + '>' + labelOptions + '</select>') + '</div><div class="x97-deal-count-field">' + field("Number of parts", '<input class="x97-input x97-deal-control" name="partCount" type="number" min="1" max="24" step="1" value="' + attr(partCount) + '"' + (locked ? " disabled" : "") + '>') + '</div></div>' +
+      '<div class="x97-fields-2"><div class="x97-deal-interval-field">' + field("Days between parts", '<input class="x97-input x97-deal-control" name="partEvery" type="number" min="1" max="365" step="1" value="' + attr(item.partEvery || 7) + '"' + (locked ? " disabled" : "") + '>') + '</div><div class="x97-deposit-field">' + field("Deposit amount", '<input class="x97-input x97-deal-control" name="depositAmount" type="number" min="1" step="1" value="' + attr(depositAmount) + '"' + (locked ? " disabled" : "") + '>', "The balance is full total minus deposit.") + '</div></div>' +
+      '<div class="x97-fields-2"><div class="x97-deal-start-field">' + field("First / next due date", '<input class="x97-input x97-deal-control" name="startDate" type="date" value="' + attr(firstDue) + '"' + (locked ? " disabled" : "") + '>') + '</div><div class="x97-deal-second-field">' + field("Second payment due", '<input class="x97-input x97-deal-control" name="secondDue" type="date" value="' + attr(secondDue) + '"' + (locked ? " disabled" : "") + '>') + '</div></div>' +
+      '<div class="x97-deposit-dates x97-fields-2"><div>' + field("Deposit due", '<input class="x97-input x97-deal-control" name="depositDue" type="date" value="' + attr(firstDue) + '"' + (locked ? " disabled" : "") + '>') + '</div><div>' + field("Balance due", '<input class="x97-input x97-deal-control" name="balanceDue" type="date" value="' + attr(secondDue) + '"' + (locked ? " disabled" : "") + '>') + '</div></div>' +
+      '<div class="x97-custom-editor" id="x97-custom-editor">' + (customRows ? '<div class="x97-custom-editor-head"><div><b>Custom schedule</b><span>Each row is a real promised payment.</span></div><span class="x97-pill">Amounts must equal total</span></div>' + customRows : "") + '</div>' +
+      '<div id="x97-deal-hint" class="x97-deal-type-hint"></div><div id="x97-deal-glance" class="x97-deal-glance"></div><div class="x97-deal-schedule-heading"><div><b>Review the schedule</b><span>Every payment remains visible after saving.</span></div><span class="x97-deal-schedule-dot">●</span></div><div id="x97-deal-preview" class="x97-deal-preview"></div>' + (locked ? '<div class="x97-deal-lock-note">Money has already been recorded. Dates and financial structure are locked; you can still update the client, category, contact and note.</div>' : '') + '</div>';
+    var body = '<form id="x97-upcoming-form" data-x97-form="upcoming"><input type="hidden" name="id" value="' + attr(item.id) + '"><input type="hidden" name="expectedBy" value="' + attr(firstDue) + '">' +
+      field("Client / project", '<input class="x97-input" name="client" required maxlength="160" placeholder="e.g. Apollo Studios" value="' + attr(item.client) + '">') +
+      field("WhatsApp number", '<input class="x97-input" name="phone" inputmode="tel" value="' + attr(item.phone || "") + '" placeholder="e.g. 0772 123 456">' +
+        (hasContacts ? '<input class="x97-input x97-contact-search" style="margin-top:8px" placeholder="Or search any contact — e.g. a name, nickname, part of a number…">' : '') +
+        '<div id="x97-contact-suggest">' + contactPickerHTML("", doc, item.client, item.phone) + '</div>', "Used for payment reminders. Local (0772…) or full (+256772…) both work.") +
+      dealFields +
+      '<details class="x97-more"' + (existing ? " open" : "") + '><summary class="x97-more-summary">' + icon("chevron", 12) + ' More details</summary><div class="x97-more-body">' +
+      '<div class="x97-fields-2">' + field("Category", '<select class="x97-select" name="category">' + categories.map(function (x) { return option(x, x, item.category); }).join("") + '</select>') +
+      field("Status", '<select class="x97-select" name="status"' + (locked ? " disabled" : "") + '>' + statuses.map(function (x) { return option(x, x, isCancelled(item.status) ? "Cancelled" : isPaid(item.status) ? "Paid" : "Pending"); }).join("") + '</select>') + '</div>' +
+      field("Quick due date", '<div class="x97-chips"><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="0">Today</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="7">+7 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="30">+30 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-value="month-end">Month end</button></div>', "For a custom schedule, set each row’s date above.") +
+      field("Note", '<textarea class="x97-textarea" name="note" maxlength="500" placeholder="Invoice, follow-up context, or next action">' + esc(item.note) + '</textarea>') + '</div></details></form>';
+    if (existing) body += '<div class="x97-doc-actions"><button type="button" class="x97-btn" data-x97-action="open-invoice" data-id="' + attr(item.id) + '">' + icon("list", 15) + ' Invoice</button>' +
+      (paidOf(item) > 0 ? '<button type="button" class="x97-btn" data-x97-action="open-receipt" data-id="' + attr(item.id) + '">' + icon("check", 15) + ' Receipt</button>' : '') +
+      (!isPaid(item.status) && !isCancelled(item.status) ? '<button type="button" class="x97-btn teal" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("wallet", 15) + ' Record payment</button>' : '') + '</div>';
+    var foot = (existing && !locked ? '<button class="x97-btn danger" data-x97-action="delete-upcoming" data-id="' + attr(item.id) + '">' + icon("trash") + ' Delete</button>' : '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button>') + '<button class="x97-btn primary" type="submit" form="x97-upcoming-form">' + icon("check") + (existing ? " Save changes" : " Add incoming deal") + '</button>';
+    openSheet(existing ? "Edit incoming deal" : "Add incoming deal", body, foot, { afterOpen: function (back) {
+      var clientInput = back.querySelector('input[name="client"]'), phoneInput = back.querySelector('input[name="phone"]'), searchInput = back.querySelector(".x97-contact-search"), box = back.querySelector("#x97-contact-suggest");
+      var form = back.querySelector("#x97-upcoming-form"), preview = back.querySelector("#x97-deal-preview"), typeInput = back.querySelector('[name="dealType"]'), customEditor = back.querySelector("#x97-custom-editor");
+      function draftValues() { return formValues(form); }
+      function renderCustomEditor(values) {
+        if (!customEditor) return;
+        if (normalizeDealType(values.dealType) !== "custom") { customEditor.innerHTML = ""; return; }
+        var count = Math.max(1, Math.min(24, Math.round(num(values.partCount) || 1))), first = values.startDate || firstDue;
+        customEditor.innerHTML = '<div class="x97-custom-editor-head"><div><b>Custom schedule</b><span>Each row is a real promised payment.</span></div><span class="x97-pill">Amounts must equal total</span></div>' + customBuilderRows(item, count, first, locked);
+      }
+      function refreshDealPreview() {
+        if (!preview || !typeInput) return;
+        var values = draftValues(), normalizedType = normalizeDealType(values.dealType || typeInput.value), draft = clone(item);
+        draft.dealType = normalizedType; draft.partLabel = values.partLabel || partLabel; draft.partCount = values.partCount || partCount; draft.partEvery = values.partEvery || item.partEvery || 7; draft.currency = values.currency || item.currency;
+        draft.parts = locked && item.parts ? clone(item.parts) : dealPartsFor(item, values);
+        var total = draft.parts.reduce(function (s, p) { return s + num(p.amount); }, 0), nextDraft = draft.parts.find(function (p) { return num(p.amount) > 0; });
+        var hint = back.querySelector("#x97-deal-hint"), glance = back.querySelector("#x97-deal-glance"), amountLabelEl = back.querySelector("#x97-deal-amount-label");
+        if (hint) hint.textContent = dealTypeHint(normalizedType, draft.partLabel);
+        if (amountLabelEl) amountLabelEl.textContent = dealAmountLabel(normalizedType, draft.partLabel);
+        if (glance) glance.innerHTML = '<div><span>Structure</span><b>' + esc(DEAL_TYPES[normalizedType]) + '</b></div><div><span>Payments</span><b>' + draft.parts.length + '</b></div><div><span>Total value</span><b>' + money(total, draft.currency) + '</b></div>';
+        var previewHTML = normalizedType === "one" ? '<div class="x97-single-preview"><span>One payment' + (nextDraft && nextDraft.dueDate ? ' · due ' + esc(formatDate(nextDraft.dueDate, true)) : "") + '</span><strong>' + money(total, draft.currency) + '</strong></div>' : dealScheduleHTML(draft, false);
+        preview.innerHTML = previewHTML + '<div class="x97-deal-total"><span>Deal total</span><b>' + money(total, draft.currency) + '</b></div>';
+      }
+      function toggleDealFields() {
+        var value = normalizeDealType(typeInput ? typeInput.value : "one");
+        Array.prototype.slice.call(back.querySelectorAll(".x97-deal-mode")).forEach(function (button) { var on = button.dataset.dealMode === value; button.classList.toggle("on", on); button.setAttribute("aria-pressed", on ? "true" : "false"); });
+        var count = back.querySelector(".x97-deal-count-field"), interval = back.querySelector(".x97-deal-interval-field"), second = back.querySelector(".x97-deal-second-field"), deposit = back.querySelector(".x97-deposit-field"), depositDates = back.querySelector(".x97-deposit-dates"), label = back.querySelector(".x97-deal-label-field"), start = back.querySelector(".x97-deal-start-field");
+        if (count) count.style.display = value === "one" || value === "split" || value === "deposit" ? "none" : "block";
+        if (interval) interval.style.display = value === "monthly" || value === "part" ? "block" : "none";
+        if (second) second.style.display = value === "split" ? "block" : "none";
+        if (deposit) deposit.style.display = value === "deposit" ? "block" : "none";
+        if (depositDates) depositDates.style.display = value === "deposit" ? "grid" : "none";
+        if (label) label.style.display = value === "monthly" || value === "part" ? "block" : "none";
+        if (start) start.style.display = value === "custom" ? "none" : "block";
+        if (customEditor) customEditor.style.display = value === "custom" ? "block" : "none";
+        if (customEditor && value === "custom" && !customEditor.querySelector("[name^=partAmount_]")) renderCustomEditor(draftValues());
+        refreshDealPreview();
+      }
+      Array.prototype.slice.call(back.querySelectorAll(".x97-deal-mode")).forEach(function (button) { button.addEventListener("click", function () { if (locked) return; typeInput.value = button.dataset.dealMode; toggleDealFields(); }); });
+      if (typeInput) typeInput.addEventListener("change", toggleDealFields);
+      back.addEventListener("input", function (e) { if (e.target.closest && e.target.closest(".x97-deal-builder")) { if (e.target.name === "partCount" && normalizeDealType(typeInput.value) === "custom") renderCustomEditor(draftValues()); refreshDealPreview(); } });
+      back.addEventListener("change", function (e) { if (e.target.closest && e.target.closest(".x97-deal-builder")) refreshDealPreview(); });
+      toggleDealFields();
+      if (!clientInput || !phoneInput || !box) return;
+      var timer = null;
+      function refreshContacts() { clearTimeout(timer); timer = setTimeout(function () { box.innerHTML = contactPickerHTML(searchInput ? searchInput.value : "", readDoc(), clientInput.value, phoneInput.value); }, 150); }
+      clientInput.addEventListener("input", function () { if (!searchInput || !searchInput.value.trim()) refreshContacts(); });
+      phoneInput.addEventListener("input", refreshContacts);
+      if (searchInput) searchInput.addEventListener("input", refreshContacts);
+      back.addEventListener("click", function (e) {
+        var chip = e.target.closest && e.target.closest(".x97-contact-chip"); if (!chip) return;
+        phoneInput.value = chip.dataset.phone; refreshContacts();
+      });
+    } });
+  }
+
+  function openPaymentFormLegacy(id) {
     var doc = readDoc();
     var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(id); });
     if (!item) { toast("That payment is no longer there", "error"); return; }
@@ -2175,21 +2478,53 @@
     openSheet("Record payment", body, foot);
   }
 
+  function openPaymentForm(id) {
+    var doc = readDoc(), item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(id); });
+    if (!item) { toast("That payment is no longer there", "error"); return; }
+    var currency = String(item.currency || "UGX").toUpperCase(), gross = grossOf(item), already = paidOf(item), left = outstandingOf(item), rows = projectSchedule(doc, item), next = nextScheduledPayment(doc, item);
+    if (left <= 0) { toast("This deal is already settled", "success"); return; }
+    var history = paymentsFor(doc, item.id);
+    var accounts = (doc.balances || []).map(function (b) { return option(b.id, b.account + " · " + money(b.balance, FX_HOME), ""); }).join("");
+    var targets = rows.filter(function (row) { return num(row.paid) < num(row.amount) - 0.5; }).map(function (row) {
+      var owing = Math.max(0, num(row.amount) - num(row.paid));
+      return option(row.id, row.label + " · " + money(owing, currency) + (row.dueDate ? " · due " + formatDate(row.dueDate, true) : ""), next && String(next.id) === String(row.id) ? row.id : "");
+    }).join("");
+    var scheduleHTML = rows.length > 1 ? '<div class="x97-field"><label>Deal schedule</label><div class="x97-payment-target-list">' + rows.map(function (row) {
+      var owing = Math.max(0, num(row.amount) - num(row.paid)), status = row.status === "Paid" ? "good" : row.status === "Part Paid" ? "warn" : "";
+      return '<div class="x97-payment-target-row"><span class="x97-deal-mark ' + status + '">' + (row.status === "Paid" ? icon("check", 12) : row.index) + '</span><span><b>' + esc(row.label) + '</b><small>' + (row.dueDate ? esc(formatDate(row.dueDate, true)) : "No due date") + '</small></span><strong>' + (owing ? money(owing, currency) + " left" : "Paid") + '</strong></div>';
+    }).join("") + '</div></div>' : "";
+    var progress = already > 0 ? '<div class="x97-pay-progress"><div class="x97-pay-bar"><i style="width:' + Math.min(100, Math.round(already / (gross || 1) * 100)) + '%"></i></div><div class="x97-pay-split"><span>Paid ' + money(already, currency) + '</span><b>' + money(left, currency) + ' left</b></div></div>' : "";
+    var historyHTML = history.length ? '<div class="x97-field"><label>Payments so far</label><div class="x97-pay-log">' + history.map(function (p) {
+      var applied = Array.isArray(p.allocations) && p.allocations.length ? ' · ' + p.allocations.map(function (a) { var row = rows.find(function (r) { return String(r.id) === String(a.partId); }); return (row ? row.label : "part") + " " + money(a.amount, currency); }).join(", ") : "";
+      return '<div class="x97-pay-row"><div><b class="x97-money">' + money(p.amount, p.currency) + '</b><span>' + esc(formatDate(p.date, true)) + (p.accountName ? " · " + esc(p.accountName) : "") + esc(applied) + '</span></div><button type="button" class="x97-mini danger" data-x97-action="undo-payment" data-id="' + attr(p.id) + '">' + icon("trash", 12) + ' Undo</button></div>';
+    }).join("") + '</div></div>' : "";
+    var defaultAmount = next ? Math.min(left, Math.max(1, num(next.amount) - num(next.paid))) : left;
+    var body = '<form id="x97-pay-form" data-x97-form="payment"><input type="hidden" name="id" value="' + attr(item.id) + '">' +
+      '<div class="x97-card x97-pad x97-payment-hero" style="margin-bottom:14px"><div class="x97-row-sub">' + esc(item.client || "Receivable") + '</div><div class="x97-money" style="font-size:28px;margin-top:5px">' + money(left, currency) + '</div><div class="x97-row-sub">Still owed of ' + esc(money(gross, currency)) + '</div>' + progress + '</div>' +
+      scheduleHTML +
+      (targets ? field("Apply payment to", '<select class="x97-select" name="targetPartId">' + targets + '</select>', "Choose a part; any amount above it carries forward to the next unpaid part.") : "") +
+      field("Amount received", '<input class="x97-input" name="amount" type="number" required min="1" max="' + attr(left) + '" step="1" value="' + attr(defaultAmount) + '"><div class="x97-chips" style="padding-top:7px"><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="25">25%</button><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="50">50%</button><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="75">75%</button><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="100">Next / full amount</button></div>', "Record only money that actually arrived. It will never be allowed to exceed the deal balance.") +
+      field("Date received", '<input class="x97-input" name="date" type="date" required value="' + todayISO() + '">' ) +
+      field("Into which account", '<select class="x97-select" name="accountId"><option value="">Don’t change any balance</option>' + accounts + '</select>', currency === "USD" ? "Dollars are converted at today’s live rate before the account balance moves." : "The selected account balance goes up by this amount.") +
+      field("Note", '<input class="x97-input" name="note" maxlength="200" placeholder="Optional — e.g. MoMo ref, deposit slip">') + historyHTML + '</form>';
+    var foot = '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button><button class="x97-btn primary" type="submit" form="x97-pay-form">' + icon("check") + ' Record payment</button>';
+    openSheet("Record payment", body, foot);
+  }
+
   function submitPayment(form) {
     var v = formValues(form);
     var received = roundMoney(v.amount);
     if (received <= 0) { toast("Enter how much came in", "error"); return; }
     var saved = null;
     updateDoc(function (doc) {
-      saved = applyPayment(doc, v.id, { amount: received, date: v.date, accountId: v.accountId, note: v.note });
+      saved = applyPayment(doc, v.id, { amount: received, date: v.date, accountId: v.accountId, note: v.note, targetPartId: v.targetPartId });
     }, "payment-record");
+    if (!saved) { toast("That amount is above the remaining deal balance", "error"); return; }
     closeSheet();
-    if (saved) {
-      var doc = readDoc();
-      var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(v.id); });
-      var left = item ? outstandingOf(item) : 0;
-      toast(left > 0 ? money(left, String(saved.currency)) + " still outstanding" : "Settled in full — nice one", "success");
-    }
+    var doc = readDoc();
+    var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(v.id); });
+    var left = item ? outstandingOf(item) : 0;
+    toast(left > 0 ? money(left, String(saved.currency)) + " still outstanding" : "Settled in full — nice one", "success");
   }
 
   function openFilters(doc) {
@@ -2276,7 +2611,7 @@
     return data;
   }
 
-  function submitUpcoming(form) {
+  function submitUpcomingLegacy(form) {
     var v=formValues(form), id=v.id||uid("fu");
     updateDoc(function(doc){
       var i=doc.followups.findIndex(function(x){return String(x.id)===String(id);});
@@ -2301,6 +2636,45 @@
       if(i>=0)doc.followups[i]=next;else doc.followups.unshift(next);
     },"upcoming-save");
     closeSheet(); if(remindState.open) refreshRemind();
+  }
+
+  function submitUpcoming(form) {
+    var v = formValues(form), id = v.id || uid("fu"), type = normalizeDealType(v.dealType || "one"), oldSnapshot = readDoc(), old = oldSnapshot && (oldSnapshot.followups || []).find(function (x) { return String(x.id) === String(id); });
+    if (!String(v.client || "").trim()) { toast("Add a client or project name", "error"); return; }
+    if (old && dealHasRecordedMoney(old)) {
+      updateDoc(function (doc) {
+        var i = doc.followups.findIndex(function (x) { return String(x.id) === String(id); });
+        if (i >= 0) doc.followups[i] = Object.assign({}, doc.followups[i], { client: String(v.client || "").trim(), category: v.category, phone: String(v.phone || "").trim(), note: String(v.note || "").trim() });
+      }, "upcoming-meta-save");
+      closeSheet(); if (remindState.open) refreshRemind(); return;
+    }
+    var parts = type === "one" ? [] : dealPartsFor(old || {}, v), gross = type === "one" || type === "custom" ? roundMoney(v.amount) : roundMoney(parts.reduce(function (sum, p) { return sum + num(p.amount); }, 0));
+    if (gross <= 0) { toast("Enter the deal total", "error"); return; }
+    if (type === "deposit") {
+      var deposit = num(v.depositAmount);
+      if (deposit <= 0 || deposit >= gross) { toast("Deposit must be less than the full deal total", "error"); return; }
+    }
+    if (type === "custom") {
+      var scheduled = parts.reduce(function (sum, p) { return sum + num(p.amount); }, 0), difference = roundMoney(gross - scheduled);
+      if (Math.abs(difference) > 0.5) { toast("Custom schedule is " + money(Math.abs(difference), v.currency || "UGX") + " away from the deal total", "error"); return; }
+      if (parts.some(function (p) { return num(p.amount) <= 0; })) { toast("Give every custom payment an amount", "error"); return; }
+    }
+    var already = old ? paidOf(old) : 0;
+    if (old && isPaid(old.status) && already <= 0) already = gross;
+    if (already > gross + 0.5) { toast("The new total cannot be below money already received", "error"); return; }
+    var due = type === "custom" ? (parts[0] && parts[0].dueDate || "") : type === "deposit" ? (v.depositDue || v.firstDue || parts[0] && parts[0].dueDate || "") : (parts[0] && parts[0].dueDate || v.startDate || v.expectedBy || "");
+    var cancelled = String(v.status || "").toLowerCase() === "cancelled";
+    var item = { id: id, client: String(v.client || "").trim(), category: v.category || "One Time", gross: gross, paid: already, amount: roundMoney(Math.max(0, gross - already)), currency: String(v.currency || "UGX").toUpperCase(), status: cancelled ? "Cancelled" : already >= gross - 0.5 && already > 0 ? "Paid" : already > 0 ? "Part Paid" : "Pending", expectedBy: due, phone: String(v.phone || "").trim(), note: String(v.note || "").trim() };
+    if (type !== "one") {
+      item.dealType = type; item.partLabel = String(v.partLabel || (type === "monthly" ? "months" : "parts")).toLowerCase(); item.partCount = parts.length; item.partEvery = Math.max(1, Math.round(num(v.partEvery || 7))); item.partAmount = parts[0] ? num(parts[0].amount) : 0; item.depositAmount = type === "deposit" ? num(v.depositAmount) : 0; item.parts = parts;
+    }
+    updateDoc(function (doc) {
+      var i = doc.followups.findIndex(function (x) { return String(x.id) === String(id); }), previous = i >= 0 ? doc.followups[i] : null, next = Object.assign({}, previous || {}, item);
+      if (type !== "one") rebuildDealParts(doc, next);
+      else { delete next.dealType; delete next.partLabel; delete next.partCount; delete next.partEvery; delete next.partAmount; delete next.depositAmount; delete next.parts; }
+      if (i >= 0) doc.followups[i] = next; else doc.followups.unshift(next);
+    }, "upcoming-save");
+    closeSheet(); if (remindState.open) refreshRemind();
   }
 
   /* ============================ WhatsApp payment reminders ============================ */
@@ -2337,17 +2711,17 @@
   function allTemplates(doc) { var t = doc.settings && doc.settings.reminderTemplates; return (t && t.length) ? t : defaultTemplates(); }
   function templateForTone(doc, tone) { var list = allTemplates(doc); var hit = list.find(function (x) { return x.tone === tone; }); return (hit || list[0]).body; }
 
-  function autoTone(item) { var t = timing(item); if (t.days != null && t.days < 0) { return Math.abs(t.days) > 14 ? "firm" : "followup"; } return "friendly"; }
+  function autoTone(item, doc) { var t = timing(item, doc); if (t.days != null && t.days < 0) { return Math.abs(t.days) > 14 ? "firm" : "followup"; } return "friendly"; }
 
   function fillTemplate(body, item, doc) {
     var cur = String(item.currency || "UGX").toUpperCase();
-    var t = timing(item); var late = (t.days != null && t.days < 0) ? Math.abs(t.days) : 0;
+    var t = timing(item, doc), next = t.next, nextLeft = next ? Math.max(0, num(next.amount) - num(next.paid)) : outstandingOf(item); var late = (t.days != null && t.days < 0) ? Math.abs(t.days) : 0;
     var map = {
       "{name}": firstName(item.client),
       "{project}": item.client || "the project",
-      "{amount}": num(item.amount) ? money(item.amount, cur) : "the outstanding amount",
+      "{amount}": nextLeft ? money(nextLeft, cur) : "the outstanding amount",
       "{currency}": cur,
-      "{date}": item.expectedBy ? formatDate(item.expectedBy, false) : "the agreed date",
+      "{date}": next && next.dueDate ? formatDate(next.dueDate, false) : (item.expectedBy ? formatDate(item.expectedBy, false) : "the agreed date"),
       "{days}": String(late),
       "{you}": (doc.settings && doc.settings.senderName) || "97 LIVE"
     };
@@ -2356,15 +2730,15 @@
 
   function messageFor(item, doc) {
     if (remindState.drafts[item.id] != null) return remindState.drafts[item.id];
-    var tone = remindState.tone === "auto" ? autoTone(item) : remindState.tone;
+    var tone = remindState.tone === "auto" ? autoTone(item, doc) : remindState.tone;
     return fillTemplate(templateForTone(doc, tone), item, doc);
   }
 
   function chaseList(doc) {
     return (doc.followups || []).filter(isOpenFollowup).filter(function (x) {
-      var t = timing(x); return t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7);
+      var t = timing(x, doc); return t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7);
     }).sort(function (a, b) {
-      var ta = timing(a), tb = timing(b);
+      var ta = timing(a, doc), tb = timing(b, doc);
       function rank(t) { if (t.key === "overdue") return 0; if (t.key === "today") return 1; return 2; }
       var r = rank(ta) - rank(tb); if (r) return r;
       var da = ta.days == null ? 999 : ta.days, db = tb.days == null ? 999 : tb.days;
@@ -2414,7 +2788,7 @@
     injectRemindCSS();
     remindState.open = true; remindState.progress = {};
     var doc = readDoc();
-    if (doc) chaseSendable(doc).forEach(function (x) { if (timing(x).key === "overdue" && !x.lastRemindedAt) remindState.selected[x.id] = true; });
+    if (doc) chaseSendable(doc).forEach(function (x) { if (timing(x, doc).key === "overdue" && !x.lastRemindedAt) remindState.selected[x.id] = true; });
     var el = document.getElementById("x97-remind");
     if (!el) { el = document.createElement("div"); el.id = "x97-remind"; el.className = "x97-remind-overlay"; document.body.appendChild(el); wireRemind(el); }
     document.body.classList.add("x97-remind-lock");
@@ -2424,7 +2798,7 @@
   function refreshRemind() { var el = document.getElementById("x97-remind"); if (!el || !remindState.open) return; var doc = readDoc(); if (!doc) return; el.innerHTML = remindOverlayHTML(doc); }
 
   function remindRow(item, doc) {
-    var t = timing(item), sel = !!remindState.selected[item.id], wa = hasWa(item, doc);
+    var t = timing(item, doc), sel = !!remindState.selected[item.id], wa = hasWa(item, doc);
     var cur = String(item.currency || "UGX").toUpperCase();
     var prog = remindState.progress[item.id];
     var phoneHTML = wa
@@ -2534,7 +2908,7 @@
     remindState.aiBusy = true; refreshRemind();
     toast("Drafting " + items.length + " message" + (items.length === 1 ? "" : "s") + " with AI…", "");
     var sender = (doc.settings && doc.settings.senderName) || "97 LIVE";
-    var payload = items.map(function (x) { var t = timing(x); return { id: String(x.id), name: firstName(x.client), project: x.client || "", amount: num(x.amount) ? money(x.amount, String(x.currency || "UGX").toUpperCase()) : "the outstanding amount", due: x.expectedBy ? formatDate(x.expectedBy, false) : "the agreed date", daysOverdue: (t.days != null && t.days < 0) ? Math.abs(t.days) : 0, tone: autoTone(x) }; });
+    var payload = items.map(function (x) { var t = timing(x, doc), next = t.next, left = next ? Math.max(0, num(next.amount) - num(next.paid)) : outstandingOf(x); return { id: String(x.id), name: firstName(x.client), project: x.client || "", amount: left ? money(left, String(x.currency || "UGX").toUpperCase()) : "the outstanding amount", due: next && next.dueDate ? formatDate(next.dueDate, false) : "the agreed date", daysOverdue: (t.days != null && t.days < 0) ? Math.abs(t.days) : 0, tone: autoTone(x, doc) }; });
     var sys = "You are the credit-control assistant for " + sender + ". Write short, warm, professional WhatsApp payment reminders in the sender's voice. One message per client. Vary the wording so no two are identical. Keep each to 2-4 sentences with a polite, specific ask. Use the client's first name. Use at most one emoji, sparingly. No markdown, no bullet points. Sign off as " + sender + ". Match the tone field: friendly = light gentle nudge; followup = clear check-in; firm = final but respectful.";
     var user = "Return ONLY a JSON object mapping each id to its message string — no other text. Clients:\n" + JSON.stringify(payload);
     fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "content-type": "application/json", "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }, body: JSON.stringify({ model: cfg.model, max_tokens: 1800, system: sys, messages: [{ role: "user", content: user }] }) })
@@ -2684,7 +3058,7 @@
     var list = (doc.followups || []).filter(isOpenFollowup).slice().sort(function (a, b) {
       var am = hasWa(a, doc) ? 1 : 0, bm = hasWa(b, doc) ? 1 : 0;
       if (am !== bm) return am - bm;                       // missing numbers first
-      var ta = timing(a), tb = timing(b);
+      var ta = timing(a, doc), tb = timing(b, doc);
       var da = ta.days == null ? 9999 : ta.days, db = tb.days == null ? 9999 : tb.days;
       if (da !== db) return da - db;                        // most urgent next
       return String(a.client || "").localeCompare(String(b.client || ""));
@@ -2692,7 +3066,7 @@
     var missing = list.filter(function (x) { return !hasWa(x, doc); }).length;
     var autoCount = 0, reviewCount = 0;
     var rows = list.map(function (x) {
-      var cur = String(x.currency || "UGX").toUpperCase(), t = timing(x);
+      var cur = String(x.currency || "UGX").toUpperCase(), t = timing(x, doc);
       var picker = "";
       if (!hasWa(x, doc) && contacts.length) {
         var matches = bestContactMatches(x.client, contacts, 4);
@@ -2851,7 +3225,7 @@
   function messagingSummary(doc) {
     var cl = chaseList(doc);
     return {
-      overdue: cl.filter(function (x) { return timing(x).key === "overdue"; }).length,
+      overdue: cl.filter(function (x) { return timing(x, doc).key === "overdue"; }).length,
       dueSoon: cl.length,
       contacts: campContacts(doc).length,
       lists: campLists(doc).length,
@@ -3018,9 +3392,9 @@
   function audienceContacts(doc, audience) {
     if (!audience) return [];
     if (audience.type === "overdue") {
-      return (doc.followups || []).filter(isOpenFollowup).filter(function (x) { var t = timing(x); return (t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7)) && hasWa(x, doc); }).map(function (x) {
-        var t = timing(x), cur = String(x.currency || "UGX").toUpperCase();
-        return { id: "od_" + x.id, name: x.client || "", phone: x.phone || "", fields: { amount: num(x.amount) ? money(x.amount, cur) : "", currency: cur, date: x.expectedBy ? formatDate(x.expectedBy, false) : "", days: (t.days != null && t.days < 0) ? String(Math.abs(t.days)) : "0", project: x.client || "" } };
+      return (doc.followups || []).filter(isOpenFollowup).filter(function (x) { var t = timing(x, doc); return (t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7)) && hasWa(x, doc); }).map(function (x) {
+        var t = timing(x, doc), next = t.next, cur = String(x.currency || "UGX").toUpperCase(), left = next ? Math.max(0, num(next.amount) - num(next.paid)) : outstandingOf(x);
+        return { id: "od_" + x.id, name: x.client || "", phone: x.phone || "", fields: { amount: left ? money(left, cur) : "", currency: cur, date: next && next.dueDate ? formatDate(next.dueDate, false) : "", days: (t.days != null && t.days < 0) ? String(Math.abs(t.days)) : "0", project: x.client || "" } };
       });
     }
     if (audience.type === "manual") {
@@ -3604,7 +3978,7 @@
     if(action==="pay-part"){var pf=document.getElementById("x97-pay-form");if(pf){var cap=num(pf.amount.max);pf.amount.value=Math.max(1,Math.round(cap*num(btn.dataset.value)/100));}return;}
     if(action==="undo-payment"){if(confirm("Undo this payment? The amount goes back to outstanding and any account credit is reversed.")){var pid=btn.dataset.id,fid="";updateDoc(function(doc){var p=(doc.payments||[]).find(function(x){return String(x.id)===String(pid);});if(p)fid=p.followupId;reversePayment(doc,pid);},"payment-undo");closeSheet();if(fid)openPaymentForm(fid);}return;}
     if(action==="delete-upcoming"){var targetDoc=readDoc(),targetItem=targetDoc&&(targetDoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(targetItem&&dealHasRecordedMoney(targetItem)){toast("A deal with recorded money cannot be deleted","error");return;}if(confirm("Delete this upcoming payment?")){updateDoc(function(doc){doc.followups=doc.followups.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"upcoming-delete");closeSheet();}return;}
-    if(action==="quick-date"){var value=btn.dataset.value==="month-end"?dateISO(endOfMonth(todayDate())):dateISO(addDays(todayDate(),num(btn.dataset.days)));var input=document.querySelector("#x97-upcoming-form [name=expectedBy]");var start=document.querySelector("#x97-upcoming-form [name=startDate]");if(input)input.value=value;if(start)start.value=value;var second=document.querySelector("#x97-upcoming-form [name=secondDue]"),dealTypeInput=document.querySelector("#x97-upcoming-form [name=dealType]");if(second&&dealTypeInput&&dealTypeInput.value==="split"&&!second.value)second.value=value;return;}
+    if(action==="quick-date"){var value=btn.dataset.value==="month-end"?dateISO(endOfMonth(todayDate())):dateISO(addDays(todayDate(),num(btn.dataset.days))),changed=[];var input=document.querySelector("#x97-upcoming-form [name=expectedBy]"),start=document.querySelector("#x97-upcoming-form [name=startDate]"),first=document.querySelector("#x97-upcoming-form [name=firstDue]"),depositDue=document.querySelector("#x97-upcoming-form [name=depositDue]");if(input){input.value=value;changed.push(input);}if(start){start.value=value;changed.push(start);}if(first){first.value=value;changed.push(first);}if(depositDue){depositDue.value=value;changed.push(depositDue);}var second=document.querySelector("#x97-upcoming-form [name=secondDue]"),balanceDue=document.querySelector("#x97-upcoming-form [name=balanceDue]"),dealTypeInput=document.querySelector("#x97-upcoming-form [name=dealType]");if(second&&dealTypeInput&&(dealTypeInput.value==="split"||dealTypeInput.value==="deposit")&&!second.value){second.value=value;changed.push(second);}if(balanceDue&&dealTypeInput&&dealTypeInput.value==="deposit"&&!balanceDue.value){balanceDue.value=value;changed.push(balanceDue);}changed.forEach(function(el){try{el.dispatchEvent(new Event("input",{bubbles:true}));}catch(_){}});return;}
     if(action==="upcoming-view"){state.upcoming.view=btn.dataset.value;savePrefs();scheduleRender(0);return;}
     if(action==="quick-filter"){state.upcoming.quick=btn.dataset.value;savePrefs();scheduleRender(0);return;}
     if(action==="month-filter"){state.upcoming.month=btn.dataset.value;savePrefs();scheduleRender(0);return;}
@@ -3613,6 +3987,8 @@
     if(action==="clear-filter"){var k=btn.dataset.filter;if(k==="month")state.upcoming.month="all";else if(k==="statuses")state.upcoming.statuses=[];else if(k==="currencies")state.upcoming.currencies=[];else if(k==="categories")state.upcoming.categories=[];else if(k==="dates"){state.upcoming.from="";state.upcoming.to="";}else if(k==="amount"){state.upcoming.minAmount="";state.upcoming.maxAmount="";}else if(k==="sort")state.upcoming.sort="urgency";savePrefs();scheduleRender(0);return;}
     if(action==="clear-all-filters"||action==="reset-advanced-filters"){state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.sort="urgency";if(action==="clear-all-filters"){state.upcoming.month="all";state.upcoming.quick="all";}savePrefs();if(action==="reset-advanced-filters")openFilters(readDoc());else scheduleRender(0);return;}
     if(action==="go-upcoming"||action==="go-upcoming-months"){if(action.indexOf("months")>=0)state.upcoming.view="months";var up=findNavItem("upcoming");if(up)up.click();return;}
+    if(action==="record-payment"){var current=readDoc(), summary=current&&analytics(current), target=summary&&(summary.overdue[0]||summary.next7[0]);if(target)openPaymentForm(target.itemId);else {var firstOpen=current&&(current.followups||[]).find(isOpenFollowup);if(firstOpen)openPaymentForm(firstOpen.id);else toast("Add an incoming deal first","error");}return;}
+    if(action==="go-expenses"){var expenses=findNavItem("expenses");if(expenses)expenses.click();return;}
     if(action==="go-credit"){var cr=findNavItem("credit");if(cr)cr.click();return;}
     if(action==="add-account"){openAccountForm();return;}
     if(action==="edit-account"){openAccountForm(btn.dataset.id);return;}

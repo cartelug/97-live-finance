@@ -5,6 +5,15 @@ Tracks client receivables, mobile-money credit lines, cash balances and monthly
 budgets — with a built-in **AI copilot** and an always-on **smart suggestions**
 engine. It runs entirely in the browser: no server, no database, no build step.
 
+### Incoming schedules
+
+Incoming work stays as one deal with a visible payment schedule. Choose **One
+payment**, **Deposit + balance**, **Equal split**, **Custom schedule**, **Monthly
+retainer**, or **Per part**. A custom schedule lets you enter unequal amounts —
+for example UGX 2,000,000 as a UGX 700,000 deposit followed by a UGX 1,300,000
+balance. Payments are recorded against the schedule, so the dashboard separates
+cash actually received from money still promised.
+
 ---
 
 ## 1. Host it (pick one)
@@ -271,7 +280,11 @@ instead of forcing you to create one unrelated row for every scene, episode,
 unit or milestone. The supported structures are:
 
 - **One payment** — one amount and one due date.
+- **Deposit + balance** — enter the full total and the deposit; the balance is
+  calculated automatically.
 - **Split — half and half** — two correctly dated payments.
+- **Custom schedule** — enter each label, amount and due date; the rows must
+  add up to the full deal total.
 - **Monthly retainer** — one amount per month for a chosen number of months.
 - **Per part** — the amount you enter is for each scene, episode, unit or
   milestone; the deal total is that amount multiplied by the number of parts.
