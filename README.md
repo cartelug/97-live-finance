@@ -273,7 +273,8 @@ unit or milestone. The supported structures are:
 - **One payment** — one amount and one due date.
 - **Split — half and half** — two correctly dated payments.
 - **Monthly retainer** — one amount per month for a chosen number of months.
-- **Per part** — one amount per scene, episode, unit or milestone.
+- **Per part** — the amount you enter is for each scene, episode, unit or
+  milestone; the deal total is that amount multiplied by the number of parts.
 
 The deal screen previews the full schedule before saving. Each part can have its
 own due date, and the schedule becomes read-only after money is recorded so the
@@ -285,6 +286,8 @@ For example, **UGX 700,000 × 12 scenes** becomes one Apollo Studios card worth
 **UGX 8,400,000**. After three scene payments, it shows **3 of 12 paid**,
 **UGX 2,100,000 received** and **UGX 6,300,000 uncollected**. A **$1,000
 half-and-half** contract becomes two **$500** payments with separate dates.
+For a three-part deal, entering **$1,000 per part** therefore creates a
+**$3,000** deal with three **$1,000** scheduled payments.
 
 ## 9. Exports & documents
 **Earnings → Export** writes spreadsheet files your accountant can open

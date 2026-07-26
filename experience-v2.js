@@ -8,7 +8,7 @@
   if (window.__S97_EXPERIENCE_V2__) return;
   window.__S97_EXPERIENCE_V2__ = true;
 
-  var VERSION = "experience-v2.1";
+  var VERSION = "experience-v2.2";
   var DATA_KEY = "ns97-finance-v1";
   var PREF_KEY = "ns97.v2.upcoming.filters";
   var REFRESH_KEY = "ns97.v2.react-refresh";
@@ -348,7 +348,30 @@
     part: "Per part"
   };
 
-  function isDeal(item) { return !!(item && item.dealType && item.dealType !== "one" && Array.isArray(item.parts)); }
+  function normalizeDealType(value) {
+    var raw = String(value || "one").trim().toLowerCase();
+    if (/split|half/.test(raw)) return "split";
+    if (/monthly|retainer|month/.test(raw)) return "monthly";
+    if (/part|scene|episode|unit|milestone/.test(raw)) return "part";
+    return "one";
+  }
+
+  function dealAmountLabel(type, label) {
+    var normalized = normalizeDealType(type);
+    if (normalized === "monthly") return "Amount per month";
+    if (normalized === "part") return "Amount per " + dealLabelSingular({ partLabel: label || "parts" });
+    return "Total amount";
+  }
+
+  function dealTypeHint(type, label) {
+    var normalized = normalizeDealType(type);
+    if (normalized === "split") return "Enter the full contract total — the app divides it into two equal payments.";
+    if (normalized === "monthly") return "Enter the amount for each month — the deal total is calculated from the number of months.";
+    if (normalized === "part") return "Enter the amount for each " + dealLabelSingular({ partLabel: label || "parts" }) + " — the deal total is calculated below.";
+    return "Enter one total amount and one due date.";
+  }
+
+  function isDeal(item) { return !!(item && normalizeDealType(item.dealType) !== "one" && Array.isArray(item.parts)); }
 
   function dealLabel(item) {
     var raw = String(item && item.partLabel || "parts").trim().toLowerCase();
@@ -384,7 +407,7 @@
   }
 
   function dealPartsFor(item, values) {
-    var type = String(values && values.dealType || item && item.dealType || "one");
+    var type = normalizeDealType(values && values.dealType || item && item.dealType || "one");
     var count = Math.max(1, Math.round(num(values && values.partCount || item && item.partCount || (type === "split" ? 2 : 1))));
     var label = String(values && values.partLabel || item && item.partLabel || (type === "monthly" ? "months" : "parts")).trim().toLowerCase() || "parts";
     var start = String(values && (values.startDate || values.expectedBy) || item && item.expectedBy || todayISO());
@@ -445,7 +468,7 @@
   }
 
   function dealScheduleHTML(item, editable) {
-    if (!isDeal(item)) return "";
+    if (!item || !Array.isArray(item.parts) || (!isDeal(item) && !editable)) return "";
     var parts = item.parts || [], label = dealLabel(item), paidCount = dealPaidPartCount(item);
     var visible = editable ? parts : parts.slice(0, 5);
     var rows = visible.map(function (p, i) {
@@ -466,9 +489,9 @@
       var booked = rows.reduce(function (s, x) { return s + grossOf(x); }, 0);
       var received = rows.reduce(function (s, x) { return s + receivedOf(x); }, 0);
       var left = rows.reduce(function (s, x) { return s + outstandingOf(x); }, 0);
-      return '<div class="x97-deal-metric-card x97-card"><div class="x97-deal-metric-currency">' + currency + '</div><div class="x97-deal-metric-main">' + money(booked, "", true) + '</div><div class="x97-deal-metric-grid"><span><b>' + money(received, "", true) + '</b> received</span><span><b>' + money(left, "", true) + '</b> uncollected</span></div></div>';
+      return '<div class="x97-deal-metric-card x97-card"><div class="x97-deal-metric-currency">' + currency + '</div><div class="x97-deal-metric-main">' + money(booked, "", true) + '</div><div class="x97-row-sub" style="margin-top:3px">Booked total</div><div class="x97-deal-metric-grid"><span><b>' + money(received, "", true) + '</b> received</span><span><b>' + money(left, "", true) + '</b> uncollected</span></div></div>';
     }).join("");
-    return '<section class="x97-section x97-deals-overview"><div class="x97-section-head"><div><div class="x97-section-title">Deal overview</div><div class="x97-row-sub">Booked work, received money and what is still uncollected</div></div><span class="x97-pill good">' + deals.length + ' deals</span></div><div class="x97-deal-metrics">' + blocks + '</div></section>';
+    return '<section class="x97-section x97-deals-overview x97-dashboard-wide"><div class="x97-section-head"><div><div class="x97-section-title">Deal overview</div><div class="x97-row-sub">Booked work, received money and what is still uncollected</div></div><span class="x97-pill good">' + deals.length + ' deals</span></div><div class="x97-deal-metrics">' + blocks + '</div></section>';
   }
 
   // Everything received in a month, in shillings, dollars converted at today's rate.
@@ -1128,18 +1151,17 @@
       ".x97-earn-row.head{background:var(--card2);font-size:9.5px;text-transform:uppercase;letter-spacing:.07em;font-weight:800;color:var(--tx3)}" +
       ".x97-earn-row-mon{font-size:12px;font-weight:750;color:var(--tx);overflow:hidden;text-overflow:ellipsis}" +
       ".x97-earn-row-num{font-size:12px;text-align:right;overflow:hidden;text-overflow:ellipsis}" +
-      ".x97-deal-builder{margin:14px 0;background:linear-gradient(180deg,var(--card),var(--bg2));border-color:var(--line2)}" +
-      ".x97-deal-builder-title{font-size:15px;font-weight:850;color:var(--tx)}.x97-deal-builder-sub{font-size:11.5px;line-height:1.45;color:var(--tx3);margin:5px 0 13px}" +
-      ".x97-deal-preview{margin-top:12px}.x97-deal-schedule{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card)}" +
-      ".x97-deal-schedule-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;background:var(--card2);font-size:11px;color:var(--tx2)}.x97-deal-schedule-head span{font-size:10px;color:var(--tx3)}" +
-      ".x97-deal-row{display:flex;align-items:center;gap:9px;padding:9px 11px;border-top:1px solid var(--line)}.x97-deal-row:first-of-type{border-top:0}.x97-deal-row.paid{background:var(--posdim)}" +
-      ".x97-deal-mark{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--card2);border:1px solid var(--line2);font-size:10px;font-weight:850;color:var(--tx2)}.x97-deal-row.paid .x97-deal-mark{background:var(--pos);color:#fff;border-color:var(--pos)}" +
-      ".x97-deal-part{flex:1;min-width:0}.x97-deal-part b{display:block;font-size:11.5px;color:var(--tx)}.x97-deal-part span{display:block;font-size:10.5px;color:var(--tx3);margin-top:2px}.x97-deal-part .x97-input{min-height:32px;padding:6px 8px;font-size:11px;margin-top:3px}" +
-      ".x97-deal-row>strong{font-size:11.5px;white-space:nowrap;color:var(--tx)}.x97-deal-total{display:flex;justify-content:space-between;gap:10px;margin-top:9px;padding:9px 11px;border-radius:11px;background:var(--posdim);color:var(--tx2);font-size:11.5px}.x97-deal-total b{color:var(--pos)}" +
-      ".x97-deal-more{padding:9px 12px;border-top:1px solid var(--line);font-size:10.5px;color:var(--tx3);font-weight:750}" +
-      ".x97-deal-card-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 0;padding:9px 10px;border-radius:11px;background:var(--card2);font-size:11px}.x97-deal-card-meta b{color:var(--tx)}.x97-deal-card-meta span{color:var(--tx3);font-size:10px;text-align:right}" +
-      ".x97-deal-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.x97-deal-metric-card{padding:13px 14px}.x97-deal-metric-currency{font-size:10px;font-weight:850;letter-spacing:.08em;color:var(--tx3)}.x97-deal-metric-main{font-size:25px;font-weight:850;letter-spacing:-.03em;margin-top:6px}.x97-deal-metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;border-top:1px solid var(--line);margin-top:10px;padding-top:9px}.x97-deal-metric-grid span{font-size:9.5px;color:var(--tx3);line-height:1.3}.x97-deal-metric-grid b{display:block;font-size:12px;color:var(--tx);margin-bottom:2px}.x97-deal-lock-note{margin-top:10px;padding:10px 11px;border-radius:11px;background:var(--warndim);color:var(--warn);font-size:11px;line-height:1.45}.x97-deals-overview{margin-top:16px}" +
-      "@media(max-width:560px){.x97-deal-metrics{grid-template-columns:1fr}.x97-deal-card-meta{align-items:flex-start;flex-direction:column}.x97-deal-card-meta span{text-align:left}}" +
+      ".x97-deal-builder{margin:14px 0;background:linear-gradient(145deg,var(--card) 0%,var(--bg2) 100%);border-color:var(--line2);box-shadow:var(--toplit),var(--elev-1);overflow:hidden;position:relative}.x97-deal-builder::before{content:'';position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--pos),#6be0ae,var(--pos2))}" +
+      ".x97-deal-builder-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.x97-deal-eyebrow{font-size:9px;text-transform:uppercase;letter-spacing:.12em;font-weight:900;color:var(--pos);margin-bottom:5px}.x97-deal-builder-title{font-size:17px;font-weight:900;color:var(--tx);letter-spacing:-.02em}.x97-deal-builder-sub{font-size:11.5px;line-height:1.5;color:var(--tx3);margin:6px 0 14px;max-width:56ch}.x97-deal-live-badge{flex:none;padding:6px 8px;border-radius:999px;background:var(--posdim);color:var(--pos);font-size:9.5px;font-weight:850;white-space:nowrap}.x97-deal-live-badge::before{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:currentColor;margin:0 5px 1px 0}" +
+      ".x97-deal-steps{display:flex;align-items:center;gap:7px;margin:0 0 15px;padding:8px 9px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.025);overflow:auto}.x97-deal-steps span{display:inline-flex;align-items:center;gap:5px;color:var(--tx3);font-size:9.5px;font-weight:800;white-space:nowrap}.x97-deal-steps span:not(:last-child)::after{content:'›';margin-left:4px;color:var(--tx3);font-size:14px}.x97-deal-steps i{display:grid;place-items:center;width:18px;height:18px;border-radius:50%;background:var(--card3);font-style:normal;font-size:9px;color:var(--tx2)}.x97-deal-steps .active{color:var(--pos)}.x97-deal-steps .active i{background:var(--pos);color:#fff}" +
+      ".x97-deal-type-hint{margin:1px 0 12px;padding:10px 11px;border-radius:11px;background:var(--card2);color:var(--tx2);font-size:11px;line-height:1.45;border-left:3px solid var(--pos)}" +
+      ".x97-deal-glance{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:5px 0 14px}.x97-deal-glance>div{min-width:0;padding:9px 9px 8px;border:1px solid var(--line);border-radius:11px;background:rgba(255,255,255,.018)}.x97-deal-glance span{display:block;font-size:8.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--tx3);font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.x97-deal-glance b{display:block;margin-top:5px;font-size:11.5px;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
+      ".x97-deal-schedule-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:14px;margin-bottom:7px;padding-top:13px;border-top:1px solid var(--line)}.x97-deal-schedule-heading b{display:block;font-size:12px;color:var(--tx)}.x97-deal-schedule-heading span{display:block;color:var(--tx3);font-size:10px;margin-top:3px}.x97-deal-schedule-dot{font-size:13px!important;color:var(--pos)!important;margin:0!important}.x97-deal-preview{margin-top:0}.x97-deal-schedule{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--card);box-shadow:0 4px 14px rgba(0,0,0,.06)}" +
+      ".x97-deal-schedule-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:11px 12px;background:linear-gradient(90deg,var(--card2),transparent);font-size:11px;color:var(--tx2)}.x97-deal-schedule-head span{font-size:10px;color:var(--tx3);font-weight:750}.x97-deal-row{display:flex;align-items:center;gap:9px;padding:10px 11px;border-top:1px solid var(--line);transition:background .18s ease}.x97-deal-row:first-of-type{border-top:0}.x97-deal-row:hover{background:var(--card2)}.x97-deal-row.paid{background:var(--posdim)}" +
+      ".x97-deal-mark{width:23px;height:23px;border-radius:50%;display:grid;place-items:center;flex:none;background:var(--card2);border:1px solid var(--line2);font-size:10px;font-weight:850;color:var(--tx2)}.x97-deal-row.paid .x97-deal-mark{background:var(--pos);color:#fff;border-color:var(--pos)}" +
+      ".x97-deal-part{flex:1;min-width:0}.x97-deal-part b{display:block;font-size:11.5px;color:var(--tx)}.x97-deal-part span{display:block;font-size:10.5px;color:var(--tx3);margin-top:2px}.x97-deal-part .x97-input{min-height:32px;padding:6px 8px;font-size:11px;margin-top:3px}.x97-deal-row>strong{font-size:11.5px;white-space:nowrap;color:var(--tx)}.x97-deal-total{display:flex;justify-content:space-between;gap:10px;margin-top:9px;padding:11px 12px;border:1px solid var(--line2);border-radius:11px;background:var(--posdim);color:var(--tx2);font-size:11.5px}.x97-deal-total b{color:var(--pos);font-size:13px}.x97-deal-more{padding:9px 12px;border-top:1px solid var(--line);font-size:10.5px;color:var(--tx3);font-weight:750}" +
+      ".x97-deal-card-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 0;padding:10px 11px;border:1px solid var(--line);border-radius:11px;background:linear-gradient(90deg,var(--card2),transparent);font-size:11px}.x97-deal-card-meta b{color:var(--tx)}.x97-deal-card-meta span{color:var(--tx3);font-size:10px;text-align:right}.x97-deal-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.x97-deal-metric-card{padding:14px 15px;position:relative;overflow:hidden}.x97-deal-metric-card::after{content:'';position:absolute;width:72px;height:72px;border-radius:50%;right:-28px;top:-28px;background:var(--posdim)}.x97-deal-metric-currency{font-size:10px;font-weight:900;letter-spacing:.1em;color:var(--pos)}.x97-deal-metric-main{font-size:25px;font-weight:900;letter-spacing:-.03em;margin-top:6px}.x97-deal-metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;border-top:1px solid var(--line);margin-top:10px;padding-top:9px}.x97-deal-metric-grid span{font-size:9.5px;color:var(--tx3);line-height:1.3}.x97-deal-metric-grid b{display:block;font-size:12px;color:var(--tx);margin-bottom:2px}.x97-deal-lock-note{margin-top:10px;padding:10px 11px;border-radius:11px;background:var(--warndim);color:var(--warn);font-size:11px;line-height:1.45}.x97-deals-overview{margin-top:16px}" +
+      "@media(max-width:560px){.x97-deal-metrics{grid-template-columns:1fr}.x97-deal-card-meta{align-items:flex-start;flex-direction:column}.x97-deal-card-meta span{text-align:left}.x97-deal-glance{gap:5px}.x97-deal-glance>div{padding:8px 7px}.x97-deal-glance b{font-size:10.5px}.x97-deal-steps{margin-left:-2px;margin-right:-2px}}" +
       // Documents
       ".x97-doc-preview{border:1px solid var(--line);border-radius:13px;padding:14px;background:var(--card2);font-size:12.5px;line-height:1.6;color:var(--tx);white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto}" +
       ".x97-doc-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}.x97-doc-actions .x97-btn{flex:1;min-width:130px}" +
@@ -1334,6 +1356,137 @@
     document.head.appendChild(style);
   }
 
+  function injectProCSS() {
+    if (document.getElementById("x97-pro-css")) return;
+    var style = document.createElement("style");
+    style.id = "x97-pro-css";
+    style.textContent = `
+      /* 97 LIVE command-centre pass: calmer hierarchy, stronger actions, less repetition. */
+      body.x97-v2-mode .wrap{background:var(--bg)!important}
+      body.x97-v2-mode .nav{background:rgba(251,251,248,.9);backdrop-filter:blur(22px) saturate(1.35);box-shadow:0 -14px 38px -24px rgba(23,27,18,.35);border-top-color:var(--line2)}
+      body.x97-v2-mode .navin{padding:0 8px}
+      body.x97-v2-mode .navitem{min-height:67px;padding-top:9px;font-size:9px;letter-spacing:.01em}
+      body.x97-v2-mode .navitem.on svg{box-shadow:0 8px 19px -8px rgba(11,103,64,.72),inset 0 1px 0 rgba(255,255,255,.28)}
+      #x97-v2-root{background:radial-gradient(70% 25% at 50% 0%,rgba(14,117,72,.075),transparent 75%),var(--bg)}
+      .x97-top{align-items:center;margin:8px 0 24px;padding:0 2px}
+      .x97-top-copy{min-width:0}
+      .x97-top-actions{display:flex;align-items:center;gap:8px;flex:none}
+      .x97-title{font-size:clamp(28px,4.2vw,39px);letter-spacing:-.055em;line-height:.98}
+      .x97-sub{max-width:56ch;margin-top:9px;color:var(--tx3);font-size:12.5px}
+      .x97-eyebrow{margin-bottom:10px;font-size:9.5px;letter-spacing:.2em}
+      .x97-cloud{border-color:var(--line2);background:rgba(255,255,255,.7);box-shadow:var(--toplit),var(--elev-1);min-height:36px}
+      .x97-card{border-radius:20px;box-shadow:var(--toplit),0 1px 2px rgba(23,27,18,.04),0 16px 35px -24px rgba(23,27,18,.26)}
+      .x97-section{margin-top:25px}
+      .x97-section-head{margin:0 1px 10px;align-items:center}
+      .x97-section-title{font-size:10px;letter-spacing:.16em;color:var(--tx2)}
+      .x97-section-title::before{width:4px;height:13px}
+      .x97-link{min-height:32px;padding:6px 10px;background:transparent;box-shadow:none;border-color:var(--line2);font-size:10.5px}
+      .x97-link:hover{background:var(--posdim)}
+      .x97-hero-command{min-height:252px;padding:25px 25px 23px;display:flex;flex-direction:column;justify-content:space-between;background:linear-gradient(145deg,#FFFFFF 0%,#F7FBF8 46%,#EAF5EF 100%)}
+      .x97-hero-command::before{height:4px;background:linear-gradient(90deg,var(--pos2),#36B878 50%,transparent)}
+      .x97-hero-command::after{width:350px;height:350px;right:-180px;top:-200px;background:radial-gradient(circle,rgba(14,117,72,.17),transparent 68%)}
+      .x97-hero-topline{display:flex;align-items:center;justify-content:space-between;gap:10px;position:relative;z-index:1}
+      .x97-hero-live{font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:var(--pos);font-weight:850;display:inline-flex;align-items:center;gap:5px}
+      .x97-hero-live::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--pos);box-shadow:0 0 0 4px var(--posdim)}
+      .x97-hero-value{font-size:clamp(39px,7vw,64px);margin:19px 0 6px;letter-spacing:-.055em}
+      .x97-hero-caption{position:relative;z-index:1;color:var(--tx3);font-size:11px;line-height:1.45;max-width:36ch}
+      .x97-hero-meta{margin-top:20px;gap:9px}
+      .x97-stat{padding:11px 12px;border-radius:13px;background:rgba(255,255,255,.68)}
+      .x97-stat span{font-size:8.5px;letter-spacing:.1em;margin-bottom:5px}
+      .x97-stat b{font-size:14px}
+      .x97-command-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:0}
+      .x97-command-action{min-width:0;display:flex;align-items:center;gap:9px;text-align:left;padding:12px 12px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.62);color:var(--tx);box-shadow:var(--toplit);transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease,background .18s ease}
+      .x97-command-action:hover{background:var(--card);border-color:var(--line2);box-shadow:var(--toplit),var(--elev-1);transform:translateY(-2px)}
+      .x97-command-action:active{transform:scale(.98)}
+      .x97-command-action>span:nth-child(2){min-width:0;flex:1}
+      .x97-command-action b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11.5px;font-weight:850}
+      .x97-command-action small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px;color:var(--tx3);font-size:9.5px}
+      .x97-command-action>svg{color:var(--tx3);flex:none}
+      .x97-command-icon{width:31px;height:31px;border-radius:10px;display:grid;place-items:center;flex:none;background:var(--posdim);color:var(--pos)}
+      .x97-command-icon.teal{background:var(--usddim);color:var(--usd)}
+      .x97-command-icon.warn{background:var(--warndim);color:var(--warn)}
+      .x97-command-action.primary{background:var(--pos);border-color:var(--pos);color:var(--onpos);box-shadow:0 10px 25px -18px var(--pos2)}
+      .x97-command-action.primary small,.x97-command-action.primary>svg{color:rgba(255,255,255,.72)}
+      .x97-command-action.primary .x97-command-icon{background:rgba(255,255,255,.16);color:#fff}
+      .x97-glance-section{margin-top:4px}
+      .x97-summary-grid{gap:9px}
+      .x97-summary{min-height:102px;padding:14px 14px;background:linear-gradient(150deg,var(--card),var(--bg2))}
+      .x97-summary .k{font-size:8.5px;letter-spacing:.11em}
+      .x97-summary .v{font-size:23px;margin-top:12px}
+      .x97-summary .s{font-size:9.5px;margin-top:6px}
+      .x97-deals-overview{margin-top:4px}
+      .x97-deals-overview .x97-section-head{align-items:flex-end}
+      .x97-deals-overview .x97-row-sub{font-size:10.5px;margin-top:5px}
+      .x97-deal-metric-card{border-radius:17px;background:linear-gradient(145deg,var(--card),var(--bg2));padding:16px}
+      .x97-deal-metric-main{font-size:27px}
+      .x97-deal-metrics{gap:9px}
+      .x97-item{padding:17px 17px;margin-bottom:10px;border-radius:19px}
+      .x97-item-title{font-size:15px;letter-spacing:-.02em}
+      .x97-item-category{font-size:8.5px;letter-spacing:.12em}
+      .x97-item-amount{font-size:19px}
+      .x97-item-foot{margin-top:14px}
+      .x97-group{margin-top:23px;margin-bottom:10px}
+      .x97-group b{font-size:9.5px;letter-spacing:.14em}
+      .x97-group span{font-size:9.5px}
+      .x97-segment{margin-bottom:15px;border-radius:16px;padding:4px;background:rgba(255,255,255,.56)}
+      .x97-segment button{min-height:40px;font-size:11.5px}
+      .x97-tools{margin-bottom:9px}
+      .x97-search input,.x97-icon-btn{height:46px;border-radius:14px}
+      .x97-chip{height:33px;font-size:10.5px;padding:0 11px}
+      .x97-secondary-module{opacity:.96}
+      .x97-secondary-module .x97-section-title{color:var(--tx3)}
+      .x97-secondary-module .x97-card{box-shadow:var(--toplit),0 1px 2px rgba(23,27,18,.03)}
+      .x97-fab{width:58px;height:58px;box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 16px 30px -10px rgba(11,103,64,.7)}
+      .x97-fab::after{opacity:.7}
+      .x97-back{background:rgba(18,23,17,.48);backdrop-filter:blur(10px) saturate(1.12)}
+      .x97-sheet{border-radius:28px 28px 0 0;border-color:var(--line2);box-shadow:0 -30px 80px rgba(23,27,18,.29)}
+      .x97-sheet-head{padding:13px 20px 15px}
+      .x97-sheet-head h2{font-size:19px;letter-spacing:-.035em}
+      .x97-sheet-body{padding:20px}
+      .x97-sheet-foot{padding:13px 20px calc(16px + env(safe-area-inset-bottom));background:rgba(251,251,248,.97)}
+      .x97-field{margin-bottom:16px}
+      .x97-field label{font-size:9.5px;letter-spacing:.1em}
+      .x97-input,.x97-select,.x97-textarea{min-height:46px;border-radius:14px;font-size:13.5px}
+      .x97-btn{min-height:44px;border-radius:14px}
+      @media(min-width:760px){
+        #x97-v2-root{padding:34px 30px 124px}
+        .x97-dashboard-main{grid-template-columns:minmax(0,1.04fr) minmax(330px,.96fr);gap:20px}
+        .x97-command-actions{grid-column:1/-1}
+        .x97-hero-command{min-height:278px}
+        .x97-top{margin-bottom:30px}
+        .x97-sheet-foot{border-radius:0 0 28px 28px}
+      }
+      @media(min-width:1040px){
+        #x97-v2-root{padding-left:40px;padding-right:40px}
+        .x97-page{max-width:1120px}
+        .x97-title{font-size:42px}
+      }
+      @media(max-width:620px){
+        .x97-command-actions{grid-template-columns:1fr;gap:7px}
+        .x97-command-action{padding:11px 12px}
+        .x97-command-action small{font-size:9px}
+        .x97-top{align-items:flex-start;margin-bottom:20px}
+        .x97-top-actions{gap:5px}
+        .x97-cloud{min-width:36px;padding-left:10px;padding-right:10px}
+        .x97-hero-command{min-height:230px;padding:21px 18px 19px}
+        .x97-hero-value{font-size:clamp(38px,11vw,48px)}
+        .x97-hero-caption{font-size:10.5px}
+      }
+      @media(max-width:420px){
+        #x97-v2-root{padding-left:12px;padding-right:12px}
+        .x97-title{font-size:27px}
+        .x97-sub{font-size:11.5px}
+        .x97-summary{padding:12px 11px;min-height:94px}
+        .x97-summary .v{font-size:20px}
+        .x97-deal-metric-card{padding:13px}
+      }
+      @media(prefers-reduced-motion:reduce){
+        .x97-card,.x97-command-action,.x97-fab,.x97-page{transition:none!important;animation:none!important}
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
   function toast(message, kind) {
     var holder = document.querySelector(".x97-toast-wrap");
     if (!holder) {
@@ -1371,7 +1524,7 @@
   }
 
   function pageHeader(kicker, title, subtitle, actionHTML) {
-    return '<header class="x97-top"><div><div class="x97-eyebrow">' + esc(kicker) + '</div><h1 class="x97-title">' + esc(title) + '</h1>' + (subtitle ? '<p class="x97-sub">' + esc(subtitle) + '</p>' : '') + '</div><div style="display:flex;gap:8px;align-items:center">' + (actionHTML || '') + cloudPill() + '</div></header>';
+    return '<header class="x97-top"><div class="x97-top-copy"><div class="x97-eyebrow">' + esc(kicker) + '</div><h1 class="x97-title">' + esc(title) + '</h1>' + (subtitle ? '<p class="x97-sub">' + esc(subtitle) + '</p>' : '') + '</div><div class="x97-top-actions">' + (actionHTML || '') + cloudPill() + '</div></header>';
   }
 
   function sectionHead(title, actionText, action) {
@@ -1644,10 +1797,12 @@
     }).join("");
 
     root.innerHTML = '<div class="x97-page">' +
-      pageHeader("Financial command", "Dashboard", new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" })) +
+      pageHeader("Financial command", "Dashboard", "Your cash position, next actions and upcoming money") +
       '<div class="x97-dashboard-main">' +
-        '<section class="x97-card x97-hero"><div class="x97-hero-label">Available now</div><div class="x97-hero-value x97-money">' + money(a.cash, "UGX") + '</div><div class="x97-hero-meta"><div class="x97-stat"><span>Net position</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
-        '<section><div class="x97-summary-grid"><div class="x97-card x97-summary"><div class="k">This month UGX</div><div class="v x97-money x97-green">' + money(a.ugxMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">This month USD</div><div class="v x97-money x97-teal">' + money(a.usdMonth, "", true) + '</div><div class="s">' + esc(usdEquivalent(a.usdMonth)) + '</div></div><div class="x97-card x97-summary"><div class="k">Safe personal</div><div class="v x97-money ' + (a.expenses.personalSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.personalSafe, "", true) + '</div><div class="s">After plans</div></div><div class="x97-card x97-summary"><div class="k">Safe business</div><div class="v x97-money ' + (a.expenses.businessSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.businessSafe, "", true) + '</div><div class="s">After plans</div></div></div></section>' +
+        '<section class="x97-card x97-hero x97-hero-command"><div class="x97-hero-topline"><div class="x97-hero-label">Available now</div><span class="x97-hero-live">Live position</span></div><div class="x97-hero-value x97-money">' + money(a.cash, "UGX") + '</div><div class="x97-hero-caption">Cash across your tracked accounts, before outstanding client money.</div><div class="x97-hero-meta"><div class="x97-stat"><span>Net position</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
+        '<section class="x97-command-actions x97-dashboard-wide"><button class="x97-command-action primary" data-x97-action="add-upcoming"><span class="x97-command-icon">' + icon("plus", 17) + '</span><span><b>Add incoming</b><small>Build a deal schedule</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="go-upcoming"><span class="x97-command-icon teal">' + icon("calendar", 17) + '</span><span><b>Review receivables</b><small>See what needs chasing</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="go-credit"><span class="x97-command-icon warn">' + icon("credit", 17) + '</span><span><b>Open credit</b><small>Available offers and debt</small></span>' + icon("chevron", 14) + '</button></section>' +
+        dealSummaryHTML(doc) +
+        '<section class="x97-section x97-glance-section x97-dashboard-wide">' + sectionHead("At a glance") + '<div class="x97-summary-grid"><div class="x97-card x97-summary"><div class="k">This month UGX</div><div class="v x97-money x97-green">' + money(a.ugxMonth, "", true) + '</div><div class="s">Expected incoming</div></div><div class="x97-card x97-summary"><div class="k">This month USD</div><div class="v x97-money x97-teal">' + money(a.usdMonth, "", true) + '</div><div class="s">' + esc(usdEquivalent(a.usdMonth)) + '</div></div><div class="x97-card x97-summary"><div class="k">Safe personal</div><div class="v x97-money ' + (a.expenses.personalSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.personalSafe, "", true) + '</div><div class="s">After plans</div></div><div class="x97-card x97-summary"><div class="k">Safe business</div><div class="v x97-money ' + (a.expenses.businessSafe < 0 ? "x97-red" : "") + '">' + money(a.expenses.businessSafe, "", true) + '</div><div class="s">After plans</div></div></div></section>' +
         '<section class="x97-section">' + sectionHead("Needs attention", "View Upcoming", "go-upcoming") + '<div class="x97-card x97-pad">' + attentionRows + '</div></section>' +
         (function(){var s=messagingSummary(doc);var pillOd=s.overdue?'<span class="x97-pill bad">'+s.overdue+' overdue</span>':(s.dueSoon?'<span class="x97-pill warn">'+s.dueSoon+' due soon</span>':'<span class="x97-pill good">'+icon("check",11)+'All clear</span>');return '<section class="x97-section">' + sectionHead("Messaging", "Open", "open-messaging") + '<button class="x97-msg-card" data-x97-action="open-messaging"><div class="x97-msg-icon">' + icon("send") + '</div><div class="x97-msg-body"><div class="x97-msg-title">WhatsApp reminders &amp; campaigns</div><div class="x97-msg-sub">' + s.contacts + ' contacts · ' + s.campaigns + ' campaigns' + (remindExt.ready?' · sender connected':'') + '</div><div class="x97-msg-pills">' + pillOd + '</div></div>' + icon("chevron") + '</button></section>';})() +
         '<section class="x97-section">' + sectionHead("Next 7 days") + '<div class="x97-card x97-pad"><div class="x97-hero-meta" style="margin-bottom:4px"><div class="x97-stat"><span>Expected in</span><b class="x97-green">' + money(in7, "UGX") + '</b></div><div class="x97-stat"><span>Expected out</span><b class="x97-red">' + money(out7, "UGX") + '</b></div></div>' + timelineRows + '</div></section>' +
@@ -1655,7 +1810,7 @@
         fxCardHTML(doc) +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Accounts", "Add account", "add-account") + '<div class="x97-card x97-pad">' + (accountRows || '<div class="x97-empty"><strong>No accounts yet</strong><p>Add your bank, mobile money or cash balance.</p></div>') + '</div></section>' +
         '<section class="x97-section x97-dashboard-wide">' + sectionHead("Incoming pipeline", "View all months", "go-upcoming-months") + '<div class="x97-grid x97-pipeline">' + pipeline + '</div></section>' +
-        '<section class="x97-section x97-dashboard-wide">' + sectionHead("Credit position", "Open Credit", "go-credit") + '<div class="x97-card x97-pad"><div class="x97-summary-grid"><div class="x97-summary" style="padding:4px"><div class="k">Available credit</div><div class="v x97-money x97-teal">' + money(a.creditAvailable, "", true) + '</div><div class="s">Not included in cash</div></div><div class="x97-summary" style="padding:4px"><div class="k">Borrowed</div><div class="v x97-money x97-red">' + money(a.activeLoans.reduce(function (s,l){return s+num(l.principal);},0), "", true) + '</div><div class="s">' + a.activeLoans.length + ' active</div></div><div class="x97-summary" style="padding:4px"><div class="k">Amount due</div><div class="v x97-money x97-red">' + money(a.debt, "", true) + '</div><div class="s">Estimated today</div></div><div class="x97-summary" style="padding:4px"><div class="k">Next repayment</div><div class="v x97-money" style="font-size:17px">' + esc(nextLoanDue(a.activeLoans)) + '</div><div class="s">Earliest active loan</div></div></div></div></section>' +
+        '<section class="x97-section x97-dashboard-wide x97-secondary-module x97-credit-preview">' + sectionHead("Credit position", "Open Credit", "go-credit") + '<div class="x97-card x97-pad"><div class="x97-summary-grid"><div class="x97-summary" style="padding:4px"><div class="k">Available credit</div><div class="v x97-money x97-teal">' + money(a.creditAvailable, "", true) + '</div><div class="s">Not included in cash</div></div><div class="x97-summary" style="padding:4px"><div class="k">Borrowed</div><div class="v x97-money x97-red">' + money(a.activeLoans.reduce(function (s,l){return s+num(l.principal);},0), "", true) + '</div><div class="s">' + a.activeLoans.length + ' active</div></div><div class="x97-summary" style="padding:4px"><div class="k">Amount due</div><div class="v x97-money x97-red">' + money(a.debt, "", true) + '</div><div class="s">Estimated today</div></div><div class="x97-summary" style="padding:4px"><div class="k">Next repayment</div><div class="v x97-money" style="font-size:17px">' + esc(nextLoanDue(a.activeLoans)) + '</div><div class="s">Earliest active loan</div></div></div></div></section>' +
       '</div></div>';
   }
 
@@ -1805,7 +1960,7 @@
     }
 
     root.innerHTML = '<div class="x97-page">' +
-      pageHeader("Receivables", "Incoming", "Deals, parts, payments and follow-ups", '<button class="x97-icon-btn" data-x97-action="add-upcoming" title="Add incoming deal">' + icon("plus") + '</button>') +
+      pageHeader("Receivables", "Incoming", "One deal per client. Every part stays visible.", '<button class="x97-icon-btn" data-x97-action="add-upcoming" title="Add incoming deal">' + icon("plus") + '</button>') +
       dealSummaryHTML(doc) +
       '<div class="x97-summary-grid" style="margin-bottom:14px"><div class="x97-card x97-summary"><div class="k">UGX pending</div><div class="v x97-money x97-green">' + money(ugx, "", true) + '</div><div class="s">Filtered view</div></div><div class="x97-card x97-summary"><div class="k">USD pending</div><div class="v x97-money x97-teal">' + money(usd, "", true) + '</div><div class="s">Filtered view</div></div><div class="x97-card x97-summary"><div class="k">Items</div><div class="v x97-money">' + filtered.length + '</div><div class="s">' + pending.length + ' pending</div></div><div class="x97-card x97-summary"><div class="k">Need attention</div><div class="v x97-money ' + (attention ? "x97-red" : "x97-green") + '">' + attention + '</div><div class="s">Dates, amounts or urgency</div></div></div>' +
       '<div class="x97-segment"><button class="' + (f.view === "list" ? "on" : "") + '" data-x97-action="upcoming-view" data-value="list">' + icon("list", 15) + ' List</button><button class="' + (f.view === "months" ? "on" : "") + '" data-x97-action="upcoming-view" data-value="months">' + icon("grid", 15) + ' Months</button></div>' +
@@ -1868,7 +2023,7 @@
       body = history.length ? history.map(function (l) { var f=facilityById(doc,l.facilityId)||{}; return '<article class="x97-card x97-facility"><div class="x97-facility-head"><div class="x97-network ' + networkClass(f.network) + '">' + esc(String(f.network||"CR").slice(0,3).toUpperCase()) + '</div><div class="x97-facility-main"><div class="x97-facility-title">' + esc(f.service||"Credit borrowing") + '</div><div class="x97-facility-sub">Borrowed ' + formatDate(l.borrowDate) + ' · Repaid ' + formatDate(l.repaidDate) + '</div></div><div class="x97-facility-limit"><span>Paid</span><b class="x97-money x97-green">' + money(l.actualPaid || estimateLoan(l,l.repaidDate),"UGX",true) + '</b></div></div></article>'; }).join("") : '<div class="x97-card x97-empty"><strong>No repayment history yet</strong><p>Completed borrowing will stay here for reference.</p></div>';
     }
     root.innerHTML = '<div class="x97-page">' +
-      pageHeader("Mobile finance", "Credit", "Available offers, borrowing and repayment", '<button class="x97-icon-btn" data-x97-action="add-facility" title="Add facility">' + icon("plus") + '</button>') +
+      pageHeader("Mobile finance", "Credit", "Available offers, active borrowing and repayment history", '<button class="x97-icon-btn" data-x97-action="add-facility" title="Add facility">' + icon("plus") + '</button>') +
       '<div class="x97-summary-grid" style="margin-bottom:14px"><div class="x97-card x97-summary"><div class="k">Available credit</div><div class="v x97-money x97-teal">' + money(availableTotal,"",true) + '</div><div class="s">Across ' + live.length + ' live facilities</div></div><div class="x97-card x97-summary"><div class="k">Borrowed</div><div class="v x97-money x97-red">' + money(borrowed,"",true) + '</div><div class="s">' + active.length + ' active</div></div><div class="x97-card x97-summary"><div class="k">Amount due</div><div class="v x97-money x97-red">' + money(due,"",true) + '</div><div class="s">Estimated today</div></div><div class="x97-card x97-summary"><div class="k">Next repayment</div><div class="v x97-money" style="font-size:17px">' + esc(nextLoanDue(active)) + '</div><div class="s">Earliest active loan</div></div></div>' +
       '<div class="x97-segment"><button class="' + (state.creditView === "available" ? "on" : "") + '" data-x97-action="credit-view" data-value="available">Available</button><button class="' + (state.creditView === "borrowed" ? "on" : "") + '" data-x97-action="credit-view" data-value="borrowed">Borrowed' + (active.length ? ' · ' + active.length : '') + '</button><button class="' + (state.creditView === "history" ? "on" : "") + '" data-x97-action="credit-view" data-value="history">History</button></div>' + body +
       '<button class="x97-fab" data-x97-action="add-facility" aria-label="Add credit facility">' + icon("plus",25) + '</button></div>';
@@ -1876,6 +2031,7 @@
 
   function render() {
     if (!currentScreen || !ensureRoot()) return;
+    root.dataset.screen = currentScreen;
     var doc = readDoc();
     if (!doc) {
       root.innerHTML = '<div class="x97-page"><div class="x97-card x97-empty"><strong>Loading your finance data…</strong><p>Sign in and wait for the cloud copy to finish loading.</p></div></div>';
@@ -1905,6 +2061,7 @@
   function option(value, label, selected) { return '<option value="' + attr(value) + '" ' + (String(value) === String(selected) ? "selected" : "") + '>' + esc(label == null ? value : label) + '</option>'; }
 
   function field(label, input, help) { return '<div class="x97-field"><label>' + esc(label) + '</label>' + input + (help ? '<div class="x97-help">' + esc(help) + '</div>' : '') + '</div>'; }
+  function fieldWithLabelId(id, label, input, help) { return '<div class="x97-field"><label id="' + attr(id) + '">' + esc(label) + '</label>' + input + (help ? '<div class="x97-help">' + esc(help) + '</div>' : '') + '</div>'; }
 
   function contactPickerHTML(query, doc, hintName, currentPhone) {
     var contacts = campContacts(doc);
@@ -1923,24 +2080,26 @@
   function openUpcomingForm(id) {
     var doc = readDoc(), existing = id ? (doc.followups || []).find(function(x){return String(x.id)===String(id);}) : null;
     var item = existing ? clone(existing) : { id:"", client:"", category:"One Time", amount:"", currency:"UGX", status:"Pending", expectedBy:"", phone:"", note:"", dealType:"one", partLabel:"parts", partCount:1, partEvery:7 };
-    var type = item.dealType || (Array.isArray(item.parts) ? "part" : "one");
+    var type = normalizeDealType(item.dealType || (Array.isArray(item.parts) ? "part" : "one"));
     var locked = !!(existing && dealHasRecordedMoney(item));
     var partCount = item.partCount || (item.parts && item.parts.length) || (type === "split" ? 2 : 1);
     var partLabel = item.partLabel || (type === "monthly" ? "months" : "parts");
     var amountValue = type === "monthly" || type === "part" ? (dealPartAmount(item) || item.amount || "") : (existing ? grossOf(item) : item.amount);
-    var firstDue = item.expectedBy || (item.parts && item.parts[0] && item.parts[0].dueDate) || "";
+    var firstDue = (item.parts && item.parts[0] && item.parts[0].dueDate) || item.expectedBy || "";
     var secondDue = (item.parts && item.parts[1] && item.parts[1].dueDate) || "";
     var categories = Array.from(new Set([].concat(doc.settings.categories || [], (doc.followups || []).map(function(x){return x.category;}), ["Design","One Time","Retainer"]).filter(Boolean))).sort();
     var statuses = Array.from(new Set([].concat(doc.settings.fuStatuses || [], ["Pending","Paid","Cancelled"]).filter(Boolean)));
     var hasContacts = campContacts(doc).length > 0;
     var dealOptions = Object.keys(DEAL_TYPES).map(function (key) { return option(key, DEAL_TYPES[key], type); }).join("");
-    var labelOptions = ["parts","scenes","episodes","units","milestones"].map(function (x) { return option(x, x.charAt(0).toUpperCase() + x.slice(1), partLabel); }).join("");
-    var dealFields = '<div class="x97-deal-builder x97-card x97-pad"><div class="x97-deal-builder-title">Structure the money</div><div class="x97-deal-builder-sub">One deal can contain payments, months, scenes, episodes, units or milestones. The app creates the schedule for you.</div>' +
+    var labelOptions = ["parts","scenes","episodes","months","units","milestones"].map(function (x) { return option(x, x.charAt(0).toUpperCase() + x.slice(1), partLabel); }).join("");
+    var amountLabel = dealAmountLabel(type, partLabel);
+    var dealFields = '<div class="x97-deal-builder x97-card x97-pad"><div class="x97-deal-builder-top"><div><div class="x97-deal-eyebrow">Deal builder</div><div class="x97-deal-builder-title">Structure the money</div></div><span class="x97-deal-live-badge">Live preview</span></div><div class="x97-deal-builder-sub">One parent deal can contain payments, months, parts, scenes, episodes, units or milestones. The app creates the schedule for you.</div>' +
+      '<div class="x97-deal-steps"><span class="active"><i>1</i> Structure</span><span><i>2</i> Amount</span><span><i>3</i> Schedule</span></div>' +
       '<div class="x97-fields-2">' + field("Payment structure", '<select class="x97-select x97-deal-control" name="dealType"' + (locked ? " disabled" : "") + '>' + dealOptions + '</select>') + field("Part label", '<select class="x97-select x97-deal-control" name="partLabel"' + (locked ? " disabled" : "") + '>' + labelOptions + '</select>') + '</div>' +
       '<div class="x97-fields-2"><div class="x97-deal-count-field">' + field("Number of parts", '<input class="x97-input x97-deal-control" name="partCount" type="number" min="1" max="120" step="1" value="' + attr(partCount) + '"' + (locked ? " disabled" : "") + '>') + '</div><div class="x97-deal-interval-field">' + field("Days between parts", '<input class="x97-input x97-deal-control" name="partEvery" type="number" min="1" max="365" step="1" value="' + attr(item.partEvery || 7) + '"' + (locked ? " disabled" : "") + '>') + '</div></div>' +
-      '<div class="x97-fields-2"><div>' + field(type === "monthly" || type === "part" ? "Amount per part" : "Total amount", '<input class="x97-input x97-deal-control" name="amount" inputmode="decimal" type="number" min="0" step="1" value="' + attr(amountValue) + '" placeholder="0"' + (locked ? " disabled" : "") + '>', locked ? "Schedule locked after money was recorded." : "The app calculates the full deal value and every payment.") + '</div><div>' + field("Currency", '<select class="x97-select x97-deal-control" name="currency"' + (locked ? " disabled" : "") + '>' + option("UGX","UGX",item.currency) + option("USD","USD",item.currency) + '</select>') + '</div></div>' +
+      '<div class="x97-fields-2"><div>' + fieldWithLabelId("x97-deal-amount-label", amountLabel, '<input class="x97-input x97-deal-control" name="amount" inputmode="decimal" type="number" min="0" step="1" value="' + attr(amountValue) + '" placeholder="0"' + (locked ? " disabled" : "") + '>', locked ? "Schedule locked after money was recorded." : "The app calculates the full deal value and every payment.") + '</div><div>' + field("Currency", '<select class="x97-select x97-deal-control" name="currency"' + (locked ? " disabled" : "") + '>' + option("UGX","UGX",item.currency) + option("USD","USD",item.currency) + '</select>') + '</div></div>' +
       '<div class="x97-fields-2"><div>' + field("First due date", '<input class="x97-input x97-deal-control" name="startDate" type="date" value="' + attr(firstDue) + '"' + (locked ? " disabled" : "") + '>') + '</div><div class="x97-deal-second-field">' + field("Second half due", '<input class="x97-input x97-deal-control" name="secondDue" type="date" value="' + attr(secondDue) + '"' + (locked ? " disabled" : "") + '>') + '</div></div>' +
-      '<div id="x97-deal-preview" class="x97-deal-preview"></div>' + (locked ? '<div class="x97-deal-lock-note">Money has already been recorded. Dates and financial structure are locked; you can still update the client, category, contact and note.</div>' : '') + '</div>';
+      '<div id="x97-deal-hint" class="x97-deal-type-hint"></div><div id="x97-deal-glance" class="x97-deal-glance"></div><div class="x97-deal-schedule-heading"><div><b>Review the schedule</b><span>Adjust dates before saving.</span></div><span class="x97-deal-schedule-dot">●</span></div><div id="x97-deal-preview" class="x97-deal-preview"></div>' + (locked ? '<div class="x97-deal-lock-note">Money has already been recorded. Dates and financial structure are locked; you can still update the client, category, contact and note.</div>' : '') + '</div>';
     var body = '<form id="x97-upcoming-form" data-x97-form="upcoming"><input type="hidden" name="id" value="' + attr(item.id) + '">' +
       field("Client / project", '<input class="x97-input" name="client" required maxlength="160" placeholder="e.g. Apollo Studios" value="' + attr(item.client) + '">') +
       field("WhatsApp number", '<input class="x97-input" name="phone" inputmode="tel" value="' + attr(item.phone || "") + '" placeholder="e.g. 0772 123 456">' +
@@ -1961,9 +2120,9 @@
       var clientInput = back.querySelector('input[name="client"]'), phoneInput = back.querySelector('input[name="phone"]'), searchInput = back.querySelector(".x97-contact-search"), box = back.querySelector("#x97-contact-suggest");
       var form = back.querySelector("#x97-upcoming-form"), preview = back.querySelector("#x97-deal-preview"), typeInput = back.querySelector('[name="dealType"]');
       function draftValues() { var values = formValues(form); Array.prototype.slice.call(back.querySelectorAll(".x97-deal-date")).forEach(function (el) { values[el.name] = el.value; }); return values; }
-      function refreshDealPreview() { if (!preview || !typeInput) return; var values = draftValues(); var draft = clone(item); draft.dealType = values.dealType || typeInput.value; draft.partLabel = values.partLabel || partLabel; draft.partCount = values.partCount || partCount; draft.partEvery = values.partEvery || item.partEvery || 7; draft.currency = values.currency || item.currency; draft.parts = locked && item.parts ? clone(item.parts) : dealPartsFor(item, values); preview.innerHTML = dealScheduleHTML(draft, locked ? "locked" : true) + '<div class="x97-deal-total"><span>Deal total</span><b>' + money(draft.parts.reduce(function (s, p) { return s + num(p.amount); }, 0), draft.currency) + '</b></div>'; if (!locked) Array.prototype.slice.call(preview.querySelectorAll(".x97-deal-date")).forEach(function (el) { el.addEventListener("input", refreshDealPreview); }); }
-      function toggleDealFields() { var value = typeInput ? typeInput.value : "one"; var count = back.querySelector(".x97-deal-count-field"), interval = back.querySelector(".x97-deal-interval-field"), second = back.querySelector(".x97-deal-second-field"); if (count) count.style.display = value === "one" || value === "split" ? "none" : "block"; if (interval) interval.style.display = value === "monthly" || value === "one" || value === "split" ? "none" : "block"; if (second) second.style.display = value === "split" ? "block" : "none"; refreshDealPreview(); }
-      if (typeInput) { typeInput.addEventListener("change", toggleDealFields); Array.prototype.slice.call(back.querySelectorAll(".x97-deal-control, .x97-deal-builder input")).forEach(function (el) { el.addEventListener("input", refreshDealPreview); el.addEventListener("change", refreshDealPreview); }); toggleDealFields(); }
+      function refreshDealPreview(changed) { if (!preview || !typeInput) return; var values = draftValues(); var normalizedType = normalizeDealType(values.dealType || typeInput.value); var draft = clone(item); draft.dealType = normalizedType; draft.partLabel = values.partLabel || partLabel; draft.partCount = values.partCount || partCount; draft.partEvery = values.partEvery || item.partEvery || 7; draft.currency = values.currency || item.currency; draft.parts = locked && item.parts ? clone(item.parts) : dealPartsFor(item, values); var total = draft.parts.reduce(function (s, p) { return s + num(p.amount); }, 0); var hint = back.querySelector("#x97-deal-hint"), glance = back.querySelector("#x97-deal-glance"), amountLabelEl = back.querySelector("#x97-deal-amount-label"); if (hint) hint.textContent = dealTypeHint(normalizedType, draft.partLabel); if (amountLabelEl) amountLabelEl.textContent = dealAmountLabel(normalizedType, draft.partLabel); if (glance) glance.innerHTML = '<div><span>Structure</span><b>' + esc(DEAL_TYPES[normalizedType]) + '</b></div><div><span>Unit price</span><b>' + money(normalizedType === "split" || normalizedType === "one" ? (draft.parts[0] ? draft.parts[0].amount : 0) : (draft.parts[0] ? draft.parts[0].amount : 0), draft.currency) + '</b></div><div><span>Total value</span><b>' + money(total, draft.currency) + '</b></div>'; preview.innerHTML = dealScheduleHTML(draft, locked ? "locked" : true) + '<div class="x97-deal-total"><span>Deal total</span><b>' + money(total, draft.currency) + '</b></div>'; if (!locked) Array.prototype.slice.call(preview.querySelectorAll(".x97-deal-date")).forEach(function (el) { el.addEventListener("input", function () { var start = back.querySelector('[name="startDate"]'), expected = back.querySelector('[name="expectedBy"]'); if (el.name === "partDate_0") { if (start) start.value = el.value; if (expected) expected.value = el.value; } refreshDealPreview(el); }); }); }
+      function toggleDealFields() { var value = normalizeDealType(typeInput ? typeInput.value : "one"); var count = back.querySelector(".x97-deal-count-field"), interval = back.querySelector(".x97-deal-interval-field"), second = back.querySelector(".x97-deal-second-field"), label = back.querySelector('[name="partLabel"]'); if (count) count.style.display = value === "one" || value === "split" ? "none" : "block"; if (interval) interval.style.display = value === "monthly" || value === "one" || value === "split" ? "none" : "block"; if (second) second.style.display = value === "split" ? "block" : "none"; if (label) label.closest(".x97-field").style.display = value === "one" ? "none" : "block"; refreshDealPreview(); }
+      if (typeInput) { typeInput.addEventListener("change", toggleDealFields); Array.prototype.slice.call(back.querySelectorAll(".x97-deal-control, .x97-deal-builder input, [name=\"expectedBy\"]")).forEach(function (el) { function onDealInput() { if (el.name === "startDate" || el.name === "expectedBy") { var other = back.querySelector('[name="' + (el.name === "startDate" ? "expectedBy" : "startDate") + '"]'); if (other) other.value = el.value; Array.prototype.slice.call(preview.querySelectorAll(".x97-deal-date")).forEach(function (date) { date.value = ""; }); } refreshDealPreview(el); } el.addEventListener("input", onDealInput); el.addEventListener("change", onDealInput); }); toggleDealFields(); }
       if (!clientInput || !phoneInput || !box) return;
       var timer = null;
       function refresh() {
@@ -2127,7 +2286,7 @@
         doc.followups[i]=Object.assign({},old,{client:v.client.trim(),category:v.category,phone:(v.phone||"").trim(),note:(v.note||"").trim()});
         return;
       }
-      var type=String(v.dealType||"one");
+      var type=normalizeDealType(v.dealType||"one");
       var structured=type!=="one";
       var parts=structured?dealPartsFor(old||{},v):[];
       var gross=structured?parts.reduce(function(s,p){return s+num(p.amount);},0):roundMoney(v.amount);
@@ -2135,8 +2294,11 @@
       var due=structured?(parts[0]&&parts[0].dueDate||v.expectedBy||""):(v.startDate||v.expectedBy||"");
       var settled=already>0&&already>=gross-0.5;
       var item={id:id,client:v.client.trim(),category:v.category,gross:gross,paid:already,amount:already>0&&!settled?roundMoney(gross-already):gross,currency:String(v.currency||"UGX").toUpperCase(),status:settled?"Paid":v.status,expectedBy:due,phone:(v.phone||"").trim(),note:(v.note||"").trim()};
-      if(structured){item.dealType=type;item.partLabel=dealLabel({partLabel:v.partLabel||"parts"});item.partCount=parts.length;item.partEvery=Math.max(1,Math.round(num(v.partEvery||7)));item.partAmount=parts[0]?num(parts[0].amount):0;item.parts=parts;rebuildDealParts(doc,item);}
-      if(i>=0)doc.followups[i]=Object.assign({},old,item);else doc.followups.unshift(item);
+      if(structured){item.dealType=type;item.partLabel=dealLabel({partLabel:v.partLabel||(type==="monthly"?"months":"parts")});item.partCount=parts.length;item.partEvery=Math.max(1,Math.round(num(v.partEvery||7)));item.partAmount=parts[0]?num(parts[0].amount):0;item.parts=parts;}
+      var next=Object.assign({},old||{},item);
+      if(structured) rebuildDealParts(doc,next);
+      else {delete next.dealType;delete next.partLabel;delete next.partCount;delete next.partEvery;delete next.partAmount;delete next.parts;}
+      if(i>=0)doc.followups[i]=next;else doc.followups.unshift(next);
     },"upcoming-save");
     closeSheet(); if(remindState.open) refreshRemind();
   }
@@ -3442,7 +3604,7 @@
     if(action==="pay-part"){var pf=document.getElementById("x97-pay-form");if(pf){var cap=num(pf.amount.max);pf.amount.value=Math.max(1,Math.round(cap*num(btn.dataset.value)/100));}return;}
     if(action==="undo-payment"){if(confirm("Undo this payment? The amount goes back to outstanding and any account credit is reversed.")){var pid=btn.dataset.id,fid="";updateDoc(function(doc){var p=(doc.payments||[]).find(function(x){return String(x.id)===String(pid);});if(p)fid=p.followupId;reversePayment(doc,pid);},"payment-undo");closeSheet();if(fid)openPaymentForm(fid);}return;}
     if(action==="delete-upcoming"){var targetDoc=readDoc(),targetItem=targetDoc&&(targetDoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(targetItem&&dealHasRecordedMoney(targetItem)){toast("A deal with recorded money cannot be deleted","error");return;}if(confirm("Delete this upcoming payment?")){updateDoc(function(doc){doc.followups=doc.followups.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"upcoming-delete");closeSheet();}return;}
-    if(action==="quick-date"){var input=document.querySelector("#x97-upcoming-form [name=expectedBy]");if(input){input.value=btn.dataset.value==="month-end"?dateISO(endOfMonth(todayDate())):dateISO(addDays(todayDate(),num(btn.dataset.days)));}return;}
+    if(action==="quick-date"){var value=btn.dataset.value==="month-end"?dateISO(endOfMonth(todayDate())):dateISO(addDays(todayDate(),num(btn.dataset.days)));var input=document.querySelector("#x97-upcoming-form [name=expectedBy]");var start=document.querySelector("#x97-upcoming-form [name=startDate]");if(input)input.value=value;if(start)start.value=value;var second=document.querySelector("#x97-upcoming-form [name=secondDue]"),dealTypeInput=document.querySelector("#x97-upcoming-form [name=dealType]");if(second&&dealTypeInput&&dealTypeInput.value==="split"&&!second.value)second.value=value;return;}
     if(action==="upcoming-view"){state.upcoming.view=btn.dataset.value;savePrefs();scheduleRender(0);return;}
     if(action==="quick-filter"){state.upcoming.quick=btn.dataset.value;savePrefs();scheduleRender(0);return;}
     if(action==="month-filter"){state.upcoming.month=btn.dataset.value;savePrefs();scheduleRender(0);return;}
@@ -3493,7 +3655,7 @@
   }
 
   function boot() {
-    injectCSS();injectMsgCSS();injectFeatureCSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
+    injectCSS();injectMsgCSS();injectFeatureCSS();injectProCSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
     var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
     var observer=new MutationObserver(function(mutations){
       var relevant=mutations.some(function(m){

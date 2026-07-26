@@ -37,7 +37,7 @@
 --vio:#5D49D6;--viodim:rgba(93,73,214,.09);
 /* text/icons painted on top of the brand green */
 --onpos:#FFFFFF;
---r1:14px;--r2:18px;--r3:26px;
+--r1:14px;--r2:20px;--r3:28px;
 /* DEPTH SYSTEM — soft ink-tinted shadows, the paper look */
 --elev-1:0 1px 2px rgba(23,27,18,.05),0 10px 28px -16px rgba(23,27,18,.18);
 --elev-2:0 2px 6px rgba(23,27,18,.06),0 22px 48px -20px rgba(23,27,18,.25);
@@ -79,7 +79,7 @@ button{cursor:pointer;color:inherit}
 .hscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;scroll-snap-type:x mandatory;scrollbar-width:none}
 .hscroll::-webkit-scrollbar{display:none}
 .snap{scroll-snap-align:start}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r2);box-shadow:var(--toplit),var(--elev-1);transition:border-color .2s ease,box-shadow .22s ease,transform .22s cubic-bezier(.22,1,.36,1)}
+.card{background:linear-gradient(180deg,var(--card) 0%,var(--bg2) 135%);border:1px solid var(--line);border-radius:var(--r2);box-shadow:var(--toplit),var(--elev-1);transition:border-color .2s ease,box-shadow .22s ease,transform .22s cubic-bezier(.22,1,.36,1)}
 @media(hover:hover){.card:hover{box-shadow:var(--toplit),var(--elev-2);border-color:var(--line2);transform:translateY(-2px)}}
 .press{cursor:pointer;transition:transform .12s ease,background .15s ease,opacity .15s ease}
 .press:active{transform:scale(.97)}
@@ -268,6 +268,6 @@ react/cjs/react-jsx-runtime.production.min.js:
 */
 </script>
 <script>if("serviceWorker" in navigator){var __hadCtrl=!!navigator.serviceWorker.controller,__reloading=false;navigator.serviceWorker.addEventListener("controllerchange",function(){if(__reloading||!__hadCtrl)return;__reloading=true;window.location.reload()});window.addEventListener("load",function(){navigator.serviceWorker.register("./sw.js").then(function(reg){reg.update();setInterval(function(){reg.update()},3600000);window.addEventListener("focus",function(){reg.update()})}).catch(function(){})});}</script>
-<script defer src="./sync.js?v=15"></script>
+<script defer src="./sync.js?v=16"></script>
 </body>
 </html>
