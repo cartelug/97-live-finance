@@ -712,17 +712,17 @@
   else boot();
 })();
 
-/* Load the additive 97 LIVE Experience V2 after the existing app and cloud engine. */
+/* Load the additive 97 LIVE Experience V3 after the existing app and cloud engine. */
 (function () {
-  function loadExperienceV2() {
-    if (document.querySelector('script[data-s97-experience-v2]')) return;
+  function loadExperienceV3() {
+    if (document.querySelector('script[data-s97-experience-v3]')) return;
     var script = document.createElement('script');
-    script.src = './experience-v2.js?v=6';
+    script.src = './experience-v2.js?v=7';
     script.defer = true;
-    script.dataset.s97ExperienceV2 = '1';
-    script.onerror = function () { console.error('97 LIVE Experience V2 could not load'); };
+    script.dataset.s97ExperienceV3 = '1';
+    script.onerror = function () { console.error('97 LIVE Experience V3 could not load'); };
     document.head.appendChild(script);
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', loadExperienceV2, { once: true });
-  else loadExperienceV2();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', loadExperienceV3, { once: true });
+  else loadExperienceV3();
 })();

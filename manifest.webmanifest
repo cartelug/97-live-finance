@@ -1,13 +1,13 @@
 {
-  "name": "97 LIVE — Finance Command",
+  "name": "97 LIVE — Finance Intelligence",
   "short_name": "97 LIVE",
-  "description": "Finance command center for THE 97 World — receivables, credit, cash, budgets and an AI copilot.",
+  "description": "A clear command centre for receivables, payments, cash, expenses, credit, messaging, FX and finance intelligence.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#F2F2EC",
-  "theme_color": "#F2F2EC",
+  "background_color": "#F1F5F1",
+  "theme_color": "#062D21",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },

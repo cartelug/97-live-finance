@@ -5,6 +5,20 @@ Tracks client receivables, mobile-money credit lines, cash balances and monthly
 budgets — with a built-in **AI copilot** and an always-on **smart suggestions**
 engine. It runs entirely in the browser: no server, no database, no build step.
 
+## Experience V3
+
+The current interface keeps the original React app and `ns97-finance-v1` data
+contract, then adds a new finance-intelligence layer on top:
+
+- **Manrope + DM Mono** typography with a stronger forest/lime command-centre UI
+- richer page, card, progress, sheet and status motion with reduced-motion support
+- a simplified **Incoming** cockpit with Open, Needs action, Due in 7 days, Paid
+  and Everything views
+- compact deal cards with direct **Record payment**, **WhatsApp** and **Details**
+  actions
+- corrected outstanding, overdue, due-soon and monthly-collected calculations,
+  including reversed-payment exclusion and separate UGX/USD totals
+
 ### Incoming schedules
 
 Incoming work stays as one deal with a visible payment schedule. Choose **One

@@ -1,4 +1,4 @@
-/* 97 LIVE — Experience V2
+/* 97 LIVE — Experience V3
    Additive UI upgrade for Dashboard, Upcoming and Credit.
    Uses the existing ns97-finance-v1 document so Supabase sync, backups and old records remain compatible.
 */
@@ -8,9 +8,9 @@
   if (window.__S97_EXPERIENCE_V2__) return;
   window.__S97_EXPERIENCE_V2__ = true;
 
-  var VERSION = "experience-v2.3";
+  var VERSION = "experience-v3.0";
   var DATA_KEY = "ns97-finance-v1";
-  var PREF_KEY = "ns97.v2.upcoming.filters";
+  var PREF_KEY = "ns97.v3.incoming.filters";
   var REFRESH_KEY = "ns97.v2.react-refresh";
   var RESUME_KEY = "ns97.v2.resume-tab";
   var MANAGED = { dashboard: true, upcoming: true, credit: true };
@@ -22,6 +22,7 @@
   var lastCloudStatus = "";
   var renderTimer = null;
   var searchTimer = null;
+  var fabFrame = 0;
   var unavailableOpen = false;
   var needsReactRefresh = false;
   var modeActive = false;
@@ -78,7 +79,7 @@
   var state = {
     upcoming: {
       view: "list",
-      quick: "all",
+      quick: "open",
       month: "all",
       search: "",
       statuses: [],
@@ -113,9 +114,9 @@
     var amount = num(value);
     var abs = Math.abs(amount);
     var text;
-    if (compact && abs >= 1000000000) text = (amount / 1000000000).toFixed(abs >= 10000000000 ? 1 : 2).replace(/\.0+$/, "") + "B";
-    else if (compact && abs >= 1000000) text = (amount / 1000000).toFixed(abs >= 10000000 ? 1 : 2).replace(/\.0+$/, "") + "M";
-    else if (compact && abs >= 1000) text = (amount / 1000).toFixed(abs >= 100000 ? 0 : 1).replace(/\.0+$/, "") + "K";
+    if (compact && abs >= 1000000000) text = (amount / 1000000000).toFixed(abs >= 10000000000 ? 1 : 2).replace(/(\.\d*?[1-9])0+$|\.0+$/, "$1") + "B";
+    else if (compact && abs >= 1000000) text = (amount / 1000000).toFixed(abs >= 10000000 ? 1 : 2).replace(/(\.\d*?[1-9])0+$|\.0+$/, "$1") + "M";
+    else if (compact && abs >= 1000) text = (amount / 1000).toFixed(abs >= 100000 ? 0 : 1).replace(/(\.\d*?[1-9])0+$|\.0+$/, "$1") + "K";
     else text = Math.round(amount).toLocaleString();
     return (currency ? currency + " " : "") + text;
   }
@@ -616,7 +617,7 @@
   }
 
   function dealSummaryHTML(doc) {
-    var deals = (doc.followups || []).filter(isDeal);
+    var deals = (doc.followups || []).filter(function (item) { return isDeal(item) && !isCancelled(item.status); });
     if (!deals.length) return "";
     var currencies = ["UGX", "USD"].filter(function (currency) { return deals.some(function (x) { return String(x.currency || "UGX").toUpperCase() === currency; }); });
     var blocks = currencies.map(function (currency) {
@@ -629,9 +630,10 @@
     return '<section class="x97-section x97-deals-overview x97-dashboard-wide"><div class="x97-section-head"><div><div class="x97-section-title">Deal overview</div><div class="x97-row-sub">Booked work, received money and what is still uncollected</div></div><span class="x97-pill good">' + deals.length + ' deals</span></div><div class="x97-deal-metrics">' + blocks + '</div></section>';
   }
 
-  // Everything received in a month, in shillings, dollars converted at today's rate.
+  // Every non-reversed ledger payment received in a month, expressed in
+  // shillings; dollar receipts use the recorded credit or the current FX rate.
   function earnedIn(doc, key) {
-    return (doc.payments || []).filter(function (p) { return monthKey(p.date) === key; }).reduce(function (sum, p) {
+    return (doc.payments || []).filter(function (p) { return !isReversedPayment(p) && monthKey(p.date) === key; }).reduce(function (sum, p) {
       if (String(p.currency).toUpperCase() !== "USD") return sum + num(p.amount);
       var ugx = p.creditedUGX != null ? num(p.creditedUGX) : fxConvert(p.amount, "USD", FX_HOME);
       return sum + (ugx == null ? 0 : ugx);
@@ -927,7 +929,7 @@
     var doc = readDoc();
     if (!doc) return;
     var series = earningsSeries(doc, 12).slice().reverse();
-    var payments = (doc.payments || []).slice(0, 60);
+    var payments = (doc.payments || []).filter(function (payment) { return !isReversedPayment(payment); }).slice(0, 60);
     var rows = series.filter(function (r) { return r.earned > 0 || r.spent > 0; }).map(function (r) {
       var net = r.earned - r.spent;
       return '<div class="x97-earn-row"><div class="x97-earn-row-mon">' + esc(r.label) + '</div>' +
@@ -1640,6 +1642,160 @@
     document.head.appendChild(style);
   }
 
+  function injectRevampCSS() {
+    if (document.getElementById("x97-revamp-css")) return;
+    var style = document.createElement("style");
+    style.id = "x97-revamp-css";
+    style.textContent = `
+      :root{
+        --bg:#F1F5F1;--bg2:#FBFCFA;--card:#FFFFFF;--card2:#EEF3EF;--card3:#DEE8E0;
+        --line:rgba(17,35,27,.09);--line2:rgba(17,35,27,.17);
+        --tx:#10231B;--tx2:#4F6258;--tx3:#697A70;
+        --pos:#0D8053;--pos2:#075D3D;--posdim:rgba(13,128,83,.11);
+        --usd:#126A82;--usddim:rgba(18,106,130,.10);
+        --warn:#A76508;--warndim:rgba(167,101,8,.12);
+        --neg:#BC3E45;--negdim:rgba(188,62,69,.10);
+        --lime:#D9FF66;--forest:#062D21;
+        --fu:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        --fd:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        --fnum:'DM Mono','SFMono-Regular',Consolas,monospace;
+        --elev-1:0 1px 2px rgba(10,35,24,.04),0 14px 34px -23px rgba(6,45,33,.25);
+        --elev-2:0 3px 8px rgba(10,35,24,.06),0 24px 50px -25px rgba(6,45,33,.32);
+      }
+      html,body,.app,input,select,button,textarea{font-family:var(--fu)}
+      .tabnum,.x97-money{font-family:var(--fnum)!important;font-weight:500!important;letter-spacing:-.055em!important}
+      body::before{opacity:.72}
+      .nav{background:rgba(6,45,33,.96)!important;border-top-color:rgba(217,255,102,.12)!important;box-shadow:0 -16px 42px -24px rgba(6,45,33,.82)!important;backdrop-filter:blur(24px) saturate(1.25)!important}
+      .navitem{color:rgba(255,255,255,.58)!important}
+      .navitem.on{color:var(--lime)!important}
+      .navitem svg{color:inherit!important}
+      .navitem.on svg{background:var(--lime)!important;color:var(--forest)!important;box-shadow:0 8px 22px -8px rgba(217,255,102,.55)!important}
+      #x97-v2-root{background:
+        radial-gradient(80% 28% at 50% -4%,rgba(13,128,83,.10),transparent 72%),
+        linear-gradient(180deg,#F4F8F4 0%,var(--bg) 34%,var(--bg) 100%)}
+      .x97-page>.x97-top{animation:x97-rise .38s cubic-bezier(.2,.82,.25,1) both}
+      .x97-page>.x97-dashboard-main,.x97-page>.x97-collection-command,.x97-page>.x97-segment{animation:x97-rise .48s .05s cubic-bezier(.2,.82,.25,1) both}
+      .x97-group,.x97-item,.x97-month-card{animation:x97-rise .38s cubic-bezier(.2,.82,.25,1) both}
+      .x97-item:nth-of-type(2),.x97-month-card:nth-of-type(2){animation-delay:35ms}
+      .x97-item:nth-of-type(3),.x97-month-card:nth-of-type(3){animation-delay:70ms}
+      .x97-item:nth-of-type(4),.x97-month-card:nth-of-type(4){animation-delay:105ms}
+      @keyframes x97-rise{from{opacity:0;transform:translateY(13px) scale(.992)}to{opacity:1;transform:none}}
+      .x97-title{font-weight:800;letter-spacing:-.065em}
+      .x97-eyebrow{color:var(--pos2);font-family:var(--fnum);font-weight:500;letter-spacing:.13em}
+      .x97-cloud{font-family:var(--fnum);font-size:9.5px;letter-spacing:-.02em}
+      .x97-add-primary{background:var(--forest);border-color:var(--forest);color:var(--lime);padding:0 14px;box-shadow:0 10px 22px -13px rgba(6,45,33,.72)}
+      .x97-add-primary:hover{background:#08402F}
+      .x97-card{border-radius:19px}
+      .x97-hero-command{background:linear-gradient(138deg,#0A4A35 0%,var(--forest) 58%,#041D16 100%);border-color:rgba(217,255,102,.10);box-shadow:0 24px 48px -25px rgba(6,45,33,.78);color:#fff}
+      .x97-hero-command::before{background:linear-gradient(90deg,var(--lime),#69D78D 48%,transparent)}
+      .x97-hero-command::after{right:-145px;top:-175px;background:radial-gradient(circle,rgba(217,255,102,.19),transparent 66%)}
+      .x97-hero-command .x97-hero-label{background:rgba(217,255,102,.12);color:var(--lime)}
+      .x97-hero-command .x97-hero-label::before{background:var(--lime)}
+      .x97-hero-command .x97-hero-live{color:var(--lime)}
+      .x97-hero-command .x97-hero-live::before{background:var(--lime);box-shadow:0 0 0 4px rgba(217,255,102,.12)}
+      .x97-hero-command .x97-hero-value{color:#fff;text-shadow:0 12px 34px rgba(0,0,0,.16)}
+      .x97-hero-command .x97-hero-caption{color:rgba(255,255,255,.62)}
+      .x97-hero-command .x97-stat{background:rgba(255,255,255,.075);border-color:rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+      .x97-hero-command .x97-stat span{color:rgba(255,255,255,.50)}
+      .x97-hero-command .x97-stat b{color:#fff}
+      .x97-command-action.primary{background:var(--forest);border-color:var(--forest);color:#fff}
+      .x97-command-action.primary .x97-command-icon{background:var(--lime);color:var(--forest)}
+      .x97-summary .v,.x97-deal-metric-main,.x97-earn-value,.x97-fx-value{font-family:var(--fnum);font-weight:500;letter-spacing:-.065em}
+      .x97-progress i,.x97-pay-bar i{transform-origin:left;animation:x97-fill .72s cubic-bezier(.2,.9,.25,1) both}
+      @keyframes x97-fill{from{transform:scaleX(.04)}to{transform:scaleX(1)}}
+
+      .x97-collection-command{position:relative;overflow:hidden;margin-bottom:14px;padding:22px;border-radius:24px;background:linear-gradient(135deg,#0A4B35 0%,var(--forest) 60%,#041F17 100%);color:#fff;box-shadow:0 24px 48px -26px rgba(6,45,33,.82)}
+      .x97-collection-command::before{content:"";position:absolute;inset:0;background:
+        linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px),
+        linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px);
+        background-size:23px 23px;mask-image:linear-gradient(90deg,#000,transparent 92%);animation:x97-grid-move 22s linear infinite}
+      .x97-collection-command::after{content:"";position:absolute;width:250px;height:250px;border:1px solid rgba(217,255,102,.28);border-radius:50%;right:-118px;top:-142px;box-shadow:0 0 0 29px rgba(217,255,102,.025),0 0 0 58px rgba(217,255,102,.018)}
+      @keyframes x97-grid-move{to{background-position:23px 23px}}
+      .x97-collection-command>*{position:relative;z-index:1}
+      .x97-collection-command-top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+      .x97-collection-kicker{font-family:var(--fnum);font-size:9px;text-transform:uppercase;letter-spacing:.11em;color:rgba(255,255,255,.52)}
+      .x97-collection-total{margin-top:8px;font-size:clamp(31px,7vw,48px);line-height:1;color:#fff}
+      .x97-collection-usd{margin-top:8px;font-size:15px;color:var(--lime)}
+      .x97-collection-signal{display:flex;align-items:center;gap:7px;color:var(--lime);font-family:var(--fnum);font-size:8.5px;text-transform:uppercase;letter-spacing:.07em;white-space:nowrap}
+      .x97-collection-signal i{width:6px;height:6px;border-radius:50%;background:var(--lime);animation:x97-signal 1.9s ease-in-out infinite}
+      @keyframes x97-signal{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(217,255,102,.34)}50%{opacity:.55;box-shadow:0 0 0 7px rgba(217,255,102,0)}}
+      .x97-collection-command>p{max-width:52ch;margin:16px 0 15px;color:rgba(255,255,255,.66);font-size:11.5px;line-height:1.5}
+      .x97-collection-focus{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+      .x97-collection-focus button{min-width:0;padding:11px 10px;border:1px solid rgba(255,255,255,.11);border-radius:14px;background:rgba(255,255,255,.065);color:#fff;text-align:left;transition:transform .18s ease,background .18s ease,border-color .18s ease}
+      .x97-collection-focus button:hover{transform:translateY(-2px);background:rgba(255,255,255,.11)}
+      .x97-collection-focus button:active{transform:scale(.97)}
+      .x97-collection-focus button.on{background:var(--lime);border-color:var(--lime);color:var(--forest);box-shadow:0 9px 22px -12px rgba(217,255,102,.7)}
+      .x97-collection-focus small,.x97-collection-focus b,.x97-collection-focus span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .x97-collection-focus small{font-family:var(--fnum);font-size:8px;text-transform:uppercase;letter-spacing:.06em;color:rgba(255,255,255,.50)}
+      .x97-collection-focus button.on small{color:rgba(6,45,33,.62)}
+      .x97-collection-focus b{margin-top:6px;font-family:var(--fnum);font-size:20px;font-weight:500}
+      .x97-collection-focus span{margin-top:4px;font-size:8.5px;color:rgba(255,255,255,.55)}
+      .x97-collection-focus button.on span{color:rgba(6,45,33,.66)}
+      .x97-core-filters{margin-bottom:2px}
+      .x97-core-filters .x97-chip.on{background:var(--forest);border-color:var(--forest);color:var(--lime);box-shadow:0 7px 16px -12px rgba(6,45,33,.68)}
+      .x97-count b{color:var(--tx);font-family:var(--fnum);font-weight:500}
+
+      .x97-collection-card{overflow:hidden;border-left:3px solid transparent}
+      .x97-collection-card.is-overdue,.x97-collection-card.is-today{border-left-color:var(--neg)}
+      .x97-collection-card.is-very-soon,.x97-collection-card.is-soon,.x97-collection-card.is-unscheduled{border-left-color:var(--warn)}
+      .x97-collection-card.is-paid{border-left-color:var(--pos)}
+      .x97-item-amount{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+      .x97-item-amount small{font-family:var(--fu);font-size:8px;text-transform:uppercase;letter-spacing:.08em;color:var(--tx3);font-weight:800}
+      .x97-collection-progress{height:5px;margin:14px 0 12px;border-radius:99px;background:var(--card3);overflow:hidden}
+      .x97-collection-progress i{display:block;width:var(--progress);height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--pos2),#51C57C);transform-origin:left;animation:x97-fill .68s cubic-bezier(.2,.9,.25,1) both}
+      .x97-collection-next{display:flex;align-items:center;gap:10px;padding:10px 11px;border-radius:13px;background:var(--card2);border:1px solid transparent}
+      .x97-collection-next.settled{background:var(--posdim)}
+      .x97-collection-next-icon{width:32px;height:32px;display:grid;place-items:center;flex:none;border-radius:10px;background:var(--card);color:var(--tx2);box-shadow:0 1px 2px rgba(6,45,33,.06)}
+      .x97-collection-next-icon.bad{background:var(--negdim);color:var(--neg)}
+      .x97-collection-next-icon.warn{background:var(--warndim);color:var(--warn)}
+      .x97-collection-next-icon.good{background:var(--pos);color:#fff}
+      .x97-collection-next-copy{min-width:0;flex:1}
+      .x97-collection-next-copy small,.x97-collection-next-copy b,.x97-collection-next-copy em{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .x97-collection-next-copy small{font-size:8px;text-transform:uppercase;letter-spacing:.08em;color:var(--tx3);font-weight:850}
+      .x97-collection-next-copy b{margin-top:3px;font-size:11.5px;color:var(--tx)}
+      .x97-collection-next-copy em{margin-top:2px;font-size:9.5px;color:var(--tx3);font-style:normal}
+      .x97-collection-actions{display:flex;gap:7px;margin-top:11px}
+      .x97-card-action{min-height:36px;padding:0 11px;border:1px solid var(--line);border-radius:11px;background:var(--card);color:var(--tx2);display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:10px;font-weight:800;transition:transform .16s ease,box-shadow .18s ease,background .18s ease}
+      .x97-card-action:hover{box-shadow:var(--elev-1);transform:translateY(-1px)}
+      .x97-card-action:active{transform:scale(.97)}
+      .x97-card-action.primary{flex:1;background:var(--forest);border-color:var(--forest);color:#fff}
+      .x97-card-action.whatsapp{background:#DDF8E6;border-color:#BDE9CA;color:#087A3F}
+      .x97-card-action.quiet{margin-left:auto;background:transparent}
+      .x97-card-action.full{width:100%;margin-left:0}
+      body>.x97-fab.x97-fab-viewport{position:fixed!important;right:max(16px,calc(50% - 488px))!important;bottom:calc(78px + env(safe-area-inset-bottom))!important;margin:0!important;z-index:58!important;display:grid!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important;transform:translateZ(0)!important}
+      body.x97-fab-sheet-open>.x97-fab.x97-fab-viewport{visibility:hidden!important;opacity:0!important;pointer-events:none!important}
+      .x97-sheet{background:#F8FAF8}
+      .x97-sheet-head h2{font-weight:800;letter-spacing:-.045em}
+      .x97-deal-mode.on{background:var(--forest);border-color:var(--forest);color:var(--lime);box-shadow:0 9px 20px -14px rgba(6,45,33,.72)}
+      .x97-deal-mode.on span{color:rgba(255,255,255,.62)}
+
+      @media(max-width:620px){
+        .x97-add-primary span{display:none}
+        .x97-add-primary{width:42px;padding:0}
+        body>.x97-fab.x97-fab-viewport{right:14px!important;bottom:calc(76px + env(safe-area-inset-bottom))!important;width:52px!important;height:52px!important}
+        .x97-collection-command{padding:19px 16px;border-radius:21px}
+        .x97-collection-signal span{display:none}
+        .x97-collection-focus{gap:6px}
+        .x97-collection-focus button{padding:10px 8px}
+        .x97-collection-focus span{font-size:8px}
+        .x97-core-filters{flex-wrap:wrap;overflow:visible;padding-bottom:6px}
+        .x97-item-amount{font-size:16px;max-width:42%}
+        .x97-collection-actions{display:grid;grid-template-columns:1.25fr 1fr}
+        .x97-card-action.quiet{grid-column:1/-1;margin-left:0}
+        .x97-card-action.full{grid-column:1/-1}
+      }
+      @media(max-width:380px){
+        .x97-collection-focus span{display:none}
+        .x97-collection-focus b{font-size:18px}
+        .x97-collection-total{font-size:29px}
+      }
+      @media(prefers-reduced-motion:reduce){
+        .x97-page>*,.x97-group,.x97-item,.x97-month-card,.x97-collection-progress i,.x97-progress i,.x97-pay-bar i,.x97-collection-command::before,.x97-collection-signal i{animation:none!important}
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
   function toast(message, kind) {
     var holder = document.querySelector(".x97-toast-wrap");
     if (!holder) {
@@ -1744,18 +1900,38 @@
   }
 
   function exitManagedMode() {
-    if (!modeActive) { currentScreen = null; return; }
+    if (!modeActive) { currentScreen = null; scheduleViewportFab(); return; }
     modeActive = false;
     document.body.classList.remove("x97-v2-mode");
     if (root) root.classList.remove("on");
     hiddenChildren.forEach(function (entry) { if (entry.node) entry.node.style.display = entry.display || ""; });
     hiddenChildren = [];
     currentScreen = null;
+    scheduleViewportFab();
   }
 
   function scheduleRender(delay) {
     clearTimeout(renderTimer);
     renderTimer = setTimeout(render, delay == null ? 40 : delay);
+  }
+
+  function syncViewportFab() {
+    fabFrame = 0;
+    var active = modeActive && (currentScreen === "upcoming" || currentScreen === "credit");
+    var fresh = root ? root.querySelector(".x97-fab:not(.x97-fab-viewport)") : null;
+    var mounted = document.querySelector("body>.x97-fab.x97-fab-viewport");
+    if (fresh && active) {
+      if (mounted && mounted !== fresh) mounted.remove();
+      fresh.classList.add("x97-fab-viewport");
+      document.body.appendChild(fresh);
+      mounted = fresh;
+    } else if (mounted && !active) mounted.remove();
+    document.body.classList.toggle("x97-fab-sheet-open", !!document.getElementById("x97-sheet"));
+  }
+
+  function scheduleViewportFab() {
+    if (fabFrame) return;
+    fabFrame = requestAnimationFrame(syncViewportFab);
   }
 
   function syncMode() {
@@ -1945,13 +2121,14 @@
 
   function monthSummary(doc, key) {
     var events = scheduledEvents(doc, false).filter(function (x) { return key === "unscheduled" ? !x.date : monthKey(x.date) === key; });
-    var records = (doc.followups || []).filter(function (x) { return events.some(function (event) { return String(event.itemId) === String(x.id); }) || (key === "unscheduled" && !nextScheduledPayment(doc, x)); });
+    var allScheduled = scheduledEvents(doc, true).filter(function (x) { return key === "unscheduled" ? !x.date : monthKey(x.date) === key; });
+    var records = (doc.followups || []).filter(function (x) { return allScheduled.some(function (event) { return String(event.itemId) === String(x.id); }) || (key === "unscheduled" && isOpenFollowup(x) && !nextScheduledPayment(doc, x)); });
     var pending = records.filter(isOpenFollowup);
     var paid = records.filter(function (x) { return isPaid(x.status); });
     var ugx = events.filter(function (x) { return String(x.currency).toUpperCase() !== "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
     var usd = events.filter(function (x) { return String(x.currency).toUpperCase() === "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
     var paidAmount = records.reduce(function (a, x) { return a + receivedOf(x); }, 0);
-    var attention = pending.filter(function (x) { var t = timing(x, doc); return t.key === "overdue" || t.key === "today" || t.key === "very-soon" || !t.next || !t.next.dueDate || num(x.amount) <= 0; }).length;
+    var attention = pending.filter(function (x) { var t = timing(x, doc); return t.key === "overdue" || t.key === "today" || t.key === "very-soon" || !t.next || !t.next.dueDate || outstandingOf(x) <= 0; }).length;
     return { key: key, records: records, pending: pending, paid: paid, ugx: ugx, usd: usd, paidAmount: paidAmount, attention: attention };
   }
 
@@ -1992,9 +2169,9 @@
     }).join("");
 
     root.innerHTML = '<div class="x97-page">' +
-      pageHeader("Financial command", "Dashboard", "Your cash position, next actions and upcoming money") +
+      pageHeader("Finance intelligence", "Command centre", "Cash, collections, commitments and the next move—computed from your live records.") +
       '<div class="x97-dashboard-main">' +
-        '<section class="x97-card x97-hero x97-hero-command"><div class="x97-hero-topline"><div class="x97-hero-label">Available now</div><span class="x97-hero-live">Live position</span></div><div class="x97-hero-value x97-money">' + money(a.cash, "UGX") + '</div><div class="x97-hero-caption">Cash across your tracked accounts, before outstanding client money.</div><div class="x97-hero-meta"><div class="x97-stat"><span>Net position</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
+        '<section class="x97-card x97-hero x97-hero-command"><div class="x97-hero-topline"><div class="x97-hero-label">Available cash</div><span class="x97-hero-live">Live position</span></div><div class="x97-hero-value x97-money">' + money(a.cash, "UGX") + '</div><div class="x97-hero-caption">Real account balances only. Client promises and unused credit stay outside this number.</div><div class="x97-hero-meta"><div class="x97-stat"><span>After active debt</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
         '<section class="x97-command-actions x97-dashboard-wide"><button class="x97-command-action primary" data-x97-action="record-payment"><span class="x97-command-icon">' + icon("wallet", 17) + '</span><span><b>Record payment</b><small>Update money received</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="add-upcoming"><span class="x97-command-icon teal">' + icon("plus", 17) + '</span><span><b>Add incoming deal</b><small>Build a payment schedule</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="go-expenses"><span class="x97-command-icon warn">' + icon("trend", 17) + '</span><span><b>Add expense</b><small>Keep cash position honest</small></span>' + icon("chevron", 14) + '</button></section>' +
         dealSummaryHTML(doc) +
         '<section class="x97-section x97-glance-section x97-dashboard-wide">' + sectionHead("At a glance") + '<div class="x97-summary-grid"><div class="x97-card x97-summary"><div class="k">Collected this month</div><div class="v x97-money x97-green">' + money(collectedThisMonth, "UGX", true) + '</div><div class="s">Actual money received</div></div><div class="x97-card x97-summary"><div class="k">Due next 7 days</div><div class="v x97-money x97-teal">' + money(in7, "UGX", true) + '</div><div class="s">' + (in7USD ? '<span class="x97-teal">' + money(in7USD, "USD", true) + '</span> · ' : '') + 'Scheduled incoming</div></div><div class="x97-card x97-summary"><div class="k">Outstanding</div><div class="v x97-money x97-amber">' + money(outstandingUGX, "UGX", true) + '</div><div class="s">' + (outstandingUSD ? '<span class="x97-teal">' + money(outstandingUSD, "USD", true) + '</span> · ' : '') + 'Still owed by clients</div></div><div class="x97-card x97-summary"><div class="k">Actual spending</div><div class="v x97-money x97-red">' + money(actualSpend, "UGX", true) + '</div><div class="s">This month</div></div></div></section>' +
@@ -2039,7 +2216,8 @@
   function followupMatches(item, doc) {
     var f = state.upcoming;
     var q = String(f.search || "").trim().toLowerCase();
-    if (q && [item.client, item.category, item.note, item.currency, item.status].join(" ").toLowerCase().indexOf(q) < 0) return false;
+    var scheduleText = projectSchedule(doc, item).map(function (row) { return [row.label, row.dueDate].join(" "); }).join(" ");
+    if (q && [item.client, item.category, item.note, item.currency, item.status, scheduleText].join(" ").toLowerCase().indexOf(q) < 0) return false;
     var t = timing(item, doc), next = t.next, expectedBy = next ? next.dueDate : item.expectedBy;
     if (f.month === "unscheduled" && expectedBy) return false;
     if (f.month !== "all" && f.month !== "unscheduled" && monthKey(expectedBy) !== f.month) return false;
@@ -2048,10 +2226,11 @@
     if (f.categories.length && f.categories.indexOf(String(item.category || "")) < 0) return false;
     if (f.from && (!expectedBy || expectedBy < f.from)) return false;
     if (f.to && (!expectedBy || expectedBy > f.to)) return false;
-    if (f.minAmount !== "" && num(item.amount) < num(f.minAmount)) return false;
-    if (f.maxAmount !== "" && num(item.amount) > num(f.maxAmount)) return false;
+    if (f.minAmount !== "" && outstandingOf(item) < num(f.minAmount)) return false;
+    if (f.maxAmount !== "" && outstandingOf(item) > num(f.maxAmount)) return false;
     var today = todayDate(), nowMonth = monthKey(today), nextMonthDate = new Date(startOfMonth(today)); nextMonthDate.setMonth(nextMonthDate.getMonth() + 1);
-    if (f.quick === "attention" && !(isOpenFollowup(item) && (t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7) || !item.expectedBy || num(item.amount) <= 0))) return false;
+    if (f.quick === "open" && !isOpenFollowup(item)) return false;
+    if (f.quick === "attention" && !(isOpenFollowup(item) && (t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7) || !next || !next.dueDate || outstandingOf(item) <= 0))) return false;
     if (f.quick === "overdue" && t.key !== "overdue") return false;
     if (f.quick === "today" && t.key !== "today") return false;
     if (f.quick === "next7" && !(isOpenFollowup(item) && t.days != null && t.days >= 0 && t.days <= 7)) return false;
@@ -2069,10 +2248,10 @@
       var at = timing(a, doc), bt = timing(b, doc), ad = at.next ? at.next.dueDate : a.expectedBy, bd = bt.next ? bt.next.dueDate : b.expectedBy;
       if (mode === "dateAsc") return String(ad || "9999-12-31").localeCompare(String(bd || "9999-12-31"));
       if (mode === "dateDesc") return String(bd || "0000-00-00").localeCompare(String(ad || "0000-00-00"));
-      if (mode === "amountDesc") return num(b.amount) - num(a.amount);
-      if (mode === "amountAsc") return num(a.amount) - num(b.amount);
+      if (mode === "amountDesc") return outstandingOf(b) - outstandingOf(a);
+      if (mode === "amountAsc") return outstandingOf(a) - outstandingOf(b);
       if (mode === "client") return String(a.client || "").localeCompare(String(b.client || ""));
-      function rank(x) { var t = timing(x, doc); if (t.key === "overdue") return 0; if (t.key === "today") return 1; if (t.days != null && t.days <= 7) return 2; if (!t.next || !t.next.dueDate) return 3; if (isPaid(x.status)) return 5; return 4; }
+      function rank(x) { var t = timing(x, doc); if (t.key === "overdue") return 0; if (t.key === "today") return 1; if (t.days != null && t.days <= 7) return 2; if (!t.next || !t.next.dueDate) return 3; if (isPaid(x.status)) return 5; if (isCancelled(x.status)) return 6; return 4; }
       var r = rank(a) - rank(b);
       return r || String(ad || "9999-12-31").localeCompare(String(bd || "9999-12-31"));
     });
@@ -2097,17 +2276,28 @@
 
   function upcomingCard(item, doc) {
     var t = timing(item, doc), currency = String(item.currency || "UGX").toUpperCase();
-    var part = isPartPaid(item);
     var gross = grossOf(item), already = paidOf(item), left = outstandingOf(item);
     var next = t.next || nextScheduledPayment(doc, item);
-    var partHTML = part
-      ? '<div class="x97-pay-progress compact"><div class="x97-pay-bar"><i style="width:' + Math.min(100, Math.round(already / (gross || 1) * 100)) + '%"></i></div>' +
-        '<div class="x97-pay-split"><span>' + esc(money(already, currency)) + ' in</span><b>of ' + esc(money(gross, currency)) + '</b></div></div>'
-      : "";
-    var dealHTML = isDeal(item)
-      ? '<div class="x97-deal-card-meta"><b>' + (normalizeDealType(item.dealType) === "part" ? esc(money(dealPartAmount(item), currency)) + ' × ' + esc(String(item.parts.length)) + ' ' + esc(dealLabel(item)) : esc(String(item.parts.length)) + ' scheduled payments') + '</b><span>' + dealPaidPartCount(item) + ' of ' + item.parts.length + ' paid' + (next ? ' · next ' + esc(next.label || "payment") + ' ' + esc(money(Math.max(0, num(next.amount) - num(next.paid)), currency)) : '') + '</span></div>' + dealScheduleHTML(item, false)
-      : "";
-    return '<article class="x97-item x97-card" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '"><div class="x97-item-top"><div class="x97-item-main"><div class="x97-item-category">' + esc(item.category || "Uncategorised") + '</div><div class="x97-item-title">' + esc(item.client || "Untitled upcoming payment") + '</div>' + (next ? '<div class="x97-item-next">Next: ' + esc(next.label || "payment") + ' · ' + esc(formatDate(next.dueDate, true)) + '</div>' : '') + '</div><div class="x97-item-amount x97-money ' + (currency === "USD" ? "x97-teal" : isPaid(item.status) ? "x97-green" : "") + '">' + (num(item.amount) ? money(isPaid(item.status) ? gross : left, currency) : "Amount not set") + '</div></div>' + dealHTML + partHTML + '<div class="x97-item-foot"><span class="x97-pill ' + esc(t.cls) + '">' + icon("clock", 12) + esc(t.label) + '</span>' + (next && next.dueDate ? '<span class="x97-pill">' + icon("calendar", 12) + esc(formatDate(next.dueDate, false)) + '</span>' : '') + '<span class="x97-pill ' + (isPaid(item.status) ? "good" : part ? "warn" : "") + '">' + esc(normalizeStatus(item.status)) + '</span><div class="x97-item-actions">' + (!isPaid(item.status) && !isCancelled(item.status) ? '<button class="x97-mini" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("check", 12) + (part ? " Add payment" : " Record payment") + '</button>' : '') + '<button class="x97-mini" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">' + icon("edit", 12) + ' Edit</button></div></div></article>';
+    var progress = gross > 0 ? Math.min(100, Math.round(already / gross * 100)) : 0;
+    var nextLeft = next ? Math.max(0, num(next.amount) - num(next.paid)) : 0;
+    var open = isOpenFollowup(item);
+    var structure = isDeal(item)
+      ? (normalizeDealType(item.dealType) === "deposit" ? "Deposit + balance" : DEAL_TYPES[normalizeDealType(item.dealType)] || "Payment schedule")
+      : "One payment";
+    var nextHTML = open
+      ? '<div class="x97-collection-next"><span class="x97-collection-next-icon ' + esc(t.cls) + '">' + icon(t.key === "overdue" || t.key === "today" ? "alert" : "calendar", 15) + '</span><span class="x97-collection-next-copy"><small>Next payment</small><b>' + esc(next ? next.label || "Payment" : "Schedule needed") + (nextLeft ? ' · ' + esc(money(nextLeft, currency)) : "") + '</b><em>' + esc(next && next.dueDate ? formatDate(next.dueDate, false) + " · " + t.label : "Add a due date so it enters your collection queue") + '</em></span></div>'
+      : '<div class="x97-collection-next settled"><span class="x97-collection-next-icon good">' + icon(isCancelled(item.status) ? "close" : "check", 15) + '</span><span class="x97-collection-next-copy"><small>' + (isCancelled(item.status) ? "Closed" : "Collection complete") + '</small><b>' + esc(isCancelled(item.status) ? "Cancelled deal" : money(gross, currency) + " received") + '</b><em>' + esc(isCancelled(item.status) ? "Excluded from every finance total" : "No balance remains") + '</em></span></div>';
+    var actions = open
+      ? '<button class="x97-card-action primary" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("wallet", 14) + ' Record payment</button>' +
+        (hasWa(item, doc) ? '<button class="x97-card-action whatsapp" data-x97-action="chase-one" data-id="' + attr(item.id) + '">' + icon("message", 14) + ' WhatsApp</button>' : '') +
+        '<button class="x97-card-action quiet" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">Details ' + icon("chevron", 13) + '</button>'
+      : '<button class="x97-card-action quiet full" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">View details ' + icon("chevron", 13) + '</button>';
+    return '<article class="x97-item x97-card x97-collection-card is-' + esc(t.key) + '" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">' +
+      '<div class="x97-item-top"><div class="x97-item-main"><div class="x97-item-category">' + esc(item.category || "Incoming") + ' · ' + esc(structure) + '</div><div class="x97-item-title">' + esc(item.client || "Untitled incoming deal") + '</div><div class="x97-item-next">' + esc(already ? money(already, currency) + " received of " + money(gross, currency) : "No money received yet") + '</div></div>' +
+      '<div class="x97-item-amount x97-money ' + (currency === "USD" ? "x97-teal" : open ? "" : "x97-green") + '"><small>' + (open ? "Still owed" : "Deal total") + '</small>' + esc(money(open ? left : gross, currency)) + '</div></div>' +
+      '<div class="x97-collection-progress" aria-label="' + progress + '% collected"><i style="--progress:' + progress + '%"></i></div>' +
+      nextHTML +
+      '<div class="x97-collection-actions">' + actions + '</div></article>';
   }
 
   function groupFollowups(items, doc) {
@@ -2125,16 +2315,61 @@
     return groups;
   }
 
+  function collectionStats(doc) {
+    var open = (doc.followups || []).filter(isOpenFollowup);
+    var events = scheduledEvents(doc, false);
+    var overdue = events.filter(function (event) {
+      var days = daysBetween(todayDate(), parseLocalDate(event.date));
+      return days != null && days < 0;
+    });
+    var due7 = events.filter(function (event) {
+      var days = daysBetween(todayDate(), parseLocalDate(event.date));
+      return days != null && days >= 0 && days <= 7;
+    });
+    var unscheduled = open.filter(function (item) {
+      var next = nextScheduledPayment(doc, item);
+      return !next || !next.dueDate;
+    });
+    function outstanding(currency) {
+      return open.filter(function (item) {
+        return String(item.currency || "UGX").toUpperCase() === currency;
+      }).reduce(function (sum, item) { return sum + outstandingOf(item); }, 0);
+    }
+    function eventAmount(list, currency) {
+      return list.filter(function (event) {
+        return String(event.currency || "UGX").toUpperCase() === currency;
+      }).reduce(function (sum, event) { return sum + num(event.amount); }, 0);
+    }
+    return {
+      open: open,
+      events: events,
+      overdue: overdue,
+      due7: due7,
+      unscheduled: unscheduled,
+      outstandingUGX: outstanding("UGX"),
+      outstandingUSD: outstanding("USD"),
+      overdueUGX: eventAmount(overdue, "UGX"),
+      overdueUSD: eventAmount(overdue, "USD"),
+      due7UGX: eventAmount(due7, "UGX"),
+      due7USD: eventAmount(due7, "USD")
+    };
+  }
+
   function renderUpcoming(doc) {
     var f = state.upcoming;
     var all = doc.followups || [];
     var filtered = sortFollowups(all.filter(function (item) { return followupMatches(item, doc); }), doc);
     var pending = filtered.filter(isOpenFollowup);
-    var ugx = pending.filter(function (x) { return String(x.currency).toUpperCase() !== "USD"; }).reduce(function (s,x){return s+num(x.amount);},0);
-    var usd = pending.filter(function (x) { return String(x.currency).toUpperCase() === "USD"; }).reduce(function (s,x){return s+num(x.amount);},0);
-    var attention = pending.filter(function (x) { var t=timing(x, doc); return t.key === "overdue" || t.key === "today" || (t.days != null && t.days <= 7) || !t.next || !t.next.dueDate || num(x.amount)<=0; }).length;
+    var stats = collectionStats(doc);
     var months = availableMonths(doc);
-    var monthChips = '<button class="x97-chip ' + (f.month === "all" ? "on" : "") + '" data-x97-action="month-filter" data-value="all">All months</button>' + months.map(function (key) { return '<button class="x97-chip ' + (f.month === key ? "on" : "") + '" data-x97-action="month-filter" data-value="' + attr(key) + '">' + esc(monthLabel(key, true)) + '</button>'; }).join("") + '<button class="x97-chip ' + (f.month === "unscheduled" ? "on" : "") + '" data-x97-action="month-filter" data-value="unscheduled">Unscheduled</button>';
+    var headline = stats.overdue.length
+      ? stats.overdue.length + " overdue payment" + (stats.overdue.length === 1 ? " needs" : "s need") + " chasing now"
+      : stats.due7.length
+        ? stats.due7.length + " payment" + (stats.due7.length === 1 ? " is" : "s are") + " due in the next 7 days"
+        : stats.unscheduled.length
+          ? stats.unscheduled.length + " open deal" + (stats.unscheduled.length === 1 ? " needs" : "s need") + " a collection date"
+          : "Your collection queue is clear";
+    var sortLabel = ({ urgency: "priority", dateAsc: "earliest date", dateDesc: "latest date", amountDesc: "highest balance", amountAsc: "lowest balance", client: "client name" })[f.sort] || f.sort;
     var content;
     if (f.view === "months") {
       var cards = months.map(function (key) {
@@ -2156,15 +2391,18 @@
         if (!items.length) return "";
         return '<div class="x97-group"><b>' + esc(spec[1]) + '</b><span>' + items.length + ' item' + (items.length === 1 ? "" : "s") + '</span></div>' + items.map(function (item) { return upcomingCard(item, doc); }).join("");
       }).join("");
-      if (!content) content = '<div class="x97-card x97-empty">' + icon("search", 26) + '<strong>No matching upcoming payments</strong><p>Clear a filter or add a new expected payment.</p><button class="x97-btn primary" style="margin-top:14px" data-x97-action="add-upcoming">' + icon("plus") + ' Add upcoming</button></div>';
+      if (!content) content = '<div class="x97-card x97-empty">' + icon("search", 26) + '<strong>No deals in this view</strong><p>Choose Open, Everything, or clear the filters to see more.</p><button class="x97-btn primary" style="margin-top:14px" data-x97-action="add-upcoming">' + icon("plus") + ' Add incoming deal</button></div>';
     }
 
     root.innerHTML = '<div class="x97-page">' +
-      pageHeader("Receivables", "Incoming", "One deal per client. Every part stays visible.", '<button class="x97-icon-btn" data-x97-action="add-upcoming" title="Add incoming deal">' + icon("plus") + '</button>') +
-      dealSummaryHTML(doc) +
-      '<div class="x97-summary-grid" style="margin-bottom:14px"><div class="x97-card x97-summary"><div class="k">UGX pending</div><div class="v x97-money x97-green">' + money(ugx, "", true) + '</div><div class="s">Filtered view</div></div><div class="x97-card x97-summary"><div class="k">USD pending</div><div class="v x97-money x97-teal">' + money(usd, "", true) + '</div><div class="s">Filtered view</div></div><div class="x97-card x97-summary"><div class="k">Items</div><div class="v x97-money">' + filtered.length + '</div><div class="s">' + pending.length + ' pending</div></div><div class="x97-card x97-summary"><div class="k">Need attention</div><div class="v x97-money ' + (attention ? "x97-red" : "x97-green") + '">' + attention + '</div><div class="s">Dates, amounts or urgency</div></div></div>' +
+      pageHeader("Collections", "Incoming", "See who owes what, chase it, and record money without digging.", '<button class="x97-icon-btn x97-add-primary" data-x97-action="add-upcoming" title="Add incoming deal">' + icon("plus") + '<span>Add deal</span></button>') +
+      '<section class="x97-collection-command"><div class="x97-collection-command-top"><div><div class="x97-collection-kicker">Outstanding now</div><div class="x97-collection-total x97-money">' + money(stats.outstandingUGX, "UGX", true) + '</div><div class="x97-collection-usd x97-money">' + money(stats.outstandingUSD, "USD", true) + '</div></div><div class="x97-collection-signal"><i></i><span>Live calculation</span></div></div><p>' + esc(headline) + '</p><div class="x97-collection-focus">' +
+        '<button class="' + (f.quick === "overdue" ? "on danger" : "") + '" data-x97-action="quick-filter" data-value="overdue"><small>Overdue</small><b>' + stats.overdue.length + '</b><span>' + esc(money(stats.overdueUGX, "UGX", true)) + (stats.overdueUSD ? " · " + esc(money(stats.overdueUSD, "USD", true)) : "") + '</span></button>' +
+        '<button class="' + (f.quick === "next7" ? "on" : "") + '" data-x97-action="quick-filter" data-value="next7"><small>Next 7 days</small><b>' + stats.due7.length + '</b><span>' + esc(money(stats.due7UGX, "UGX", true)) + (stats.due7USD ? " · " + esc(money(stats.due7USD, "USD", true)) : "") + '</span></button>' +
+        '<button class="' + (f.quick === "unscheduled" ? "on warn" : "") + '" data-x97-action="quick-filter" data-value="unscheduled"><small>No date</small><b>' + stats.unscheduled.length + '</b><span>Needs scheduling</span></button>' +
+      '</div></section>' +
       '<div class="x97-segment"><button class="' + (f.view === "list" ? "on" : "") + '" data-x97-action="upcoming-view" data-value="list">' + icon("list", 15) + ' List</button><button class="' + (f.view === "months" ? "on" : "") + '" data-x97-action="upcoming-view" data-value="months">' + icon("grid", 15) + ' Months</button></div>' +
-      (f.view === "list" ? '<div class="x97-tools"><div class="x97-search">' + icon("search", 17) + '<input id="x97-up-search" autocomplete="off" placeholder="Search client, project or note" value="' + attr(f.search) + '"></div><button class="x97-icon-btn" data-x97-action="open-filters">' + icon("filter") + '<span>Filters</span>' + (activeFilterCount() ? '<b class="x97-badge-count">' + activeFilterCount() + '</b>' : '') + '</button></div><div class="x97-chips">' + quickChip("all","All") + quickChip("attention","Needs action",true) + quickChip("overdue","Overdue",true) + quickChip("today","Today") + quickChip("next7","Next 7 days") + quickChip("next30","Next 30 days") + quickChip("thisMonth","This month") + quickChip("nextMonth","Next month") + quickChip("unscheduled","Unscheduled") + quickChip("paid","Paid") + '</div><div class="x97-chips">' + monthChips + '</div>' + filterTagHTML() + '<div class="x97-count">Showing ' + filtered.length + ' of ' + all.length + ' records · Sorted by ' + esc(f.sort) + '</div>' : '<div class="x97-count">Rolling monthly view · tap a month to open its records</div>') +
+      (f.view === "list" ? '<div class="x97-tools"><div class="x97-search">' + icon("search", 17) + '<input id="x97-up-search" autocomplete="off" placeholder="Search client or deal" value="' + attr(f.search) + '"></div><button class="x97-icon-btn" data-x97-action="open-filters">' + icon("filter") + '<span>Filters</span>' + (activeFilterCount() ? '<b class="x97-badge-count">' + activeFilterCount() + '</b>' : '') + '</button></div><div class="x97-chips x97-core-filters">' + quickChip("open","Open") + quickChip("attention","Needs action",true) + quickChip("next7","Due in 7 days") + quickChip("paid","Paid") + quickChip("all","Everything") + '</div>' + filterTagHTML() + '<div class="x97-count"><b>' + filtered.length + '</b> deal' + (filtered.length === 1 ? "" : "s") + ' shown · <b>' + pending.length + '</b> open · sorted by ' + esc(sortLabel) + '</div>' : '<div class="x97-count">Rolling monthly view · tap a month to open its collection queue</div>') +
       content +
       '<button class="x97-fab" data-x97-action="add-upcoming" aria-label="Add upcoming">' + icon("plus", 25) + '</button></div>';
   }
@@ -2242,6 +2480,7 @@
     else if (currentScreen === "upcoming") renderUpcoming(doc);
     else if (currentScreen === "credit") renderCredit(doc);
     updateCloudPill();
+    scheduleViewportFab();
   }
 
   function openSheet(title, body, foot, options) {
@@ -2251,12 +2490,13 @@
     back.id = "x97-sheet";
     back.innerHTML = '<section class="x97-sheet" role="dialog" aria-modal="true"><div class="x97-handle"></div><header class="x97-sheet-head"><h2>' + esc(title) + '</h2><button class="x97-close" data-x97-action="close-sheet">' + icon("close") + '</button></header><div class="x97-sheet-body">' + body + '</div>' + (foot ? '<footer class="x97-sheet-foot">' + foot + '</footer>' : '') + '</section>';
     document.body.appendChild(back);
+    scheduleViewportFab();
     back.addEventListener("mousedown", function (e) { if (e.target === back) closeSheet(); });
     if (options && options.afterOpen) setTimeout(function(){ options.afterOpen(back); },0);
     var first = back.querySelector("input:not([type=hidden]),select,textarea"); if (first && window.innerWidth > 700) setTimeout(function(){first.focus();},80);
   }
 
-  function closeSheet() { var el = document.getElementById("x97-sheet"); if (el) el.remove(); }
+  function closeSheet() { var el = document.getElementById("x97-sheet"); if (el) el.remove(); scheduleViewportFab(); }
 
   function option(value, label, selected) { return '<option value="' + attr(value) + '" ' + (String(value) === String(selected) ? "selected" : "") + '>' + esc(label == null ? value : label) + '</option>'; }
 
@@ -2718,7 +2958,7 @@
     var t = timing(item, doc), next = t.next, nextLeft = next ? Math.max(0, num(next.amount) - num(next.paid)) : outstandingOf(item); var late = (t.days != null && t.days < 0) ? Math.abs(t.days) : 0;
     var map = {
       "{name}": firstName(item.client),
-      "{project}": item.client || "the project",
+      "{project}": item.category || item.client || "the project",
       "{amount}": nextLeft ? money(nextLeft, cur) : "the outstanding amount",
       "{currency}": cur,
       "{date}": next && next.dueDate ? formatDate(next.dueDate, false) : (item.expectedBy ? formatDate(item.expectedBy, false) : "the agreed date"),
@@ -2808,7 +3048,7 @@
     var progHTML = prog ? '<span class="x97-pill ' + (prog === "sent" ? "good" : prog === "error" ? "bad" : "warn") + '">' + esc(progLabel(prog)) + '</span>' : '';
     return '<div class="x97-rm-item' + (sel ? ' on' : '') + (wa ? '' : ' nowa') + '" data-id="' + attr(item.id) + '">' +
       '<div class="x97-rm-head"><label class="x97-rm-pick"><input type="checkbox" class="x97-rm-check" data-id="' + attr(item.id) + '" ' + (sel ? 'checked' : '') + (wa ? '' : ' disabled') + '></label>' +
-      '<div class="x97-rm-body"><div class="x97-rm-top"><span class="x97-rm-name">' + esc(item.client || "Untitled") + '</span><span class="x97-rm-amt x97-money">' + (num(item.amount) ? money(item.amount, cur) : "—") + '</span></div>' +
+      '<div class="x97-rm-body"><div class="x97-rm-top"><span class="x97-rm-name">' + esc(item.client || "Untitled") + '</span><span class="x97-rm-amt x97-money">' + (outstandingOf(item) ? money(outstandingOf(item), cur) : "—") + '</span></div>' +
       '<div class="x97-rm-tags"><span class="x97-pill ' + esc(t.cls) + '">' + icon("clock", 12) + esc(t.label) + '</span>' + phoneHTML + reminded + progHTML + '</div></div></div>' +
       (sel && wa ? '<textarea class="x97-rm-msg" data-id="' + attr(item.id) + '" rows="4">' + esc(messageFor(item, doc)) + '</textarea>' : '') +
       '</div>';
@@ -3079,7 +3319,7 @@
           '<input class="x97-input x97-num-search" data-row="' + attr(x.id) + '" style="margin-top:6px" placeholder="Search any contact…">' +
           '<div class="x97-num-picker" data-row="' + attr(x.id) + '">' + numRowPickerHTML("", contacts, x.client, x.phone, doc, "num_" + x.id) + '</div>';
       }
-      return '<div class="x97-num-row"><div class="x97-num-meta"><div class="x97-num-name">' + esc(x.client || "Untitled") + '</div><div class="x97-num-sub"><span class="x97-pill ' + esc(t.cls) + '" style="padding:2px 6px">' + esc(t.label) + '</span>' + (num(x.amount) ? '<span>' + esc(money(x.amount, cur)) + '</span>' : '') + '</div>' + picker + '</div><input class="x97-input x97-num-input" name="num_' + attr(x.id) + '" inputmode="tel" value="' + attr(x.phone || "") + '" placeholder="0772…"></div>';
+      return '<div class="x97-num-row"><div class="x97-num-meta"><div class="x97-num-name">' + esc(x.client || "Untitled") + '</div><div class="x97-num-sub"><span class="x97-pill ' + esc(t.cls) + '" style="padding:2px 6px">' + esc(t.label) + '</span>' + (outstandingOf(x) ? '<span>' + esc(money(outstandingOf(x), cur)) + '</span>' : '') + '</div>' + picker + '</div><input class="x97-input x97-num-input" name="num_' + attr(x.id) + '" inputmode="tel" value="' + attr(x.phone || "") + '" placeholder="0772…"></div>';
     }).join("");
     if (!list.length) rows = '<div class="x97-empty" style="padding:22px"><strong>No open receivables</strong><p>Add upcoming payments first.</p></div>';
     var matchNote = contacts.length ? ('<div class="x97-help" style="margin-bottom:6px">Matched against your ' + contacts.length + ' imported contacts — ' + (autoCount ? '<b>' + autoCount + '</b> filled in automatically, ' : '') + (reviewCount ? '<b>' + reviewCount + '</b> need you to pick one' : (autoCount ? 'nothing else needs a pick' : 'search or type the rest')) + '.</div>') : "";
@@ -3975,6 +4215,7 @@
     if(action==="add-upcoming"){openUpcomingForm();return;}
     if(action==="edit-upcoming"){e.stopPropagation();openUpcomingForm(btn.dataset.id);return;}
     if(action==="mark-paid"){e.stopPropagation();openPaymentForm(btn.dataset.id);return;}
+    if(action==="chase-one"){e.stopPropagation();var chaseDoc=readDoc(),chaseItem=chaseDoc&&(chaseDoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(!chaseItem||!hasWa(chaseItem,chaseDoc)){toast("Add a verified WhatsApp number first","error");return;}window.open("https://wa.me/"+waNumber(chaseItem.phone,chaseDoc)+"?text="+encodeURIComponent(messageFor(chaseItem,chaseDoc)),"_blank","noopener");markReminded(chaseItem.id,"onetap");return;}
     if(action==="pay-part"){var pf=document.getElementById("x97-pay-form");if(pf){var cap=num(pf.amount.max);pf.amount.value=Math.max(1,Math.round(cap*num(btn.dataset.value)/100));}return;}
     if(action==="undo-payment"){if(confirm("Undo this payment? The amount goes back to outstanding and any account credit is reversed.")){var pid=btn.dataset.id,fid="";updateDoc(function(doc){var p=(doc.payments||[]).find(function(x){return String(x.id)===String(pid);});if(p)fid=p.followupId;reversePayment(doc,pid);},"payment-undo");closeSheet();if(fid)openPaymentForm(fid);}return;}
     if(action==="delete-upcoming"){var targetDoc=readDoc(),targetItem=targetDoc&&(targetDoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(targetItem&&dealHasRecordedMoney(targetItem)){toast("A deal with recorded money cannot be deleted","error");return;}if(confirm("Delete this upcoming payment?")){updateDoc(function(doc){doc.followups=doc.followups.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"upcoming-delete");closeSheet();}return;}
@@ -3982,7 +4223,7 @@
     if(action==="upcoming-view"){state.upcoming.view=btn.dataset.value;savePrefs();scheduleRender(0);return;}
     if(action==="quick-filter"){state.upcoming.quick=btn.dataset.value;savePrefs();scheduleRender(0);return;}
     if(action==="month-filter"){state.upcoming.month=btn.dataset.value;savePrefs();scheduleRender(0);return;}
-    if(action==="open-month"){state.upcoming.view="list";state.upcoming.month=btn.dataset.month;state.upcoming.quick="all";savePrefs();var item=findNavItem("upcoming");if(item&&!item.classList.contains("on"))item.click();else scheduleRender(0);return;}
+    if(action==="open-month"){state.upcoming.view="list";state.upcoming.month=btn.dataset.month;state.upcoming.quick="open";savePrefs();var item=findNavItem("upcoming");if(item&&!item.classList.contains("on"))item.click();else scheduleRender(0);return;}
     if(action==="open-filters"){openFilters(readDoc());return;}
     if(action==="clear-filter"){var k=btn.dataset.filter;if(k==="month")state.upcoming.month="all";else if(k==="statuses")state.upcoming.statuses=[];else if(k==="currencies")state.upcoming.currencies=[];else if(k==="categories")state.upcoming.categories=[];else if(k==="dates"){state.upcoming.from="";state.upcoming.to="";}else if(k==="amount"){state.upcoming.minAmount="";state.upcoming.maxAmount="";}else if(k==="sort")state.upcoming.sort="urgency";savePrefs();scheduleRender(0);return;}
     if(action==="clear-all-filters"||action==="reset-advanced-filters"){state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.sort="urgency";if(action==="clear-all-filters"){state.upcoming.month="all";state.upcoming.quick="all";}savePrefs();if(action==="reset-advanced-filters")openFilters(readDoc());else scheduleRender(0);return;}
@@ -4031,7 +4272,7 @@
   }
 
   function boot() {
-    injectCSS();injectMsgCSS();injectFeatureCSS();injectProCSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
+    injectCSS();injectMsgCSS();injectFeatureCSS();injectProCSS();injectRevampCSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
     var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
     var observer=new MutationObserver(function(mutations){
       var relevant=mutations.some(function(m){
