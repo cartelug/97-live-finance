@@ -5,13 +5,23 @@ Tracks client receivables, mobile-money credit lines, cash balances and monthly
 budgets — with a built-in **AI copilot** and an always-on **smart suggestions**
 engine. It runs entirely in the browser: no server, no database, no build step.
 
-## Experience V3
+## Experience V4 — responsive finance command
 
 The current interface keeps the original React app and `ns97-finance-v1` data
-contract, then adds a new finance-intelligence layer on top:
+contract, then adds a mobile-safe finance-intelligence layer on top:
 
-- **Manrope + DM Mono** typography with a stronger forest/lime command-centre UI
-- richer page, card, progress, sheet and status motion with reduced-motion support
+- **IBM Plex Sans + IBM Plex Mono** typography for a more legible, credible
+  finance interface, while Audiowide remains only for the 97 mark
+- richer page, card, progress, sheet, button and status motion using only
+  opacity and transforms, with full reduced-motion support
+- phone-first responsive layouts: 16px editable controls, 46–48px targets,
+  readable long currency amounts and stacked dense grids on narrow phones
+- safe-area and dynamic-viewport sheet sizing, keyboard-aware focused fields,
+  protected sheet scrolling, and shared bottom-navigation spacing
+- pinch zoom is available again; horizontal overflow is fixed at its source
+  instead of being hidden
+- campaign CSV paste no longer rebuilds the panel and loses focus per character
+- cache versions move together so an updated phone cannot load a mixed V3/V4 UI
 - a simplified **Incoming** cockpit with Open, Needs action, Due in 7 days, Paid
   and Everything views
 - compact deal cards with direct **Record payment**, **WhatsApp** and **Details**

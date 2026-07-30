@@ -1,4 +1,4 @@
-/* 97 LIVE — Experience V3
+/* 97 LIVE — Experience V4
    Additive UI upgrade for Dashboard, Upcoming and Credit.
    Uses the existing ns97-finance-v1 document so Supabase sync, backups and old records remain compatible.
 */
@@ -8,7 +8,7 @@
   if (window.__S97_EXPERIENCE_V2__) return;
   window.__S97_EXPERIENCE_V2__ = true;
 
-  var VERSION = "experience-v3.0";
+  var VERSION = "experience-v4.0";
   var DATA_KEY = "ns97-finance-v1";
   var PREF_KEY = "ns97.v3.incoming.filters";
   var REFRESH_KEY = "ns97.v2.react-refresh";
@@ -23,6 +23,7 @@
   var renderTimer = null;
   var searchTimer = null;
   var fabFrame = 0;
+  var sheetScrollY = 0;
   var unavailableOpen = false;
   var needsReactRefresh = false;
   var modeActive = false;
@@ -1370,7 +1371,7 @@
     var style = document.createElement("style");
     style.id = "x97-v2-css";
     style.textContent = `
-      body.x97-v2-mode{overflow-x:hidden}
+      body.x97-v2-mode{overflow-x:visible}
       body.x97-v2-mode .wrap{max-width:1040px!important;background:var(--bg)!important}
       body.x97-v2-mode .navin{max-width:1040px!important}
       #x97-v2-root{display:none;min-height:100vh;color:var(--tx);font-family:var(--fu);padding:18px 16px calc(132px + env(safe-area-inset-bottom));position:relative;z-index:10;background:radial-gradient(80% 45% at 50% -8%,rgba(14,117,72,.06),transparent 66%),var(--bg)}
@@ -1791,6 +1792,126 @@
       }
       @media(prefers-reduced-motion:reduce){
         .x97-page>*,.x97-group,.x97-item,.x97-month-card,.x97-collection-progress i,.x97-progress i,.x97-pay-bar i,.x97-collection-command::before,.x97-collection-signal i{animation:none!important}
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function injectV4CSS() {
+    if (document.getElementById("x97-v4-css")) return;
+    var style = document.createElement("style");
+    style.id = "x97-v4-css";
+    style.textContent = `
+      /* V4: one type scale, intentional motion and mobile-safe financial layouts. */
+      :root{
+        --fu:'IBM Plex Sans',Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        --fd:'IBM Plex Sans',Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        --fnum:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;
+        --x97-nav-h:67px;
+        --x97-motion-fast:160ms;
+        --x97-motion-base:260ms;
+        --x97-ease-out:cubic-bezier(.2,.82,.25,1);
+      }
+      html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+      html,body{min-width:0}
+      html,body,.app,input,select,button,textarea{font-family:var(--fu)}
+      .tabnum,.x97-money{font-family:var(--fnum)!important;font-weight:500!important;letter-spacing:-.04em!important}
+      .x97-title,.x97-sheet-head h2,.x97-rm-title,.s97-cloud-brand{font-family:var(--fd);font-weight:700;letter-spacing:-.045em}
+
+      /* Let a bad child expose itself while its flex/grid parent is constrained; do not hide data. */
+      body.x97-v2-mode{overflow-x:visible}
+      #x97-v2-root{min-width:0;padding-bottom:calc(164px + env(safe-area-inset-bottom))}
+      #x97-v2-root .x97-page,#x97-v2-root .x97-page>*,#x97-v2-root .x97-dashboard-main,
+      #x97-v2-root .x97-card,#x97-v2-root .x97-row,#x97-v2-root .x97-item-top,
+      #x97-v2-root .x97-item-main,#x97-v2-root .x97-facility-head,#x97-v2-root .x97-facility-main,
+      #x97-v2-root .x97-payment-target-row,#x97-v2-root .x97-tl-body{min-width:0}
+      #x97-v2-root button,.navitem,.btn,.press,.x97-btn,.x97-link,.x97-icon-btn,.x97-fab,.fab{touch-action:manipulation}
+      :focus-visible{outline:3px solid rgba(13,128,83,.58);outline-offset:3px}
+
+      /* A single bottom-nav token keeps the composer, floating action and content clear of each other. */
+      .nav{min-height:var(--x97-nav-h)}
+      .navitem{min-height:var(--x97-nav-h)}
+      .composer{bottom:calc(var(--x97-nav-h) + env(safe-area-inset-bottom))}
+      .fab,.x97-fab,.s97-cloud-fab{bottom:calc(var(--x97-nav-h) + 12px + env(safe-area-inset-bottom))}
+      .x97-toast-wrap{bottom:calc(var(--x97-nav-h) + 74px + env(safe-area-inset-bottom))}
+
+      /* Sheets stay inside the visible viewport when browser chrome or the keyboard changes height. */
+      body.x97-sheet-open{position:fixed;left:0;top:var(--x97-sheet-scroll-y,0px);width:100%;overflow:hidden;overscroll-behavior:none}
+      .x97-back,.backdrop,.x97-remind-overlay,.s97-cloud-back{overscroll-behavior:contain}
+      .x97-back{padding-top:env(safe-area-inset-top);touch-action:none}
+      .x97-sheet,.sheet,.x97-remind-panel,.s97-cloud-modal{
+        min-height:0;max-height:calc(100vh - env(safe-area-inset-top));
+        max-height:calc(100svh - env(safe-area-inset-top));max-height:calc(100dvh - env(safe-area-inset-top));
+      }
+      .x97-sheet{touch-action:pan-y}
+      .x97-sheet-body,.x97-rm-list{min-height:0;flex:1 1 auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+      .x97-sheet-foot{flex:0 0 auto}
+      .x97-remind-overlay{padding-top:env(safe-area-inset-top);touch-action:none}
+      .x97-remind-panel{touch-action:pan-y}
+
+      /* Motion is composited only. Backwards fill avoids leaving a transformed parent around fixed UI. */
+      @keyframes x97-v4-reveal{from{opacity:0;transform:translate3d(0,10px,0)}to{opacity:1;transform:none}}
+      @keyframes x97-v4-fill{from{transform:scaleX(.03)}to{transform:scaleX(1)}}
+      #x97-v2-root .x97-page>:not(.x97-fab){animation:x97-v4-reveal var(--x97-motion-base) var(--x97-ease-out) backwards}
+      #x97-v2-root .x97-page>:not(.x97-fab):nth-child(2){animation-delay:35ms}
+      #x97-v2-root .x97-page>:not(.x97-fab):nth-child(3){animation-delay:70ms}
+      #x97-v2-root .x97-page>:not(.x97-fab):nth-child(4){animation-delay:105ms}
+      .x97-progress i,.x97-pay-bar i,.x97-collection-progress i{transform-origin:left;animation:x97-v4-fill .56s var(--x97-ease-out) backwards}
+      .x97-card,.x97-item,.x97-month-card,.x97-command-action,.x97-btn,.x97-link,.x97-icon-btn,.x97-chip,.x97-deal-mode,.x97-fab{
+        transition:transform var(--x97-motion-fast) var(--x97-ease-out),border-color var(--x97-motion-fast) ease,background-color var(--x97-motion-fast) ease,box-shadow var(--x97-motion-base) ease,color var(--x97-motion-fast) ease;
+      }
+      @media(hover:hover){
+        .x97-card.x97-item:hover,.x97-item:hover,.x97-month-card:hover{transform:translateY(-2px)}
+        .x97-btn:hover,.x97-link:hover,.x97-icon-btn:hover,.x97-chip:hover{transform:translateY(-1px)}
+      }
+      .x97-btn:active,.x97-link:active,.x97-icon-btn:active,.x97-chip:active,.x97-deal-mode:active{transform:scale(.975)}
+
+      /* Phone layout: readable inputs, reliable targets and no clipped money. */
+      @media(max-width:759px){
+        .x97-input,.x97-select,.x97-textarea,.inp,.cinput,.s97-cloud-input{font-size:16px!important;line-height:1.35}
+        .x97-input,.x97-select,.inp,.cinput,.s97-cloud-input{min-height:48px!important}
+        .x97-textarea{min-height:112px}
+        .x97-search input{height:48px;font-size:16px!important}
+        .x97-icon-btn{height:48px;min-width:48px}
+        .x97-btn,.btn,.s97-cloud-btn{min-height:46px}
+        .s97-cloud-gate{min-height:100vh!important;min-height:100dvh!important;align-items:flex-start!important;overflow-y:auto!important;padding:max(16px,env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom))!important}
+        .s97-cloud-gate .s97-cloud-card{width:min(100%,480px);margin:auto;padding:24px 18px 20px}
+        .s97-cloud-gate .s97-cloud-actions{display:grid;grid-template-columns:1fr}
+        .x97-collection-focus{grid-template-columns:repeat(2,minmax(0,1fr))}
+        .x97-camp-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+      }
+      @media(max-width:480px){
+        .x97-top{gap:10px}.x97-top-actions{gap:5px}.x97-cloud{max-width:42vw;overflow:hidden;text-overflow:ellipsis}
+        .x97-earn-row.head{display:none}
+        .x97-earn-row:not(.head){grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:11px 12px;margin-bottom:8px;border:1px solid var(--line);border-radius:13px;background:var(--card)}
+        .x97-earn-row-mon{grid-column:1/-1;overflow:visible;text-overflow:clip;font-size:12px}
+        .x97-earn-row-num{display:flex;align-items:baseline;justify-content:space-between;gap:6px;overflow:visible;text-overflow:clip;font-size:12px;text-align:left}
+        .x97-earn-row-num::before{font-family:var(--fu);font-size:9px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--tx3)}
+        .x97-earn-row-num:nth-child(2)::before{content:"In"}.x97-earn-row-num:nth-child(3)::before{content:"Out"}.x97-earn-row-num:nth-child(4)::before{content:"Kept"}
+      }
+      @media(max-width:420px){
+        #x97-v2-root{padding-left:12px;padding-right:12px}
+        .x97-fields-2{grid-template-columns:minmax(0,1fr)}
+        #root div[style*="grid-template-columns"][style*="1fr 1fr 1fr"]{grid-template-columns:minmax(0,1fr)!important}
+        .x97-row,.x97-item-top,.x97-facility-head,.x97-loan-head,.x97-payment-target-row{align-items:flex-start;flex-wrap:wrap}
+        .x97-row-value,.x97-item-amount,.x97-facility-limit,.x97-payment-target-row>strong{white-space:normal;overflow:visible;overflow-wrap:anywhere;word-break:normal;max-width:52%;line-height:1.28}
+        .x97-row-value,.x97-item-amount,.x97-facility-limit{margin-left:auto;text-align:right}
+        .x97-tl-row{display:grid;grid-template-columns:48px minmax(0,1fr);align-items:start;gap:10px}
+        .x97-tl-amt{grid-column:2;white-space:normal;overflow-wrap:anywhere;text-align:left}
+      }
+      @media(max-width:380px){
+        .x97-summary-grid,.x97-collection-focus,.x97-deal-mode-grid{grid-template-columns:minmax(0,1fr)}
+        .x97-earn-row:not(.head){grid-template-columns:minmax(0,1fr)}
+        .x97-item-amount,.x97-facility-limit,.x97-row-value,.x97-payment-target-row>strong{max-width:100%;margin-left:50px;text-align:left}
+        .x97-command-action b,.x97-command-action small{white-space:normal;overflow:visible;text-overflow:clip}
+      }
+      @media(orientation:landscape) and (max-height:560px){
+        .x97-sheet,.sheet,.x97-remind-panel{max-height:100dvh;border-radius:18px 18px 0 0}
+        .x97-sheet-head{padding-top:8px;padding-bottom:9px}.x97-sheet-body{padding-top:12px;padding-bottom:12px}
+      }
+      @media(min-width:760px){.x97-remind-overlay{padding:24px}}
+      @media(prefers-reduced-motion:reduce){
+        *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}
       }
     `;
     document.head.appendChild(style);
@@ -2483,6 +2604,21 @@
     scheduleViewportFab();
   }
 
+  function lockSheetScroll() {
+    sheetScrollY = window.scrollY || document.documentElement.scrollTop || 0;
+    document.body.style.setProperty("--x97-sheet-scroll-y", "-" + sheetScrollY + "px");
+    document.body.classList.add("x97-sheet-open");
+  }
+
+  function unlockSheetScroll() {
+    if (!document.body.classList.contains("x97-sheet-open")) return;
+    var restoreY = sheetScrollY;
+    document.body.classList.remove("x97-sheet-open");
+    document.body.style.removeProperty("--x97-sheet-scroll-y");
+    sheetScrollY = 0;
+    window.requestAnimationFrame(function () { window.scrollTo(0, restoreY); });
+  }
+
   function openSheet(title, body, foot, options) {
     closeSheet();
     var back = document.createElement("div");
@@ -2490,13 +2626,22 @@
     back.id = "x97-sheet";
     back.innerHTML = '<section class="x97-sheet" role="dialog" aria-modal="true"><div class="x97-handle"></div><header class="x97-sheet-head"><h2>' + esc(title) + '</h2><button class="x97-close" data-x97-action="close-sheet">' + icon("close") + '</button></header><div class="x97-sheet-body">' + body + '</div>' + (foot ? '<footer class="x97-sheet-foot">' + foot + '</footer>' : '') + '</section>';
     document.body.appendChild(back);
+    lockSheetScroll();
     scheduleViewportFab();
     back.addEventListener("mousedown", function (e) { if (e.target === back) closeSheet(); });
+    back.addEventListener("focusin", function (e) {
+      var target = e.target;
+      if (!target || !target.matches || !target.matches("input,select,textarea")) return;
+      setTimeout(function () {
+        if (document.activeElement !== target) return;
+        target.scrollIntoView({ block: "center", inline: "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      }, 180);
+    });
     if (options && options.afterOpen) setTimeout(function(){ options.afterOpen(back); },0);
     var first = back.querySelector("input:not([type=hidden]),select,textarea"); if (first && window.innerWidth > 700) setTimeout(function(){first.focus();},80);
   }
 
-  function closeSheet() { var el = document.getElementById("x97-sheet"); if (el) el.remove(); scheduleViewportFab(); }
+  function closeSheet() { var el = document.getElementById("x97-sheet"); if (el) el.remove(); unlockSheetScroll(); scheduleViewportFab(); }
 
   function option(value, label, selected) { return '<option value="' + attr(value) + '" ' + (String(value) === String(selected) ? "selected" : "") + '>' + esc(label == null ? value : label) + '</option>'; }
 
@@ -3800,7 +3945,6 @@
     if (campRefreshing) return;
     var el = document.getElementById("x97-camp"); if (!el || !campaignState.open) return;
     var doc = readDoc(); if (!doc) return;
-    var active = document.activeElement; if (active && el.contains(active) && active.blur) { try { active.blur(); } catch (_) {} }
     campRefreshing = true;
     try { el.innerHTML = campOverlayHTML(doc); } finally { campRefreshing = false; }
   }
@@ -3933,6 +4077,7 @@
       field("List name", '<input class="x97-input x97-camp-listname" value="' + attr(campaignState.listName || "") + '" placeholder="e.g. October leads">') +
       '<label class="x97-rm-tool" style="display:inline-flex;margin-bottom:8px;cursor:pointer">' + icon("plus", 13) + ' Choose CSV file<input type="file" class="x97-camp-file" accept=".csv,.tsv,.txt,text/csv" style="display:none"></label>' +
       field("…or paste rows", '<textarea class="x97-textarea x97-camp-import" rows="6" placeholder="name,phone,amount&#10;Apollo,0772123456,500000">' + esc(campaignState.importText || "") + '</textarea>', "First row must be column headers. Comma, tab or semicolon separated.") +
+      (campaignState.importText ? '<button class="x97-btn subtle" data-camp="refresh-import" style="margin:-2px 0 12px">Preview columns</button>' : '') +
       mapping +
       '<button class="x97-btn primary" data-camp="do-import" ' + (parsed.rows.length ? "" : "disabled") + ' style="width:100%;justify-content:center;margin-top:6px">' + icon("check") + ' Import ' + (parsed.rows.length ? parsed.rows.length + " contacts" : "") + '</button>' +
       '</div>';
@@ -4055,7 +4200,7 @@
       if (t.classList.contains("x97-camp-name")) { campaignState.name = t.value; return; }
       if (t.classList.contains("x97-camp-manual")) { campaignState.manualNumbers = t.value; return; }
       if (t.classList.contains("x97-camp-cc")) { campaignState.countryCode = t.value; return; }
-      if (t.classList.contains("x97-camp-import")) { campaignState.importText = t.value; campaignState.nameCol = ""; campaignState.phoneCol = ""; refreshCamp(); return; }
+      if (t.classList.contains("x97-camp-import")) { campaignState.importText = t.value; campaignState.nameCol = ""; campaignState.phoneCol = ""; return; }
       if (t.classList.contains("x97-camp-listname")) { campaignState.listName = t.value; return; }
     });
     el.addEventListener("change", function (e) {
@@ -4080,6 +4225,7 @@
     if (a === "hub") { closeCampaigns(); openMessaging(); return; }
     if (a === "home") { campaignState.view = "home"; campaignState.jobs = null; return refreshCamp(); }
     if (a === "import") { campaignState.view = "import"; return refreshCamp(); }
+    if (a === "refresh-import") return refreshCamp();
     if (a === "google-connect") return connectGoogleContacts();
     if (a === "match-numbers") return openNumbersManager();
     if (a === "new") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: audienceContacts(doc, { type: "overdue" }).length ? "overdue" : "all", id: "" }; campaignState.previewIdx = 0; return refreshCamp(); }
@@ -4272,7 +4418,7 @@
   }
 
   function boot() {
-    injectCSS();injectMsgCSS();injectFeatureCSS();injectProCSS();injectRevampCSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
+    injectCSS();injectMsgCSS();injectFeatureCSS();injectProCSS();injectRevampCSS();injectV4CSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
     var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
     var observer=new MutationObserver(function(mutations){
       var relevant=mutations.some(function(m){
