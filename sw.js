@@ -1,13 +1,17 @@
 /* 97 LIVE service worker.
    Network-first for the app shell so new versions actually reach every device;
    stale-while-revalidate for static assets; cache is the offline fallback only.
-   Cross-origin requests (Supabase, fonts, AI APIs) are never intercepted. */
-const CACHE = "ns97-live-v36";
+   Cross-origin requests (Supabase and live rates) are never intercepted. */
+const CACHE = "ns97-live-v2-premium-2";
 const ASSETS = [
   "./",
   "./index.html",
-  "./experience-v2.js?v=8",
-  "./sync.js?v=18",
+  "./experience-v2.js?v=10",
+  "./v2-premium.css?v=2",
+  "./v2-premium.js?v=2",
+  "./fonts/geist-sans.woff2",
+  "./fonts/geist-mono.woff2",
+  "./sync.js?v=19",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

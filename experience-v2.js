@@ -1,5 +1,5 @@
-/* 97 LIVE — Experience V4
-   Additive UI upgrade for Dashboard, Upcoming and Credit.
+/* 97 LIVE — Experience V2 Premium
+   Additive UI upgrade for Dashboard, Incoming and Credit.
    Uses the existing ns97-finance-v1 document so Supabase sync, backups and old records remain compatible.
 */
 (function () {
@@ -8,7 +8,7 @@
   if (window.__S97_EXPERIENCE_V2__) return;
   window.__S97_EXPERIENCE_V2__ = true;
 
-  var VERSION = "experience-v4.0";
+  var VERSION = "experience-v2-premium.1";
   var DATA_KEY = "ns97-finance-v1";
   var PREF_KEY = "ns97.v3.incoming.filters";
   var REFRESH_KEY = "ns97.v2.react-refresh";
@@ -28,7 +28,7 @@
   var needsReactRefresh = false;
   var modeActive = false;
   var remindExt = { ready: false, version: "", sending: false };
-  var remindState = { open: false, mode: "onetap", tone: "auto", useAI: false, selected: {}, drafts: {}, showAll: false, progress: {} };
+  var remindState = { open: false, mode: "onetap", tone: "auto", selected: {}, drafts: {}, showAll: false, progress: {} };
   var campaignState = { open: false, view: "home", mode: "onetap", editId: null, audience: { type: "list", id: "" }, message: "", previewIdx: 0, progress: {}, sending: false, runId: null, oneTapIdx: 0, antiblock: "balanced", showDetail: false, showVars: false, showEmoji: false, showPreview: false, showTemplates: false, dupRemoval: true, timestamp: false, countryCode: "", manualNumbers: "" };
   var ANTIBLOCK = {
     conservative: { label: "Conservative", min: 60, max: 180, batch: 5, brk: 15, note: "Safest · 60–180s between sends" },
@@ -199,7 +199,10 @@
     t.setHours(0, 0, 0, 0);
     d.setHours(0, 0, 0, 0);
     var diff = Math.round((d - t) / 86400000);
-    return diff === 0 ? "Today" : diff === 1 ? "Tomorrow" : diff < 0 ? -diff + "d ago" : "in " + diff + "d";
+    if (diff === 0) return "Today";
+    if (diff === 1) return "Tomorrow";
+    if (diff === -1) return "Yesterday";
+    return diff < 0 ? -diff + " days ago" : "in " + diff + " days";
   }
 
   function startOfMonth(date) {
@@ -243,7 +246,7 @@
 
   /* ── Money received ───────────────────────────────────────────────────────
      `amount` stays what it has always meant to every reader of this document
-     — what is still owed — so the React screens and the copilot keep summing
+     — what is still owed — so every finance screen keeps summing
      it correctly with no changes. `gross` remembers the invoiced total and
      `paid` what has come in, which is what makes part payments honest. */
 
@@ -695,9 +698,9 @@
 
   /* ── Live FX ──────────────────────────────────────────────────────────────
      Rates are pulled from a free, no-key provider once a day, straight from the
-     browser (same "no middle server" pattern as the AI copilot). The last good
+     browser without a middle server. The last good
      table is cached so the converter keeps working offline, and doc.meta.usdRate
-     is kept in step so the rest of the app — and the copilot — read the same
+     is kept in step so the rest of the app reads the same
      number. Set doc.settings.fxManual to keep a hand-typed rate instead. */
 
   function parseCurrencyApi(j) {
@@ -830,7 +833,7 @@
     return attempt();
   }
 
-  // Keeps doc.meta.usdRate (used by the copilot and the Settings screen) in step
+  // Keeps doc.meta.usdRate (used by finance calculations and Settings) in step
   // with the live table, unless the user has pinned a manual rate.
   function fxSyncDoc(store) {
     var doc = readDoc();
@@ -1204,7 +1207,7 @@
         '<div class="x97-fx-rates"><div id="x97-fx-rate" class="x97-fx-rate-main"></div><div id="x97-fx-inverse" class="x97-fx-rate-sub"></div></div>' +
         '<div class="x97-fx-meta" id="x97-fx-meta"></div>' +
         '<label class="x97-check x97-fx-manual"><input type="checkbox" id="x97-fx-manual"' + (manual ? " checked" : "") + '>' +
-          '<span>Keep my own USD rate<em>Stops the daily rate from updating Settings and the copilot</em></span></label>' +
+          '<span>Keep my own USD rate<em>Stops the daily rate from updating Settings and dashboard calculations</em></span></label>' +
       '</div>';
     var foot = '<button class="x97-btn" data-x97-action="fx-refresh">' + icon("bolt", 15) + 'Refresh</button>' +
       '<button class="x97-btn primary" data-x97-action="close-sheet">Done</button>';
@@ -1657,9 +1660,9 @@
         --warn:#A76508;--warndim:rgba(167,101,8,.12);
         --neg:#BC3E45;--negdim:rgba(188,62,69,.10);
         --lime:#D9FF66;--forest:#062D21;
-        --fu:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-        --fd:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-        --fnum:'DM Mono','SFMono-Regular',Consolas,monospace;
+        --fu:'Geist Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        --fd:'Geist Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        --fnum:'Geist Mono','SFMono-Regular',Consolas,monospace;
         --elev-1:0 1px 2px rgba(10,35,24,.04),0 14px 34px -23px rgba(6,45,33,.25);
         --elev-2:0 3px 8px rgba(10,35,24,.06),0 24px 50px -25px rgba(6,45,33,.32);
       }
@@ -1797,16 +1800,16 @@
     document.head.appendChild(style);
   }
 
-  function injectV4CSS() {
+  function injectV2CSS() {
     if (document.getElementById("x97-v4-css")) return;
     var style = document.createElement("style");
     style.id = "x97-v4-css";
     style.textContent = `
-      /* V4: one type scale, intentional motion and mobile-safe financial layouts. */
+      /* V2 Premium: one type scale, intentional motion and mobile-safe financial layouts. */
       :root{
-        --fu:'IBM Plex Sans',Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-        --fd:'IBM Plex Sans',Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-        --fnum:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;
+        --fu:'Geist Sans',Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        --fd:'Geist Sans',Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        --fnum:'Geist Mono','SFMono-Regular',Consolas,monospace;
         --x97-nav-h:67px;
         --x97-motion-fast:160ms;
         --x97-motion-base:260ms;
@@ -2281,7 +2284,7 @@
       return '<button class="x97-tl-row ' + tone + '" data-x97-nav="' + attr(x.source === "upcoming" ? "upcoming" : x.source) + '">'
         + '<div class="x97-tl-date"><span class="x97-tl-day x97-money">' + day + '</span><span class="x97-tl-mon">' + esc(mon) + '</span></div>'
         + '<div class="x97-tl-body"><div class="x97-tl-title">' + esc(x.title) + '</div><div class="x97-tl-sub"><span class="x97-tl-dir">' + (din ? "IN" : "OUT") + '</span>' + (x.label ? esc(x.label) + ' · ' : '') + esc(relDay(x.date)) + '</div></div>'
-        + '<div class="x97-tl-amt x97-money">' + (din ? "+" : "−") + money(x.amount, x.currency) + '</div>'
+        + '<div class="x97-tl-amt x97-money">' + (din ? "+\u202f" : "−\u202f") + money(x.amount, x.currency) + '</div>'
         + '</button>';
     }).join("") + '</div>' : '<div class="x97-empty">' + icon("calendar", 25) + '<strong>No movement in the next 7 days</strong><p>Add dates to Upcoming or planned expenses to build this timeline.</p></div>';
     var pipeline = months.map(function (key) {
@@ -2289,20 +2292,20 @@
       return '<button class="x97-month-card x97-card" style="text-align:left;width:100%;margin:0" data-x97-action="open-month" data-month="' + attr(key) + '"><div class="x97-month-title">' + esc(monthLabel(key, true)) + '</div><div class="x97-month-count">' + m.pending.length + ' pending · ' + m.attention + ' need attention</div><div style="margin-top:12px"><div class="x97-money" style="font-size:20px">' + money(m.ugx, "UGX", true) + '</div><div class="x97-row-sub x97-teal" style="margin-top:5px">' + money(m.usd, "USD", true) + '</div></div></button>';
     }).join("");
 
-    root.innerHTML = '<div class="x97-page">' +
-      pageHeader("Finance intelligence", "Command centre", "Cash, collections, commitments and the next move—computed from your live records.") +
+    root.innerHTML = '<div class="x97-page" data-v2-page="dashboard">' +
+      pageHeader("97 Live Finance", "Command centre", "Cash, collections, commitments and the next move—computed from your live records.") +
       '<div class="x97-dashboard-main">' +
-        '<section class="x97-card x97-hero x97-hero-command"><div class="x97-hero-topline"><div class="x97-hero-label">Available cash</div><span class="x97-hero-live">Live position</span></div><div class="x97-hero-value x97-money">' + money(a.cash, "UGX") + '</div><div class="x97-hero-caption">Real account balances only. Client promises and unused credit stay outside this number.</div><div class="x97-hero-meta"><div class="x97-stat"><span>After active debt</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
+        '<section class="x97-card x97-hero x97-hero-command" data-v2-hero><div class="x97-hero-topline"><div class="x97-hero-label">Available cash</div><span class="x97-hero-live">Live position</span></div><div class="x97-hero-value x97-money">' + money(a.cash, "UGX") + '</div><div class="x97-hero-caption">Real account balances only. Client promises and unused credit stay outside this number.</div><div class="x97-hero-meta"><div class="x97-stat"><span>After active debt</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
         '<section class="x97-command-actions x97-dashboard-wide"><button class="x97-command-action primary" data-x97-action="record-payment"><span class="x97-command-icon">' + icon("wallet", 17) + '</span><span><b>Record payment</b><small>Update money received</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="add-upcoming"><span class="x97-command-icon teal">' + icon("plus", 17) + '</span><span><b>Add incoming deal</b><small>Build a payment schedule</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="go-expenses"><span class="x97-command-icon warn">' + icon("trend", 17) + '</span><span><b>Add expense</b><small>Keep cash position honest</small></span>' + icon("chevron", 14) + '</button></section>' +
         dealSummaryHTML(doc) +
-        '<section class="x97-section x97-glance-section x97-dashboard-wide">' + sectionHead("At a glance") + '<div class="x97-summary-grid"><div class="x97-card x97-summary"><div class="k">Collected this month</div><div class="v x97-money x97-green">' + money(collectedThisMonth, "UGX", true) + '</div><div class="s">Actual money received</div></div><div class="x97-card x97-summary"><div class="k">Due next 7 days</div><div class="v x97-money x97-teal">' + money(in7, "UGX", true) + '</div><div class="s">' + (in7USD ? '<span class="x97-teal">' + money(in7USD, "USD", true) + '</span> · ' : '') + 'Scheduled incoming</div></div><div class="x97-card x97-summary"><div class="k">Outstanding</div><div class="v x97-money x97-amber">' + money(outstandingUGX, "UGX", true) + '</div><div class="s">' + (outstandingUSD ? '<span class="x97-teal">' + money(outstandingUSD, "USD", true) + '</span> · ' : '') + 'Still owed by clients</div></div><div class="x97-card x97-summary"><div class="k">Actual spending</div><div class="v x97-money x97-red">' + money(actualSpend, "UGX", true) + '</div><div class="s">This month</div></div></div></section>' +
-        '<section class="x97-section">' + sectionHead("Needs attention", "View Upcoming", "go-upcoming") + '<div class="x97-card x97-pad">' + attentionRows + '</div></section>' +
+        '<section class="x97-section x97-glance-section x97-dashboard-wide">' + sectionHead("Finance pulse") + '<div class="x97-summary-grid x97-finance-pulse" data-v2-slider="pulse"><div class="x97-card x97-summary"><div class="k">Collected this month</div><div class="v x97-money x97-green">' + money(collectedThisMonth, "UGX", true) + '</div><div class="s">Actual money received</div></div><div class="x97-card x97-summary"><div class="k">Due next 7 days</div><div class="v x97-money x97-teal">' + money(in7, "UGX", true) + '</div><div class="s">' + (in7USD ? '<span class="x97-teal">' + money(in7USD, "USD", true) + '</span> · ' : '') + 'Scheduled incoming</div></div><div class="x97-card x97-summary"><div class="k">Outstanding</div><div class="v x97-money x97-amber">' + money(outstandingUGX, "UGX", true) + '</div><div class="s">' + (outstandingUSD ? '<span class="x97-teal">' + money(outstandingUSD, "USD", true) + '</span> · ' : '') + 'Still owed by clients</div></div><div class="x97-card x97-summary"><div class="k">Actual spending</div><div class="v x97-money x97-red">' + money(actualSpend, "UGX", true) + '</div><div class="s">This month</div></div></div></section>' +
+        '<section class="x97-section">' + sectionHead("Financial signals", "View Incoming", "go-upcoming") + '<div class="x97-card x97-pad">' + attentionRows + '</div></section>' +
         (function(){var s=messagingSummary(doc);var pillOd=s.overdue?'<span class="x97-pill bad">'+s.overdue+' overdue</span>':(s.dueSoon?'<span class="x97-pill warn">'+s.dueSoon+' due soon</span>':'<span class="x97-pill good">'+icon("check",11)+'All clear</span>');return '<section class="x97-section">' + sectionHead("Messaging", "Open", "open-messaging") + '<button class="x97-msg-card" data-x97-action="open-messaging"><div class="x97-msg-icon">' + icon("send") + '</div><div class="x97-msg-body"><div class="x97-msg-title">WhatsApp reminders &amp; campaigns</div><div class="x97-msg-sub">' + s.contacts + ' contacts · ' + s.campaigns + ' campaigns' + (remindExt.ready?' · sender connected':'') + '</div><div class="x97-msg-pills">' + pillOd + '</div></div>' + icon("chevron") + '</button></section>';})() +
-        '<section class="x97-section">' + sectionHead("Next 7 days") + '<div class="x97-card x97-pad"><div class="x97-hero-meta" style="margin-bottom:4px"><div class="x97-stat"><span>Expected in</span><b class="x97-green">' + money(in7, "UGX") + '</b></div><div class="x97-stat"><span>Expected out</span><b class="x97-red">' + money(out7, "UGX") + '</b></div></div>' + timelineRows + '</div></section>' +
+        '<section class="x97-section">' + sectionHead("Next 7 days") + '<div class="x97-card x97-pad"><div class="x97-hero-meta" style="margin-bottom:4px"><div class="x97-stat x97-stat-in"><span>Expected in</span><b class="x97-green">' + money(in7, "UGX") + '</b></div><div class="x97-stat x97-stat-out"><span>Expected out</span><b class="x97-red">' + money(out7, "UGX") + '</b></div></div>' + timelineRows + '</div></section>' +
         earnCardHTML(doc) +
         fxCardHTML(doc) +
-        '<section class="x97-section x97-dashboard-wide">' + sectionHead("Accounts", "Add account", "add-account") + '<div class="x97-card x97-pad">' + (accountRows || '<div class="x97-empty"><strong>No accounts yet</strong><p>Add your bank, mobile money or cash balance.</p></div>') + '</div></section>' +
-        '<section class="x97-section x97-dashboard-wide">' + sectionHead("Incoming pipeline", "View all months", "go-upcoming-months") + '<div class="x97-grid x97-pipeline">' + pipeline + '</div></section>' +
+        '<section class="x97-section x97-dashboard-wide">' + sectionHead("Accounts", "Add account", "add-account") + '<div class="x97-card x97-pad x97-account-rail" data-v2-slider="accounts">' + (accountRows || '<div class="x97-empty"><strong>No accounts yet</strong><p>Add your bank, mobile money or cash balance.</p></div>') + '</div></section>' +
+        '<section class="x97-section x97-dashboard-wide">' + sectionHead("Incoming pipeline", "View all months", "go-upcoming-months") + '<div class="x97-grid x97-pipeline x97-month-rail" data-v2-slider="months">' + pipeline + '</div></section>' +
         '<section class="x97-section x97-dashboard-wide x97-secondary-module x97-credit-preview">' + sectionHead("Credit position", "Open Credit", "go-credit") + '<div class="x97-card x97-pad"><div class="x97-summary-grid"><div class="x97-summary" style="padding:4px"><div class="k">Available credit</div><div class="v x97-money x97-teal">' + money(a.creditAvailable, "", true) + '</div><div class="s">Not included in cash</div></div><div class="x97-summary" style="padding:4px"><div class="k">Borrowed</div><div class="v x97-money x97-red">' + money(a.activeLoans.reduce(function (s,l){return s+num(l.principal);},0), "", true) + '</div><div class="s">' + a.activeLoans.length + ' active</div></div><div class="x97-summary" style="padding:4px"><div class="k">Amount due</div><div class="v x97-money x97-red">' + money(a.debt, "", true) + '</div><div class="s">Estimated today</div></div><div class="x97-summary" style="padding:4px"><div class="k">Next repayment</div><div class="v x97-money" style="font-size:17px">' + esc(nextLoanDue(a.activeLoans)) + '</div><div class="s">Earliest active loan</div></div></div></div></section>' +
       '</div></div>';
   }
@@ -3064,11 +3067,6 @@
 
   /* ============================ WhatsApp payment reminders ============================ */
 
-  function readAiCfg() {
-    try { var e = localStorage.getItem("ns97-ai-cfg-v1"); var t = e ? JSON.parse(e) : {}; return { apiKey: t.apiKey || "", model: t.model || "claude-haiku-4-5-20251001" }; }
-    catch (_) { return { apiKey: "", model: "claude-haiku-4-5-20251001" }; }
-  }
-
   function firstName(value) { var s = String(value == null ? "" : value).trim(); if (!s) return "there"; var m = s.split(/[\s\-—,:/|]+/)[0]; return m || s; }
   function prettyPhone(p) { return String(p == null ? "" : p).trim(); }
 
@@ -3210,7 +3208,6 @@
       option("auto", "Tone: Auto", remindState.tone) + option("friendly", "Tone: Friendly", remindState.tone) +
       option("followup", "Tone: Follow-up", remindState.tone) + option("firm", "Tone: Firm", remindState.tone) + '</select>';
     var modeSeg = '<div class="x97-rm-seg"><button data-rm="mode-onetap" class="' + (remindState.mode === "onetap" ? "on" : "") + '">One-tap</button><button data-rm="mode-auto" class="' + (remindState.mode === "auto" ? "on" : "") + '">Auto</button></div>';
-    var aiToggle = '<label class="x97-rm-ai-wrap"><input type="checkbox" class="x97-rm-ai" ' + (remindState.useAI ? "checked" : "") + '>' + icon("bolt", 14) + ' AI-personalise' + (remindState.aiBusy ? ' …' : '') + '</label>';
     var footPrimary;
     if (remindState.mode === "auto") {
       footPrimary = remindExt.ready
@@ -3224,7 +3221,7 @@
     return '<div class="x97-remind-panel">' +
       '<header class="x97-rm-header"><div class="x97-rm-htop"><div><button class="x97-rm-link" data-rm="hub" style="margin-bottom:4px">‹ Messaging</button><div class="x97-rm-title">' + brandMark(16) + icon("message", 18) + ' Chase overdue</div><div class="x97-rm-sub">' + list.length + ' to chase · ' + chaseSendable(doc).length + ' with a number</div></div><button class="x97-rm-close" data-rm="close">' + icon("close") + '</button></div>' +
       '<div class="x97-rm-meter ' + meterCls + '"><div class="x97-rm-meter-bar" style="width:' + pct + '%"></div><span>Sent today ' + sent + ' / ' + cap + '</span><em class="' + (remindExt.ready ? "ok" : "") + '">' + (remindExt.ready ? "Sender connected" : "Sender off") + '</em></div></header>' +
-      '<div class="x97-rm-toolbar">' + toneSel + aiToggle + '<span class="x97-rm-spacer"></span>' + modeSeg + '<button class="x97-rm-tool" data-rm="numbers">' + icon("phone", 14) + ' Numbers</button><button class="x97-rm-tool" data-rm="templates">' + icon("edit", 14) + ' Templates</button><button class="x97-rm-tool" data-rm="safety">' + icon("shield", 14) + ' Safety</button></div>' +
+      '<div class="x97-rm-toolbar">' + toneSel + '<span class="x97-rm-spacer"></span>' + modeSeg + '<button class="x97-rm-tool" data-rm="numbers">' + icon("phone", 14) + ' Numbers</button><button class="x97-rm-tool" data-rm="templates">' + icon("edit", 14) + ' Templates</button><button class="x97-rm-tool" data-rm="safety">' + icon("shield", 14) + ' Safety</button></div>' +
       '<div class="x97-rm-selrow"><button class="x97-rm-link" data-rm="select-all">Select all</button><button class="x97-rm-link" data-rm="select-none">Clear</button><span class="x97-rm-selcount">' + Object.keys(remindState.selected).length + ' selected</span></div>' +
       autoHint + '<div class="x97-rm-list">' + rows + '</div>' +
       '<footer class="x97-rm-footer">' + footPrimary + '</footer></div>';
@@ -3239,7 +3236,6 @@
       var t = e.target;
       if (t.classList.contains("x97-rm-check")) { var id = t.dataset.id; if (t.checked) remindState.selected[id] = true; else delete remindState.selected[id]; refreshRemind(); return; }
       if (t.classList.contains("x97-rm-tone")) { remindState.tone = t.value; refreshRemind(); return; }
-      if (t.classList.contains("x97-rm-ai")) { remindState.useAI = t.checked; if (t.checked) draftWithAI(readDoc()); else { remindState.drafts = {}; refreshRemind(); } return; }
     });
     el.addEventListener("input", function (e) { var t = e.target; if (t.classList.contains("x97-rm-msg")) remindState.drafts[t.dataset.id] = t.value; });
   }
@@ -3281,30 +3277,6 @@
     window.postMessage({ source: "x97-wa-app", type: "enqueue", jobs: jobs, safety: safety(doc) }, "*");
     refreshRemind();
     toast("Sending " + jobs.length + " reminder" + (jobs.length === 1 ? "" : "s") + " — keep WhatsApp Web open", "");
-  }
-
-  function draftWithAI(doc) {
-    doc = doc || readDoc(); if (!doc) return;
-    var cfg = readAiCfg();
-    if (!cfg.apiKey) { toast("Add your Anthropic key in Settings to draft with AI", "error"); remindState.useAI = false; return refreshRemind(); }
-    var items = selectedSendable(doc); if (!items.length) items = chaseSendable(doc);
-    items = items.slice(0, 25);
-    if (!items.length) { toast("Nothing to draft", "error"); return; }
-    remindState.aiBusy = true; refreshRemind();
-    toast("Drafting " + items.length + " message" + (items.length === 1 ? "" : "s") + " with AI…", "");
-    var sender = (doc.settings && doc.settings.senderName) || "97 LIVE";
-    var payload = items.map(function (x) { var t = timing(x, doc), next = t.next, left = next ? Math.max(0, num(next.amount) - num(next.paid)) : outstandingOf(x); return { id: String(x.id), name: firstName(x.client), project: x.client || "", amount: left ? money(left, String(x.currency || "UGX").toUpperCase()) : "the outstanding amount", due: next && next.dueDate ? formatDate(next.dueDate, false) : "the agreed date", daysOverdue: (t.days != null && t.days < 0) ? Math.abs(t.days) : 0, tone: autoTone(x, doc) }; });
-    var sys = "You are the credit-control assistant for " + sender + ". Write short, warm, professional WhatsApp payment reminders in the sender's voice. One message per client. Vary the wording so no two are identical. Keep each to 2-4 sentences with a polite, specific ask. Use the client's first name. Use at most one emoji, sparingly. No markdown, no bullet points. Sign off as " + sender + ". Match the tone field: friendly = light gentle nudge; followup = clear check-in; firm = final but respectful.";
-    var user = "Return ONLY a JSON object mapping each id to its message string — no other text. Clients:\n" + JSON.stringify(payload);
-    fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "content-type": "application/json", "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" }, body: JSON.stringify({ model: cfg.model, max_tokens: 1800, system: sys, messages: [{ role: "user", content: user }] }) })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        var text = (d && d.content && d.content[0] && d.content[0].text) || "";
-        var obj = safeJson(text); if (!obj) throw new Error("parse");
-        Object.keys(obj).forEach(function (id) { if (typeof obj[id] === "string") remindState.drafts[id] = obj[id].trim(); });
-        remindState.useAI = true; remindState.aiBusy = false; toast("AI drafts ready — edit any before sending", ""); refreshRemind();
-      })
-      .catch(function () { remindState.aiBusy = false; remindState.useAI = false; toast("AI draft failed — using templates instead", "error"); refreshRemind(); });
   }
 
   function openTemplateManager() {
@@ -3557,7 +3529,6 @@
       ".x97-rm-meter.warn .x97-rm-meter-bar{background:var(--warn);opacity:.4}.x97-rm-meter.bad .x97-rm-meter-bar{background:var(--neg);opacity:.45}" +
       ".x97-rm-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--line)}" +
       ".x97-rm-spacer{flex:1 1 auto}" +
-      ".x97-rm-ai-wrap{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:750;color:var(--tx);cursor:pointer}.x97-rm-ai{accent-color:var(--pos);width:16px;height:16px}" +
       ".x97-rm-seg{display:inline-flex;background:var(--card2);border:1px solid var(--line);border-radius:10px;overflow:hidden}" +
       ".x97-rm-seg button{border:0;background:transparent;padding:7px 13px;font-size:12px;font-weight:800;color:var(--tx3);cursor:pointer}.x97-rm-seg button.on{background:var(--pos);color:#fff}" +
       ".x97-rm-tool{display:inline-flex;align-items:center;gap:5px;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:7px 10px;font-size:11.5px;font-weight:750;color:var(--tx2);cursor:pointer}" +
@@ -4025,7 +3996,7 @@
 
   function openGoogleSetup() {
     var doc = readDoc();
-    var body = '<div class="x97-help" style="margin-bottom:12px">Connects your real Google Contacts (name + phone) into a list here. This needs a free, one-time <b>Google API Client ID</b> for your own copy of the app — same idea as the Anthropic key for the AI Copilot. See the setup guide, then paste the Client ID below.</div>' +
+    var body = '<div class="x97-help" style="margin-bottom:12px">Connects your real Google Contacts (name + phone) into a list here. This needs a free, one-time <b>Google API Client ID</b> for your own copy of the app. See the setup guide, then paste the Client ID below.</div>' +
       '<form id="x97-google-form" data-x97-form="google-setup">' +
       field("Google OAuth Client ID", '<input class="x97-input" name="clientId" value="' + attr((doc.settings && doc.settings.googleClientId) || "") + '" placeholder="xxxxxxxxxxxx.apps.googleusercontent.com">', "Ends in .apps.googleusercontent.com — from Google Cloud Console → Credentials.") +
       '</form>';
@@ -4418,7 +4389,8 @@
   }
 
   function boot() {
-    injectCSS();injectMsgCSS();injectFeatureCSS();injectProCSS();injectRevampCSS();injectV4CSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
+    try { localStorage.removeItem("ns97-ai-cfg-v1"); } catch (_) {}
+    injectCSS();injectMsgCSS();injectFeatureCSS();injectProCSS();injectRevampCSS();injectV2CSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
     var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
     var observer=new MutationObserver(function(mutations){
       var relevant=mutations.some(function(m){

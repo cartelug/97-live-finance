@@ -1,19 +1,23 @@
-# 97 LIVE — Finance Command
+# 97 LIVE V2 — Finance Command Centre
 
 A private, single-page finance command center for **THE 97 World / NS Creative**.
 Tracks client receivables, mobile-money credit lines, cash balances and monthly
-budgets — with a built-in **AI copilot** and an always-on **smart suggestions**
-engine. It runs entirely in the browser: no server, no database, no build step.
+budgets with a focused **financial signals** engine. It runs entirely in the
+browser: no application server, no database migration, and no bundled AI service.
 
-## Experience V4 — responsive finance command
+## Experience V2 — premium finance command
 
 The current interface keeps the original React app and `ns97-finance-v1` data
 contract, then adds a mobile-safe finance-intelligence layer on top:
 
-- **IBM Plex Sans + IBM Plex Mono** typography for a more legible, credible
-  finance interface, while Audiowide remains only for the 97 mark
-- richer page, card, progress, sheet, button and status motion using only
-  opacity and transforms, with full reduced-motion support
+- self-hosted **Geist Sans** tabular money figures with **Geist Mono** reserved
+  for compact system labels, giving totals a cleaner, less cramped rhythm
+- a premium neutral-charcoal visual system with emerald, cyan and coral reserved
+  for meaning, plus adaptive light/dark surfaces and accessible contrast
+- richer page, card, number, progress, sheet, button and status motion using
+  compositor-friendly effects, with full reduced-motion support
+- touch-first finance pulse, account and incoming-month sliders with scroll snap
+  and accessible position controls on phones
 - phone-first responsive layouts: 16px editable controls, 46–48px targets,
   readable long currency amounts and stacked dense grids on narrow phones
 - safe-area and dynamic-viewport sheet sizing, keyboard-aware focused fields,
@@ -21,7 +25,7 @@ contract, then adds a mobile-safe finance-intelligence layer on top:
 - pinch zoom is available again; horizontal overflow is fixed at its source
   instead of being hidden
 - campaign CSV paste no longer rebuilds the panel and loses focus per character
-- cache versions move together so an updated phone cannot load a mixed V3/V4 UI
+- cache versions move together so an updated phone cannot load a mixed interface
 - a simplified **Incoming** cockpit with Open, Needs action, Due in 7 days, Paid
   and Everything views
 - compact deal cards with direct **Record payment**, **WhatsApp** and **Details**
@@ -64,36 +68,22 @@ python3 -m http.server 8080
 ```
 Then open `http://localhost:8080`.
 (Open it through a server, not by double-clicking the file — the service worker
-and AI features need an `http(s)://` origin.)
+and offline features need an `http(s)://` origin.)
 
 ---
 
 ## 2. Install it on your phone
 Open the hosted URL in your phone browser → **Add to Home Screen**. It installs
 as a full-screen app with the 97 icon, and works **offline** (your data is on the
-device). The AI copilot needs a connection; everything else works offline.
+device). Cloud sync and live rates need a connection; the finance workspace does not.
 
 ---
 
-## 3. Turn on the AI copilot (optional)
-The **Copilot** tab answers questions about your live numbers and gives advice.
-It uses your own Anthropic API key:
-
-1. Get a key at **console.anthropic.com** (add a little credit to the account).
-2. In the app: **Settings → AI Assistant** → paste your key → it saves instantly.
-3. Open **Copilot** and ask away — e.g. *"What should I chase first?"*,
-   *"Can I afford to borrow 500K?"*, *"Am I on track this month?"*
-
-**Privacy & cost**
-- Your key is stored **only on your device** (browser local storage).
-- Questions go **directly to Anthropic** and nowhere else — there is no middle
-  server. A compact snapshot of your finances is sent as context so answers are
-  accurate.
-- You pay Anthropic per question (tiny — it defaults to a fast, cheap model).
-  You can change the model in Settings if your account uses a different name.
-
-The **Smart suggestions** on the dashboard and the "Right now" list in Copilot are
-computed locally and need **no key**.
+## 3. Financial signals
+The dashboard's **Financial signals** are computed locally from due dates,
+outstanding amounts, balances, budgets and credit. They require no API key and
+do not transmit a finance snapshot to an assistant service. V2 removes the
+Copilot tab, its Settings panel and its active network path.
 
 ---
 
@@ -115,9 +105,7 @@ engine, contacts and safety rails, so they live in one place:
   "days overdue" pill. **Templates** with slots
   (`{name} {amount} {date} {days} {project} {you}`) and three tones —
   **Friendly → Follow-up → Firm** — picked automatically by how late each
-  payment is, or set by hand. **AI-personalise** (optional) uses your Anthropic
-  key (the same one as the Copilot) to write each message individually in your
-  voice; falls back to templates if the key is missing or offline.
+  payment is, or set by hand. Drafts use editable local templates.
 - **New campaign** — a full message editor: a formatting toolbar (**bold**,
   *italic*, ~~strike~~, monospace), an emoji picker, an **@value** menu for
   **merge variables** (`{{name}}`, `{{company}}`, or any imported column),
@@ -196,8 +184,7 @@ Messaging → **Contacts & lists** → **Connect Google Contacts** pulls the nam
 and phone numbers from your real Google/Android contacts straight into a list,
 so you don't have to build a CSV by hand.
 
-This needs a free, one-time **Google API Client ID** for your own copy of the
-app — the same "bring your own key" pattern as the AI Copilot's Anthropic key.
+This needs a free, one-time **Google API Client ID** for your own copy of the app.
 Nothing is shared with anyone else; the request goes **directly from your
 browser to Google**, there is no middle server, and only a name + phone number
 is read (read-only access — nothing can be changed or deleted in your Google
@@ -260,7 +247,7 @@ still wakes up on the new day's rate. Nothing to press.
   instead of *Live*.
 - **Your USD rate stays in step.** The daily rate updates the **USD rate** in
   Settings, so the dashboard's *This month USD* tile shows its shilling value
-  and the AI copilot reasons with today's number instead of a stale one.
+  and every finance calculation uses today's number instead of a stale one.
 - **Prefer your own rate?** Tick **Keep my own USD rate** in the converter and
   auto-update pauses — the figure you typed in Settings is left alone. The
   converter still shows live rates.
@@ -292,7 +279,7 @@ The invoice total lives on the record too, so editing an item edits what the
 job was worth and the outstanding figure follows from it.
 
 > Under the hood the item's `amount` field keeps meaning *what is still owed*,
-> which is what every existing screen and the AI copilot already assumed — so
+> which is what every existing finance screen already assumed — so
 > they all became correct the moment part payments arrived, with no changes.
 
 ---

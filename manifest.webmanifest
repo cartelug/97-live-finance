@@ -1,12 +1,12 @@
 {
-  "name": "97 LIVE — Finance Intelligence",
+  "name": "97 LIVE V2 — Finance Command Centre",
   "short_name": "97 LIVE",
-  "description": "A clear command centre for receivables, payments, cash, expenses, credit, messaging, FX and finance intelligence.",
+  "description": "A premium command centre for receivables, payments, cash, expenses, credit, messaging and FX.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#F1F5F1",
+  "background_color": "#07130F",
   "theme_color": "#062D21",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
