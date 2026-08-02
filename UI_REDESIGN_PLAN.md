@@ -1,5 +1,33 @@
 # 97 LIVE final UI and product redesign
 
+## V4 motion and interaction standard
+
+The animation upgrade is a system, not a pile of effects. Every motion must
+explain one of four things: **arrival, hierarchy, state change, or direct
+response**. The production rules are:
+
+- Animate compositor-friendly `transform` and `opacity` for entrances, exits,
+  navigation selection, sheets, cards and button feedback.
+- Use 160–220ms for direct feedback, 280–420ms for sheets and state changes,
+  and up to 820ms only for the branded opening sequence.
+- Use one expressive easing curve for arrival and a calmer ease for colour or
+  opacity changes. Never animate layout dimensions during scrolling.
+- Stagger only the first six meaningful page elements, then reveal the rest
+  together so long finance lists never feel slow.
+- The preloader places the 97 logo above “What’s on your mind today?”, then
+  hands off to the app’s opening cascade after data is ready.
+- Navigation, floating actions and scroll content share one safe-area geometry
+  token so controls never cover deal cards on iPhone.
+- All repeating pulses stop under `prefers-reduced-motion`; reduced-motion mode
+  keeps state changes immediate and understandable.
+- View transitions may enhance theme changes where supported, with an instant
+  fallback everywhere else.
+- Motion must never delay input, saving, or navigation, and must remain smooth
+  on low-power mobile devices.
+
+This standard applies to the preloader, page opening, navigation, totals,
+deal-builder rows, live totals, sheets, buttons, cards and status indicators.
+
 97 LIVE should feel like a calm private banking command centre built for a
 working creative business. It must answer four questions immediately:
 
@@ -45,12 +73,12 @@ Settings. A persistent central add action opens a short action menu:
 
 ### Typography
 
-Use the native system UI family so the app feels first-class on iPhone,
-Android and desktop, loads instantly and remains available offline:
+Use self-hosted Geist Sans for interface copy and IBM Plex Mono for every
+financial number so the interface remains first-class, consistent and fully
+available offline:
 
 ```css
-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
-  "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+font-family: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 ```
 
 - Page titles: 30–38px, 760–800 weight, tight tracking.
@@ -58,7 +86,7 @@ font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
 - Card values: 18–28px, 700–780 weight.
 - Body: 13–15px, 450–550 weight.
 - Labels: 10–11px, 700 weight, restrained uppercase tracking.
-- Every financial number uses tabular numerals.
+- Every financial number uses IBM Plex Mono with tabular, lining numerals.
 - Audiowide remains only for the 97 brand mark; it is not used for money or UI.
 
 ### Colour semantics

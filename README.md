@@ -10,8 +10,8 @@ browser: no application server, no database migration, and no bundled AI service
 The current interface keeps the original React app and `ns97-finance-v1` data
 contract, then adds a mobile-safe finance-intelligence layer on top:
 
-- self-hosted **Geist Sans** tabular money figures with **Geist Mono** reserved
-  for compact system labels, giving totals a cleaner, less cramped rhythm
+- self-hosted **IBM Plex Mono** financial figures with tabular, lining numerals
+  and **Geist Sans** for interface copy, giving totals a precise banking rhythm
 - a premium neutral-charcoal visual system with emerald, cyan and coral reserved
   for meaning, plus adaptive light/dark surfaces and accessible contrast
 - richer page, card, number, progress, sheet, button and status motion using
@@ -32,6 +32,13 @@ contract, then adds a mobile-safe finance-intelligence layer on top:
   actions
 - corrected outstanding, overdue, due-soon and monthly-collected calculations,
   including reversed-payment exclusion and separate UGX/USD totals
+- a safe-area navigation system that reserves the full menu and floating-action
+  footprint so the last Incoming card remains completely usable on iPhone
+- a logo-led opening sequence with “What’s on your mind today?”, coordinated
+  page reveals, navigation response and reduced-motion fallbacks
+- custom schedule rows as the source of truth for deal total, recalculated live
+  whenever any payment amount changes
+- Equity promoted to the first account position without rewriting saved data
 
 ### Incoming schedules
 

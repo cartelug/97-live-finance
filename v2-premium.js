@@ -100,6 +100,27 @@
     if (screen && screen.firstElementChild) screen.firstElementChild.classList.add("v3-screen-stack");
   }
 
+  function polishDynamicUI() {
+    var form = document.querySelector("#x97-upcoming-form");
+    if (form) {
+      form.classList.add("v4-deal-form");
+      var sheet = form.closest(".x97-sheet,.sheet");
+      if (sheet) sheet.classList.add("v4-deal-sheet");
+    }
+
+    /* Keep the primary bank account first without rewriting saved user data. */
+    document.querySelectorAll(".card,.x97-card,button,li").forEach(function (card) {
+      var cardText = (card.textContent || "").replace(/\s+/g, " ").trim();
+      if (!/equity/i.test(cardText) || cardText.length > 180 || !card.parentElement) return;
+      var parent = card.parentElement;
+      var accountSiblings = Array.prototype.filter.call(parent.children, function (child) {
+        var text = (child.textContent || "").replace(/\s+/g, " ").trim();
+        return text.length < 180 && /equity|airtel money|mtn momo/i.test(text);
+      });
+      if (accountSiblings.length > 1 && accountSiblings[0] !== card) parent.insertBefore(card, accountSiblings[0]);
+    });
+  }
+
   function getDeck() {
     if (deck && deck.isConnected) return deck;
     deck = document.createElement("div");
@@ -316,6 +337,7 @@
     frame = 0;
     stripCopilot();
     markClassicUI();
+    polishDynamicUI();
     mountDeck();
     setPrivacy(privacyOn());
     animateNumbers();

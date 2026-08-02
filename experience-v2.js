@@ -2353,7 +2353,10 @@
     var outstandingUSD = a.open.filter(function (x) { return String(x.currency || "UGX").toUpperCase() === "USD"; }).reduce(function (s, x) { return s + outstandingOf(x); }, 0);
     var actualSpend = (a.expenses.personalActual || 0) + (a.expenses.businessActual || 0);
     var months = [0, 1, 2].map(function (offset) { var d = startOfMonth(todayDate()); d.setMonth(d.getMonth() + offset); return monthKey(d); });
-    var accountRows = (doc.balances || []).map(function (b) {
+    var accountRows = (doc.balances || []).slice().sort(function (a, b) {
+      var ae = /equity/i.test(String(a.account || "")), be = /equity/i.test(String(b.account || ""));
+      return ae === be ? 0 : ae ? -1 : 1;
+    }).map(function (b) {
       return '<button class="x97-row" style="width:100%;border-left:0;border-right:0;border-top:0;background:transparent;text-align:left" data-x97-action="edit-account" data-id="' + attr(b.id) + '">' + accountIconBox(b.account) + '<div class="x97-row-main"><div class="x97-row-title">' + esc(b.account || "Account") + '</div><div class="x97-row-sub">' + esc(b.line || b.notes || "Tap to update balance") + '</div></div><div class="x97-row-value">' + money(b.balance, "UGX") + '</div></button>';
     }).join("");
     var attentionRows = attention.length ? attention.map(function (x) {
@@ -2876,6 +2879,15 @@
         draft.dealType = normalizedType; draft.partLabel = values.partLabel || partLabel; draft.partCount = values.partCount || partCount; draft.partEvery = values.partEvery || item.partEvery || 7; draft.currency = values.currency || item.currency;
         draft.parts = locked && item.parts ? clone(item.parts) : dealPartsFor(item, values);
         var total = draft.parts.reduce(function (s, p) { return s + num(p.amount); }, 0), nextDraft = draft.parts.find(function (p) { return num(p.amount) > 0; });
+        var totalInput = form.querySelector('[name="amount"]');
+        if (!locked && normalizedType === "custom" && totalInput) {
+          totalInput.value = total ? roundMoney(total) : "";
+          totalInput.readOnly = true;
+          totalInput.setAttribute("aria-label", "Deal total calculated from custom payments");
+        } else if (totalInput) {
+          totalInput.readOnly = false;
+          totalInput.removeAttribute("aria-label");
+        }
         var hint = back.querySelector("#x97-deal-hint"), glance = back.querySelector("#x97-deal-glance"), amountLabelEl = back.querySelector("#x97-deal-amount-label");
         if (hint) hint.textContent = dealTypeHint(normalizedType, draft.partLabel);
         if (amountLabelEl) amountLabelEl.textContent = dealAmountLabel(normalizedType, draft.partLabel);
@@ -3121,15 +3133,13 @@
       }, "upcoming-meta-save");
       closeSheet(); if (remindState.open) refreshRemind(); return;
     }
-    var parts = type === "one" ? [] : dealPartsFor(old || {}, v), gross = type === "one" || type === "custom" ? roundMoney(v.amount) : roundMoney(parts.reduce(function (sum, p) { return sum + num(p.amount); }, 0));
+    var parts = type === "one" ? [] : dealPartsFor(old || {}, v), gross = type === "one" ? roundMoney(v.amount) : roundMoney(parts.reduce(function (sum, p) { return sum + num(p.amount); }, 0));
     if (gross <= 0) { toast("Enter the deal total", "error"); return; }
     if (type === "deposit") {
       var deposit = num(v.depositAmount);
       if (deposit <= 0 || deposit >= gross) { toast("Deposit must be less than the full deal total", "error"); return; }
     }
     if (type === "custom") {
-      var scheduled = parts.reduce(function (sum, p) { return sum + num(p.amount); }, 0), difference = roundMoney(gross - scheduled);
-      if (Math.abs(difference) > 0.5) { toast("Custom schedule is " + money(Math.abs(difference), v.currency || "UGX") + " away from the deal total", "error"); return; }
       if (parts.some(function (p) { return num(p.amount) <= 0; })) { toast("Give every custom payment an amount", "error"); return; }
     }
     var already = old ? paidOf(old) : 0;
