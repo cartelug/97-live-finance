@@ -717,7 +717,7 @@
   function loadExperienceV2() {
     if (document.querySelector('script[data-s97-experience-v2]')) return;
     var script = document.createElement('script');
-    script.src = './experience-v2.js?v=10';
+    script.src = './experience-v2.js?v=11';
     script.defer = true;
     script.dataset.s97ExperienceV2 = '1';
     script.onerror = function () { console.error('97 LIVE V2 Premium experience could not load'); };

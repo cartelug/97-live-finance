@@ -70,6 +70,36 @@
     return button;
   }
 
+  function markClassicUI() {
+    var app = document.querySelector(".app");
+    if (!app) return;
+    app.classList.add("v3-classic-app");
+
+    var wrap = null;
+    Array.prototype.some.call(app.children, function (child) {
+      if (child.classList && child.classList.contains("wrap")) { wrap = child; return true; }
+      return false;
+    });
+    if (!wrap) return;
+
+    var activeNav = app.querySelector(".navitem.on");
+    if (activeNav) {
+      var pageName = (activeNav.textContent || "home").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      app.dataset.v3Page = pageName || "home";
+    }
+
+    Array.prototype.forEach.call(wrap.children, function (child) {
+      if (child.classList && child.classList.contains("fu")) child.classList.add("v3-screen");
+      if (child.style && child.style.position === "sticky") {
+        child.classList.add("v3-appbar");
+        if (child.firstElementChild) child.firstElementChild.classList.add("v3-appbar-inner");
+      }
+    });
+
+    var screen = wrap.querySelector(".v3-screen");
+    if (screen && screen.firstElementChild) screen.firstElementChild.classList.add("v3-screen-stack");
+  }
+
   function getDeck() {
     if (deck && deck.isConnected) return deck;
     deck = document.createElement("div");
@@ -107,10 +137,13 @@
 
   function mountDeck() {
     var controls = getDeck();
-    var target = document.querySelector(".x97-top-actions");
+    var target = document.querySelector(".x97-top-actions") || document.querySelector(".v3-appbar-inner");
     if (target) {
       controls.classList.remove("v2-floating");
-      if (controls.parentElement !== target) target.insertBefore(controls, target.firstChild);
+      if (controls.parentElement !== target) {
+        if (target.classList.contains("v3-appbar-inner") && target.lastElementChild) target.insertBefore(controls, target.lastElementChild);
+        else target.insertBefore(controls, target.firstChild);
+      }
     } else if (document.body && !controls.isConnected) {
       controls.classList.add("v2-floating");
       document.body.appendChild(controls);
@@ -282,6 +315,7 @@
   function enhance() {
     frame = 0;
     stripCopilot();
+    markClassicUI();
     mountDeck();
     setPrivacy(privacyOn());
     animateNumbers();
