@@ -92,7 +92,8 @@
       maxAmount: "",
       sort: "urgency",
       gridWidths: {},
-      gridHidden: []
+      gridHidden: [],
+      gridZoom: null
     },
     creditView: "available"
   };
@@ -1353,6 +1354,7 @@
       undo: '<path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path>',
       redo: '<path d="m15 14 5-5-5-5"></path><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"></path>',
       columns: '<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16M15 4v16"></path>',
+      minus: '<path d="M5 12h14"></path>',
       lock: '<rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path>',
       pin: '<path d="M12 2 9 9l-6 2 4.5 3.5L6 21l6-4 6 4-1.5-6.5L21 11l-6-2Z"></path>',
       dots: '<circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle>'
@@ -2601,32 +2603,53 @@
   var gridState = {
     active: null, anchor: null, editing: null,
     rows: [], byId: {}, order: [], rowEls: {}, cellEls: {},
-    widths: {}, hidden: {},
+    widths: {}, hidden: {}, zoom: 1,
     scrollTop: 0, scrollLeft: 0,
     quickEntry: null, pendingFocusRow: null,
     undoStack: [], redoStack: [],
     pendingExternalRender: false,
     menuEl: null, selEls: [], activeEl: null, activeRowEl: null, activeHeadEl: null
   };
+  var IG_ZOOM_MIN = 0.6, IG_ZOOM_MAX = 1.3, IG_ZOOM_STEP = 0.1;
 
   function igVisibleCols() { return IG_COLS.filter(function (c) { return !gridState.hidden[c.key]; }); }
   function igColDef(key) { return IG_COLS.filter(function (c) { return c.key === key; })[0]; }
   function igColWidth(key) {
-    var c = igColDef(key), w = gridState.widths[key] || (c ? c.width : 100);
-    return Math.max(c ? c.min : 60, Math.round(w));
+    var c = igColDef(key), w = gridState.widths[key] || (c ? c.width : 100), z = gridState.zoom || 1;
+    return Math.max(36, Math.round((c ? c.min : 60) * Math.min(1, z)), Math.round(w * z));
   }
+  function igRownumWidth() { return Math.max(28, Math.round(IG_ROWNUM_W * (gridState.zoom || 1))); }
   function igTemplate() {
-    var parts = [IG_ROWNUM_W + "px"];
+    var parts = [igRownumWidth() + "px"];
     igVisibleCols().forEach(function (c) { parts.push(igColWidth(c.key) + "px"); });
     return parts.join(" ");
+  }
+  function igAutoZoom() {
+    try { return (window.innerWidth && window.innerWidth < 480) ? 0.82 : 1; } catch (_) { return 1; }
   }
   function igSyncPersisted() {
     gridState.widths = Object.assign({}, state.upcoming.gridWidths || {});
     gridState.hidden = {};
     (state.upcoming.gridHidden || []).forEach(function (k) { gridState.hidden[k] = true; });
+    gridState.zoom = state.upcoming.gridZoom || igAutoZoom();
   }
   function igSavePersistedWidths() { state.upcoming.gridWidths = Object.assign({}, gridState.widths); savePrefs(); }
   function igSavePersistedHidden() { state.upcoming.gridHidden = Object.keys(gridState.hidden).filter(function (k) { return gridState.hidden[k]; }); savePrefs(); }
+  function igApplyZoomLive() {
+    var inner = document.getElementById("ig-grid-inner");
+    if (inner) { inner.style.setProperty("--ig-zoom", gridState.zoom || 1); inner.style.setProperty("--ig-rownum-w", igRownumWidth() + "px"); inner.style.setProperty("--ig-tpl", igTemplate()); }
+    var pct = document.querySelector(".ig-zpct"); if (pct) pct.textContent = Math.round((gridState.zoom || 1) * 100) + "%";
+  }
+  function igSetZoom(action) {
+    var z = gridState.zoom || 1;
+    if (action === "in") z = Math.min(IG_ZOOM_MAX, Math.round((z + IG_ZOOM_STEP) * 100) / 100);
+    else if (action === "out") z = Math.max(IG_ZOOM_MIN, Math.round((z - IG_ZOOM_STEP) * 100) / 100);
+    else { state.upcoming.gridZoom = null; z = igAutoZoom(); savePrefs(); gridState.zoom = z; igApplyZoomLive(); return; }
+    gridState.zoom = z;
+    state.upcoming.gridZoom = z;
+    savePrefs();
+    igApplyZoomLive();
+  }
 
   function igStatusInfo(item) {
     var label = isCancelled(item.status) ? "Cancelled" : isPaid(item.status) ? "Paid" : isPartPaid(item) ? "Part Paid" : "Pending";
@@ -2751,7 +2774,34 @@
     return '<div class="ig-quickviews">' + chip("all", "All") + chip("open", "Outstanding", stats.open.length) + chip("overdue", "Overdue", stats.overdue.length) + chip("next7", "Due soon", stats.due7.length) + chip("paid", "Paid") + '</div>';
   }
   function igStatusBarHTML(filteredCount, totalCount, stats) {
-    return '<div class="ig-statusbar"><span>' + filteredCount + ' of ' + totalCount + ' row' + (totalCount === 1 ? "" : "s") + '</span><span class="ig-statusbar-sep">·</span><span>Outstanding ' + esc(money(stats.outstandingUGX, "UGX", true)) + (stats.outstandingUSD ? " + " + esc(money(stats.outstandingUSD, "USD", true)) : "") + '</span></div>';
+    var zoomPct = Math.round((gridState.zoom || 1) * 100);
+    return '<div class="ig-statusbar"><div class="ig-statusbar-info"><span>' + filteredCount + ' of ' + totalCount + ' row' + (totalCount === 1 ? "" : "s") + '</span><span class="ig-statusbar-sep">·</span><span>Outstanding ' + esc(money(stats.outstandingUGX, "UGX", true)) + (stats.outstandingUSD ? " + " + esc(money(stats.outstandingUSD, "USD", true)) : "") + '</span></div>' +
+      '<div class="ig-zoom" role="group" aria-label="Grid zoom">' +
+        '<button class="ig-zbtn" data-x97-action="grid-zoom" data-value="out" title="Zoom out" aria-label="Zoom out">' + icon("minus", 13) + '</button>' +
+        '<button class="ig-zpct" data-x97-action="grid-zoom" data-value="reset" title="Reset zoom">' + zoomPct + '%</button>' +
+        '<button class="ig-zbtn" data-x97-action="grid-zoom" data-value="in" title="Zoom in" aria-label="Zoom in">' + icon("plus", 13) + '</button>' +
+      '</div></div>';
+  }
+  function igSummaryHTML(stats) {
+    function tile(label, value, sub, tone) {
+      return '<div class="ig-stat' + (tone ? " ig-stat-" + tone : "") + '"><div class="ig-stat-label">' + esc(label) + '</div><div class="ig-stat-value tabnum">' + value + '</div>' + (sub ? '<div class="ig-stat-sub">' + sub + '</div>' : "") + '</div>';
+    }
+    function twoCurrency(ugx, usd) {
+      var parts = [];
+      if (ugx) parts.push(esc(money(ugx, "UGX", true)));
+      if (usd) parts.push(esc(money(usd, "USD", true)));
+      return parts.join(" + ");
+    }
+    var outSub = stats.outstandingUSD ? esc(money(stats.outstandingUSD, "USD", true)) + " outstanding" : "";
+    var overdueSub = stats.overdue.length ? (twoCurrency(stats.overdueUGX, stats.overdueUSD) || esc(money(0, "UGX", true))) : "Nothing overdue";
+    var due7Sub = stats.due7.length ? (twoCurrency(stats.due7UGX, stats.due7USD) || esc(money(0, "UGX", true))) : "Nothing due soon";
+    var unschedSub = stats.unscheduled.length ? "Needs a due date" : "All scheduled";
+    return '<div class="ig-summary">' +
+      tile("Outstanding", esc(money(stats.outstandingUGX, "UGX", true)), outSub, "") +
+      tile("Overdue", String(stats.overdue.length), overdueSub, stats.overdue.length ? "bad" : "") +
+      tile("Due in 7 days", String(stats.due7.length), due7Sub, stats.due7.length ? "warn" : "") +
+      tile("No date set", String(stats.unscheduled.length), unschedSub, stats.unscheduled.length ? "warn" : "") +
+    '</div>';
   }
 
   function renderUpcoming(doc) {
@@ -2774,12 +2824,13 @@
 
     root.innerHTML = '<div class="ig-shell">' +
       pageHeader("Collections", "Incoming", "", '<button class="x97-icon-btn x97-add-primary" data-x97-action="grid-add-row" title="Add row">' + icon("plus") + '<span>Add row</span></button>') +
+      igSummaryHTML(stats) +
       igToolbarHTML() +
       igQuickViewsHTML(stats) +
       (activeFilterCount() ? '<div class="ig-filterchips">' + filterTagHTML() + '</div>' : "") +
       igFormulaBarHTML() +
       '<div class="ig-gridwrap" id="ig-gridwrap"><div class="ig-scroll" id="ig-scroll" tabindex="0" role="grid" aria-rowcount="' + rows.length + '" aria-label="Incoming receivables">' +
-        '<div class="ig-grid-inner" id="ig-grid-inner" style="--ig-tpl:' + igTemplate() + '">' + igHeaderHTML() + '<div class="ig-body" id="ig-body">' + bodyRows + '</div></div>' +
+        '<div class="ig-grid-inner" id="ig-grid-inner" style="--ig-zoom:' + (gridState.zoom || 1) + ';--ig-rownum-w:' + igRownumWidth() + 'px;--ig-tpl:' + igTemplate() + '">' + igHeaderHTML() + '<div class="ig-body" id="ig-body">' + bodyRows + '</div></div>' +
         empty +
       '</div></div>' +
       igStatusBarHTML(filtered.length, all.length, stats) +
@@ -5298,6 +5349,7 @@
     if(action==="grid-filters-reset"){state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.quick="open";state.upcoming.sort="urgency";state.upcoming.search="";savePrefs();closeSheet();scheduleRender(0);return;}
     if(action==="open-grid-columns"){openGridColumns();return;}
     if(action==="open-grid-more"){openGridMore();return;}
+    if(action==="grid-zoom"){igSetZoom(btn.dataset.value);return;}
   }, true);
 
   function resumeOriginalTab() {
