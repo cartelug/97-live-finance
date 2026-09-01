@@ -90,7 +90,9 @@
       to: "",
       minAmount: "",
       maxAmount: "",
-      sort: "urgency"
+      sort: "urgency",
+      gridWidths: {},
+      gridHidden: []
     },
     creditView: "available"
   };
@@ -1347,7 +1349,13 @@
       phone: '<path d="M6.6 3H10l2 5-2.5 1.5a11 11 0 0 0 5 5L16 11l5 2v3.4a2 2 0 0 1-2.2 2A16 16 0 0 1 4.6 5.2 2 2 0 0 1 6.6 3Z"></path>',
       shield: '<path d="M12 3l7 3v6c0 5-3.5 7.6-7 9-3.5-1.4-7-4-7-9V6l7-3Z"></path>',
       bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"></path>',
-      send: '<path d="M22 2 11 13"></path><path d="M22 2 15 22l-4-9-9-4 20-7Z"></path>'
+      send: '<path d="M22 2 11 13"></path><path d="M22 2 15 22l-4-9-9-4 20-7Z"></path>',
+      undo: '<path d="M9 14 4 9l5-5"></path><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"></path>',
+      redo: '<path d="m15 14 5-5-5-5"></path><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"></path>',
+      columns: '<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16M15 4v16"></path>',
+      lock: '<rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path>',
+      pin: '<path d="M12 2 9 9l-6 2 4.5 3.5L6 21l6-4 6 4-1.5-6.5L21 11l-6-2Z"></path>',
+      dots: '<circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle>'
     };
     return '<svg aria-hidden="true" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' + (paths[name] || paths.more) + '</svg>';
   }
@@ -2567,56 +2575,871 @@
     };
   }
 
-  function renderUpcoming(doc) {
+  /* ══════════════════════════════════════════════════════════════════════
+     INCOMING — spreadsheet grid engine.
+     Real rows/columns (no cards), frozen row-number + Client columns via
+     native CSS sticky, keyboard + mouse + touch cell editing, resize/hide,
+     range copy/paste, undo, and a mobile-first filter sheet. Scope-locked
+     to #x97-v2-root[data-screen="upcoming"] — see v2-premium.css.
+     ══════════════════════════════════════════════════════════════════════ */
+
+  var IG_ROWNUM_W = 42;
+  var IG_COLS = [
+    { key: "client", label: "Client", width: 178, min: 120, type: "text", align: "left", sticky: true },
+    { key: "category", label: "Category", width: 116, min: 88, type: "text", align: "left" },
+    { key: "gross", label: "Total", width: 124, min: 92, type: "money", align: "right" },
+    { key: "paid", label: "Paid", width: 112, min: 88, type: "money", align: "right", action: true },
+    { key: "balance", label: "Balance", width: 124, min: 92, type: "money", align: "right", action: true },
+    { key: "currency", label: "Cur", width: 58, min: 54, type: "currency", align: "center" },
+    { key: "status", label: "Status", width: 112, min: 88, type: "status", align: "left", action: true },
+    { key: "due", label: "Due date", width: 118, min: 96, type: "date", align: "left" },
+    { key: "structure", label: "Structure", width: 132, min: 104, type: "structure", align: "left", action: true },
+    { key: "phone", label: "WhatsApp", width: 130, min: 100, type: "phone", align: "left" },
+    { key: "note", label: "Notes", width: 220, min: 140, type: "text", align: "left" }
+  ];
+
+  var gridState = {
+    active: null, anchor: null, editing: null,
+    rows: [], byId: {}, order: [], rowEls: {}, cellEls: {},
+    widths: {}, hidden: {},
+    scrollTop: 0, scrollLeft: 0,
+    quickEntry: null, pendingFocusRow: null,
+    undoStack: [], redoStack: [],
+    pendingExternalRender: false,
+    menuEl: null, selEls: [], activeEl: null, activeRowEl: null, activeHeadEl: null
+  };
+
+  function igVisibleCols() { return IG_COLS.filter(function (c) { return !gridState.hidden[c.key]; }); }
+  function igColDef(key) { return IG_COLS.filter(function (c) { return c.key === key; })[0]; }
+  function igColWidth(key) {
+    var c = igColDef(key), w = gridState.widths[key] || (c ? c.width : 100);
+    return Math.max(c ? c.min : 60, Math.round(w));
+  }
+  function igTemplate() {
+    var parts = [IG_ROWNUM_W + "px"];
+    igVisibleCols().forEach(function (c) { parts.push(igColWidth(c.key) + "px"); });
+    return parts.join(" ");
+  }
+  function igSyncPersisted() {
+    gridState.widths = Object.assign({}, state.upcoming.gridWidths || {});
+    gridState.hidden = {};
+    (state.upcoming.gridHidden || []).forEach(function (k) { gridState.hidden[k] = true; });
+  }
+  function igSavePersistedWidths() { state.upcoming.gridWidths = Object.assign({}, gridState.widths); savePrefs(); }
+  function igSavePersistedHidden() { state.upcoming.gridHidden = Object.keys(gridState.hidden).filter(function (k) { return gridState.hidden[k]; }); savePrefs(); }
+
+  function igStatusInfo(item) {
+    var label = isCancelled(item.status) ? "Cancelled" : isPaid(item.status) ? "Paid" : isPartPaid(item) ? "Part Paid" : "Pending";
+    var tone = isCancelled(item.status) ? "muted" : isPaid(item.status) ? "good" : isPartPaid(item) ? "warn" : "neutral";
+    return { label: label, tone: tone };
+  }
+
+  function igBuildRow(item, doc, index) {
+    var t = timing(item, doc), next = t.next, due = next ? next.dueDate : item.expectedBy;
+    var locked = dealHasRecordedMoney(item), structured = isDeal(item), status = igStatusInfo(item);
+    var dueTone = t.key === "overdue" || t.key === "today" ? "bad" : (t.key === "very-soon" || t.key === "soon") ? "warn" : "";
+    return {
+      id: item.id, index: index,
+      client: item.client || "", category: item.category || "",
+      gross: grossOf(item), paid: paidOf(item), balance: outstandingOf(item),
+      currency: String(item.currency || "UGX").toUpperCase(),
+      status: status.label, statusTone: status.tone,
+      due: due || "", dueTone: due ? dueTone : "warn",
+      structure: structured ? (DEAL_TYPES[normalizeDealType(item.dealType)] || "Payment schedule") : "One payment",
+      phone: item.phone || "", note: item.note || "",
+      locked: locked, structured: structured, open: isOpenFollowup(item), raw: item
+    };
+  }
+  function igBuildRows(doc, list) { return list.map(function (item, i) { return igBuildRow(item, doc, i + 1); }); }
+
+  function igEditable(col, row) {
+    if (col.key === "gross") return !row.structured && !row.locked;
+    if (col.key === "currency" || col.key === "due") return !row.locked;
+    if (col.action) return false;
+    return true;
+  }
+
+  function igCellText(col, row) {
+    if (col.type === "money") return money(row[col.key] || 0, "");
+    if (col.type === "currency") return row.currency;
+    if (col.type === "status") return row.status;
+    if (col.type === "date") return row.due ? formatDate(row.due, true) : (row.open ? "No date" : "—");
+    if (col.type === "structure") return row.structure;
+    return row[col.key] || "";
+  }
+  function igRawValue(row, key) { return row[key] == null ? "" : row[key]; }
+
+  function igCellClass(col, row) {
+    var cls = ["ig-cell", "ig-c-" + col.key, "ig-a-" + col.align];
+    if (col.sticky) cls.push("ig-sticky", "ig-sticky-client");
+    if (col.action) cls.push("ig-action");
+    else if (igEditable(col, row)) cls.push("ig-editable");
+    else cls.push("ig-readonly");
+    if (col.key === "status") cls.push("ig-tone-badge");
+    if (col.key === "due" && row.dueTone) cls.push("ig-tone-" + row.dueTone);
+    if (col.key === "client" && !row.client) cls.push("ig-placeholder");
+    return cls.join(" ");
+  }
+  function igCellInner(col, row) {
+    var text = igCellText(col, row);
+    if (col.key === "client" && !row.client) return '<span class="ig-muted">Untitled — click to name</span>';
+    if (col.type === "money" || col.type === "date") return '<span class="tabnum">' + esc(text) + '</span>';
+    if (col.key === "status") return '<span class="ig-badge ig-badge-' + esc(row.statusTone) + '">' + esc(text) + '</span>';
+    if (col.key === "structure" && row.locked) return esc(text) + ' ' + icon("lock", 11);
+    return esc(text);
+  }
+  function igCellHTML(col, row) {
+    var text = igCellText(col, row);
+    return '<div class="' + igCellClass(col, row) + '" role="gridcell" data-col="' + attr(col.key) + '" data-row="' + attr(row.id) + '" tabindex="-1" title="' + attr(text) + '">' + igCellInner(col, row) + '</div>';
+  }
+  function igRowHTML(row) {
+    var cells = '<div class="ig-cell ig-rownum ig-sticky ig-sticky-num" role="rowheader" data-rownum="' + attr(row.id) + '">' + row.index + '</div>';
+    cells += igVisibleCols().map(function (c) { return igCellHTML(c, row); }).join("");
+    return '<div class="ig-row' + (row.open ? "" : " ig-row-settled") + '" role="row" data-row-id="' + attr(row.id) + '">' + cells + '</div>';
+  }
+  function igSortMatches(key) {
+    var s = state.upcoming.sort;
+    if (key === "client") return s === "client" ? "on" : "";
+    if (key === "gross" || key === "balance") return s === "amountDesc" ? "desc" : s === "amountAsc" ? "asc" : "";
+    if (key === "due") return s === "dateAsc" ? "asc" : s === "dateDesc" ? "desc" : "";
+    return "";
+  }
+  function igHeaderHTML() {
+    var head = '<div class="ig-cell ig-rownum ig-colhead ig-sticky ig-sticky-num" role="columnheader">#</div>';
+    head += igVisibleCols().map(function (c) {
+      var sortable = c.key === "client" || c.key === "gross" || c.key === "balance" || c.key === "due";
+      var active = igSortMatches(c.key);
+      return '<div class="ig-cell ig-colhead ig-a-' + c.align + (c.sticky ? " ig-sticky ig-sticky-client" : "") + (active ? " ig-sorted" : "") + '" role="columnheader" data-colhead="' + attr(c.key) + '"' + (sortable ? ' data-x97-action="grid-sort" data-col="' + attr(c.key) + '"' : "") + '><span>' + esc(c.label) + '</span>' + (active ? '<i class="ig-sort-ic">' + icon("chevron", 10) + '</i>' : "") + '<b class="ig-resize" data-resize="' + attr(c.key) + '"></b></div>';
+    }).join("");
+    return '<div class="ig-row ig-head-row" role="row">' + head + '</div>';
+  }
+
+  function igFormulaBarHTML() {
+    return '<div class="ig-formula-bar"><div class="ig-cell-ref" id="ig-cell-ref">—</div><input class="ig-formula-input" id="ig-formula-input" autocomplete="off" placeholder="Select a cell" disabled></div>';
+  }
+  function igGridFilterCount() {
+    var f = state.upcoming, count = 0;
+    if (f.statuses.length) count++;
+    if (f.currencies.length) count++;
+    if (f.categories.length) count++;
+    if (f.minAmount || f.maxAmount) count++;
+    if (f.quick !== "open" && f.quick !== "all") count++;
+    return count;
+  }
+  function igToolbarHTML() {
+    var f = state.upcoming, count = igGridFilterCount();
+    return '<div class="ig-toolbar">' +
+      '<div class="ig-toolbar-group">' +
+        '<button class="ig-tbtn" data-x97-action="grid-undo" title="Undo"' + (gridState.undoStack.length ? "" : " disabled") + '>' + icon("undo", 16) + '</button>' +
+        '<button class="ig-tbtn" data-x97-action="grid-redo" title="Redo"' + (gridState.redoStack.length ? "" : " disabled") + '>' + icon("redo", 16) + '</button>' +
+        '<span class="ig-tsep"></span>' +
+        '<button class="ig-tbtn" data-x97-action="grid-add-row" title="Add row">' + icon("plus", 16) + '<span class="ig-tlabel">Row</span></button>' +
+      '</div>' +
+      '<div class="ig-toolbar-search"><span class="ig-search-ic">' + icon("search", 15) + '</span><input id="x97-up-search" autocomplete="off" placeholder="Search Incoming" value="' + attr(f.search) + '"></div>' +
+      '<div class="ig-toolbar-group">' +
+        '<button class="ig-tbtn" data-x97-action="open-grid-filters" title="Filter"><span class="ig-tbtn-badge-wrap">' + icon("filter", 16) + (count ? '<b class="ig-tbadge">' + count + '</b>' : "") + '</span><span class="ig-tlabel">Filter</span></button>' +
+        '<button class="ig-tbtn" data-x97-action="open-grid-columns" title="Columns">' + icon("columns", 16) + '</button>' +
+        '<button class="ig-tbtn" data-x97-action="open-grid-more" title="More">' + icon("dots", 16) + '</button>' +
+      '</div>' +
+    '</div>';
+  }
+  function igQuickViewsHTML(stats) {
     var f = state.upcoming;
+    function chip(key, label, count) {
+      return '<button class="ig-quick' + (f.quick === key ? " on" : "") + '" data-x97-action="quick-filter" data-value="' + attr(key) + '">' + esc(label) + (count != null ? ' <b>' + count + '</b>' : "") + '</button>';
+    }
+    return '<div class="ig-quickviews">' + chip("all", "All") + chip("open", "Outstanding", stats.open.length) + chip("overdue", "Overdue", stats.overdue.length) + chip("next7", "Due soon", stats.due7.length) + chip("paid", "Paid") + '</div>';
+  }
+  function igStatusBarHTML(filteredCount, totalCount, stats) {
+    return '<div class="ig-statusbar"><span>' + filteredCount + ' of ' + totalCount + ' row' + (totalCount === 1 ? "" : "s") + '</span><span class="ig-statusbar-sep">·</span><span>Outstanding ' + esc(money(stats.outstandingUGX, "UGX", true)) + (stats.outstandingUSD ? " + " + esc(money(stats.outstandingUSD, "USD", true)) : "") + '</span></div>';
+  }
+
+  function renderUpcoming(doc) {
+    igSyncPersisted();
     var all = doc.followups || [];
     var filtered = sortFollowups(all.filter(function (item) { return followupMatches(item, doc); }), doc);
-    var pending = filtered.filter(isOpenFollowup);
     var stats = collectionStats(doc);
-    var months = availableMonths(doc);
-    var headline = stats.overdue.length
-      ? stats.overdue.length + " overdue payment" + (stats.overdue.length === 1 ? " needs" : "s need") + " chasing now"
-      : stats.due7.length
-        ? stats.due7.length + " payment" + (stats.due7.length === 1 ? " is" : "s are") + " due in the next 7 days"
-        : stats.unscheduled.length
-          ? stats.unscheduled.length + " open deal" + (stats.unscheduled.length === 1 ? " needs" : "s need") + " a collection date"
-          : "Your collection queue is clear";
-    var sortLabel = ({ urgency: "priority", dateAsc: "earliest date", dateDesc: "latest date", amountDesc: "highest balance", amountAsc: "lowest balance", client: "client name" })[f.sort] || f.sort;
-    var content;
-    if (f.view === "months") {
-      var cards = months.map(function (key) {
-        var m = monthSummary(doc, key);
-        if (!m.records.length && key < monthKey(todayDate())) return "";
-        var ratio = m.records.length ? Math.round(m.paid.length / m.records.length * 100) : 0;
-        return '<button class="x97-month-card x97-card" style="text-align:left;width:100%" data-x97-action="open-month" data-month="' + attr(key) + '"><div class="x97-month-head"><div><div class="x97-month-title">' + esc(monthLabel(key)) + '</div><div class="x97-month-count">' + m.pending.length + ' pending · ' + m.paid.length + ' paid · ' + m.attention + ' need attention</div></div>' + icon("chevron") + '</div><div class="x97-month-money"><div><span>UGX pending</span><b class="x97-green">' + money(m.ugx, "UGX", true) + '</b></div><div><span>USD pending</span><b class="x97-teal">' + money(m.usd, "USD", true) + '</b></div></div><div class="x97-progress"><i style="width:' + ratio + '%"></i></div></button>';
-      }).join("");
-      var uns = monthSummary(doc, "unscheduled");
-      if (uns.records.length) cards += '<button class="x97-month-card x97-card" style="text-align:left;width:100%" data-x97-action="open-month" data-month="unscheduled"><div class="x97-month-head"><div><div class="x97-month-title">Unscheduled</div><div class="x97-month-count">' + uns.pending.length + ' items need dates</div></div>' + icon("chevron") + '</div><div class="x97-month-money"><div><span>UGX pending</span><b>' + money(uns.ugx, "UGX", true) + '</b></div><div><span>USD pending</span><b class="x97-teal">' + money(uns.usd, "USD", true) + '</b></div></div></button>';
-      content = '<div class="x97-grid x97-grid-2">' + cards + '</div>';
-    } else {
-      var groups = groupFollowups(filtered, doc);
-      var specs = [
-        ["overdue","Overdue"],["today","Due today"],["soon","Due soon"],["unscheduled","Unscheduled"],["later","Later"],["paid","Paid"],["cancelled","Cancelled"]
-      ];
-      content = specs.map(function (spec) {
-        var items = groups[spec[0]];
-        if (!items.length) return "";
-        return '<div class="x97-group"><b>' + esc(spec[1]) + '</b><span>' + items.length + ' item' + (items.length === 1 ? "" : "s") + '</span></div>' + items.map(function (item) { return upcomingCard(item, doc); }).join("");
-      }).join("");
-      if (!content) content = '<div class="x97-card x97-empty">' + icon("search", 26) + '<strong>No deals in this view</strong><p>Choose Open, Everything, or clear the filters to see more.</p><button class="x97-btn primary" style="margin-top:14px" data-x97-action="add-upcoming">' + icon("plus") + ' Add incoming deal</button></div>';
-    }
+    var rows = igBuildRows(doc, filtered);
+    gridState.rows = rows;
+    gridState.order = rows.map(function (r) { return r.id; });
+    gridState.byId = {};
+    rows.forEach(function (r) { gridState.byId[r.id] = r; });
+    if (gridState.active && !gridState.byId[gridState.active.rowId]) gridState.active = null;
+    if (gridState.editing && !gridState.byId[gridState.editing.rowId]) gridState.editing = null;
 
-    root.innerHTML = '<div class="x97-page">' +
-      pageHeader("Collections", "Incoming", "See who owes what, chase it, and record money without digging.", '<button class="x97-icon-btn x97-add-primary" data-x97-action="add-upcoming" title="Add incoming deal">' + icon("plus") + '<span>Add deal</span></button>') +
-      '<section class="x97-collection-command"><div class="x97-collection-command-top"><div><div class="x97-collection-kicker">Outstanding now</div><div class="x97-collection-total x97-money">' + money(stats.outstandingUGX, "UGX", true) + '</div><div class="x97-collection-usd x97-money">' + money(stats.outstandingUSD, "USD", true) + '</div></div><div class="x97-collection-signal"><i></i><span>Live calculation</span></div></div><p>' + esc(headline) + '</p><div class="x97-collection-focus">' +
-        '<button class="' + (f.quick === "overdue" ? "on danger" : "") + '" data-x97-action="quick-filter" data-value="overdue"><small>Overdue</small><b>' + stats.overdue.length + '</b><span>' + esc(money(stats.overdueUGX, "UGX", true)) + (stats.overdueUSD ? " · " + esc(money(stats.overdueUSD, "USD", true)) : "") + '</span></button>' +
-        '<button class="' + (f.quick === "next7" ? "on" : "") + '" data-x97-action="quick-filter" data-value="next7"><small>Next 7 days</small><b>' + stats.due7.length + '</b><span>' + esc(money(stats.due7UGX, "UGX", true)) + (stats.due7USD ? " · " + esc(money(stats.due7USD, "USD", true)) : "") + '</span></button>' +
-        '<button class="' + (f.quick === "unscheduled" ? "on warn" : "") + '" data-x97-action="quick-filter" data-value="unscheduled"><small>No date</small><b>' + stats.unscheduled.length + '</b><span>Needs scheduling</span></button>' +
-      '</div></section>' +
-      '<div class="x97-segment"><button class="' + (f.view === "list" ? "on" : "") + '" data-x97-action="upcoming-view" data-value="list">' + icon("list", 15) + ' List</button><button class="' + (f.view === "months" ? "on" : "") + '" data-x97-action="upcoming-view" data-value="months">' + icon("grid", 15) + ' Months</button></div>' +
-      (f.view === "list" ? '<div class="x97-tools"><div class="x97-search">' + icon("search", 17) + '<input id="x97-up-search" autocomplete="off" placeholder="Search client or deal" value="' + attr(f.search) + '"></div><button class="x97-icon-btn" data-x97-action="open-filters">' + icon("filter") + '<span>Filters</span>' + (activeFilterCount() ? '<b class="x97-badge-count">' + activeFilterCount() + '</b>' : '') + '</button></div><div class="x97-chips x97-core-filters">' + quickChip("open","Open") + quickChip("attention","Needs action",true) + quickChip("next7","Due in 7 days") + quickChip("paid","Paid") + quickChip("all","Everything") + '</div>' + filterTagHTML() + '<div class="x97-count"><b>' + filtered.length + '</b> deal' + (filtered.length === 1 ? "" : "s") + ' shown · <b>' + pending.length + '</b> open · sorted by ' + esc(sortLabel) + '</div>' : '<div class="x97-count">Rolling monthly view · tap a month to open its collection queue</div>') +
-      content +
-      '<button class="x97-fab" data-x97-action="add-upcoming" aria-label="Add upcoming">' + icon("plus", 25) + '</button></div>';
+    var clientNames = Array.from(new Set(all.map(function (x) { return x.client; }).filter(Boolean))).sort();
+    var datalist = '<datalist id="ig-client-list">' + clientNames.map(function (n) { return '<option value="' + attr(n) + '">'; }).join("") + '</datalist>';
+    var bodyRows = rows.length ? rows.map(igRowHTML).join("") : "";
+    var empty = rows.length ? "" : '<div class="ig-empty">' + icon("search", 24) + '<strong>No rows in this view</strong><p>Clear filters or add a row to get started.</p><button class="x97-btn primary" data-x97-action="grid-add-row">' + icon("plus") + ' Add row</button></div>';
+
+    root.innerHTML = '<div class="ig-shell">' +
+      pageHeader("Collections", "Incoming", "", '<button class="x97-icon-btn x97-add-primary" data-x97-action="grid-add-row" title="Add row">' + icon("plus") + '<span>Add row</span></button>') +
+      igToolbarHTML() +
+      igQuickViewsHTML(stats) +
+      (activeFilterCount() ? '<div class="ig-filterchips">' + filterTagHTML() + '</div>' : "") +
+      igFormulaBarHTML() +
+      '<div class="ig-gridwrap" id="ig-gridwrap"><div class="ig-scroll" id="ig-scroll" tabindex="0" role="grid" aria-rowcount="' + rows.length + '" aria-label="Incoming receivables">' +
+        '<div class="ig-grid-inner" id="ig-grid-inner" style="--ig-tpl:' + igTemplate() + '">' + igHeaderHTML() + '<div class="ig-body" id="ig-body">' + bodyRows + '</div></div>' +
+        empty +
+      '</div></div>' +
+      igStatusBarHTML(filtered.length, all.length, stats) +
+      datalist +
+    '</div>';
+
+    mountIncomingGrid();
+  }
+
+  /* ── Grid interaction controller ─────────────────────────────────────── */
+
+  function igIndexDom(body) {
+    gridState.rowEls = {}; gridState.cellEls = {};
+    Array.prototype.slice.call(body.children).forEach(function (rowEl) {
+      var rid = rowEl.getAttribute("data-row-id");
+      gridState.rowEls[rid] = rowEl;
+      var map = {};
+      Array.prototype.slice.call(rowEl.children).forEach(function (cellEl) {
+        map[cellEl.getAttribute("data-col") || "__rownum"] = cellEl;
+      });
+      gridState.cellEls[rid] = map;
+    });
+  }
+
+  function igColLabel(key) { var c = igColDef(key); return c ? c.label : key; }
+
+  function igClearActiveClasses() {
+    (gridState.selEls || []).forEach(function (el) { el.classList.remove("ig-in-range"); });
+    if (gridState.activeEl) gridState.activeEl.classList.remove("ig-active");
+    if (gridState.activeRowEl) gridState.activeRowEl.classList.remove("ig-row-active");
+    if (gridState.activeHeadEl) gridState.activeHeadEl.classList.remove("ig-col-active");
+    gridState.selEls = []; gridState.activeEl = null; gridState.activeRowEl = null; gridState.activeHeadEl = null;
+  }
+
+  function igRangeBounds() {
+    if (!gridState.active) return null;
+    var a = gridState.anchor || gridState.active;
+    var cols = igVisibleCols().map(function (c) { return c.key; });
+    var ai = cols.indexOf(a.col), fi = cols.indexOf(gridState.active.col);
+    var ri = gridState.order.indexOf(a.rowId), fr = gridState.order.indexOf(gridState.active.rowId);
+    if (ai < 0 || fi < 0 || ri < 0 || fr < 0) return null;
+    return { c0: Math.min(ai, fi), c1: Math.max(ai, fi), r0: Math.min(ri, fr), r1: Math.max(ri, fr), cols: cols };
+  }
+
+  function igUpdateFormulaBar() {
+    var ref = document.getElementById("ig-cell-ref"), input = document.getElementById("ig-formula-input");
+    if (!ref || !input) return;
+    if (!gridState.active) { ref.textContent = "—"; input.value = ""; input.disabled = true; input.placeholder = "Select a cell"; return; }
+    var row = gridState.byId[gridState.active.rowId], col = igColDef(gridState.active.col);
+    if (!row || !col) return;
+    ref.textContent = (row.client || "Row " + row.index) + " · " + col.label;
+    var editable = igEditable(col, row);
+    input.disabled = !editable;
+    input.placeholder = editable ? "Type to edit, Enter to commit" : (col.action ? "Click the cell to open" : "Locked — edit via the deal");
+    if (document.activeElement !== input) input.value = igRawValue(row, col.key);
+  }
+
+  function igPaintActive() {
+    igClearActiveClasses();
+    if (!gridState.active || !gridState.byId[gridState.active.rowId]) { igUpdateFormulaBar(); return; }
+    var bounds = igRangeBounds();
+    if (bounds) {
+      for (var r = bounds.r0; r <= bounds.r1; r++) {
+        var rid = gridState.order[r];
+        for (var c = bounds.c0; c <= bounds.c1; c++) {
+          var el = gridState.cellEls[rid] && gridState.cellEls[rid][bounds.cols[c]];
+          if (el) { el.classList.add("ig-in-range"); gridState.selEls.push(el); }
+        }
+      }
+    }
+    var activeEl = gridState.cellEls[gridState.active.rowId] && gridState.cellEls[gridState.active.rowId][gridState.active.col];
+    if (activeEl) { activeEl.classList.add("ig-active"); gridState.activeEl = activeEl; }
+    var rowEl = gridState.rowEls[gridState.active.rowId];
+    if (rowEl) { rowEl.classList.add("ig-row-active"); gridState.activeRowEl = rowEl; }
+    var headEl = document.querySelector('.ig-colhead[data-colhead="' + gridState.active.col + '"]');
+    if (headEl) { headEl.classList.add("ig-col-active"); gridState.activeHeadEl = headEl; }
+    igUpdateFormulaBar();
+  }
+
+  function igScrollCellIntoView(rowId, col) {
+    var el = gridState.cellEls[rowId] && gridState.cellEls[rowId][col];
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
+  function igSetActive(rowId, col, opts) {
+    opts = opts || {};
+    if (gridState.editing && !(gridState.editing.rowId === rowId && gridState.editing.col === col)) igCommitEdit();
+    if (!opts.extend) gridState.anchor = { rowId: rowId, col: col };
+    gridState.active = { rowId: rowId, col: col };
+    igPaintActive();
+    if (!opts.silent) igScrollCellIntoView(rowId, col);
+  }
+
+  function igSelectCellFromEl(cell, extend) {
+    var rowId = cell.getAttribute("data-row"), col = cell.getAttribute("data-col");
+    if (!rowId || !col) return;
+    igSetActive(rowId, col, { extend: extend });
+  }
+
+  function igMoveAfterCommit(direction) {
+    if (!gridState.active) return;
+    var cols = igVisibleCols().map(function (c) { return c.key; });
+    var ci = cols.indexOf(gridState.active.col), ri = gridState.order.indexOf(gridState.active.rowId);
+    if (direction === "auto") direction = gridState.quickEntry === gridState.active.rowId ? "right" : "down";
+    if (direction === "down") ri = Math.min(gridState.order.length - 1, ri + 1);
+    else if (direction === "up") ri = Math.max(0, ri - 1);
+    else if (direction === "right") ci = Math.min(cols.length - 1, ci + 1);
+    else if (direction === "left") ci = Math.max(0, ci - 1);
+    var rid = gridState.order[ri], key = cols[ci];
+    if (rid && key) igSetActive(rid, key);
+  }
+  function igStep(extend, dr, dc) {
+    if (!gridState.active) return;
+    var cols = igVisibleCols().map(function (c) { return c.key; });
+    var base = gridState.active;
+    var ci = Math.max(0, Math.min(cols.length - 1, cols.indexOf(base.col) + dc));
+    var ri = Math.max(0, Math.min(gridState.order.length - 1, gridState.order.indexOf(base.rowId) + dr));
+    var rid = gridState.order[ri], key = cols[ci];
+    if (rid && key) igSetActive(rid, key, { extend: extend });
+  }
+
+  function igRepaintCell(rowId, colKey) {
+    var row = gridState.byId[rowId], col = igColDef(colKey), cell = gridState.cellEls[rowId] && gridState.cellEls[rowId][colKey];
+    if (!row || !col || !cell) return;
+    cell.classList.remove("ig-editing");
+    cell.className = igCellClass(col, row);
+    cell.title = igCellText(col, row);
+    cell.innerHTML = igCellInner(col, row);
+    if (gridState.active && gridState.active.rowId === rowId && gridState.active.col === colKey) cell.classList.add("ig-active");
+  }
+
+  function igFlushPendingExternalRender() {
+    if (gridState.pendingExternalRender) { gridState.pendingExternalRender = false; scheduleRender(0); }
+  }
+
+  function igMutateField(doc, item, colKey, value) {
+    if (colKey === "client") { item.client = String(value || "").trim(); return true; }
+    if (colKey === "category") { item.category = String(value || "").trim() || "One Time"; return true; }
+    if (colKey === "phone") { item.phone = String(value || "").trim(); return true; }
+    if (colKey === "note") { item.note = String(value || "").trim(); return true; }
+    if (colKey === "currency") { if (dealHasRecordedMoney(item)) return false; item.currency = String(value || "UGX").toUpperCase(); return true; }
+    if (colKey === "gross") {
+      if (isDeal(item) || dealHasRecordedMoney(item)) return false;
+      var g = roundMoney(value);
+      if (g <= 0) return false;
+      item.gross = g; item.paid = paidOf(item); item.amount = roundMoney(Math.max(0, g - item.paid));
+      return true;
+    }
+    if (colKey === "due") {
+      if (dealHasRecordedMoney(item)) return false;
+      if (Array.isArray(item.parts) && item.parts.length) { item.parts[0].dueDate = value; rebuildDealParts(doc, item); }
+      else item.expectedBy = value;
+      return true;
+    }
+    return false;
+  }
+  function igApplyCellValue(rowId, colKey, value) {
+    var applied = true;
+    updateDoc(function (doc) {
+      var item = (doc.followups || []).find(function (x) { return String(x.id) === String(rowId); });
+      if (!item) { applied = false; return; }
+      applied = igMutateField(doc, item, colKey, value);
+    }, "grid-edit", true);
+    return applied;
+  }
+
+  function igPushUndo(rowId) {
+    var doc = readDoc();
+    var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(rowId); });
+    gridState.undoStack.push({ rowId: rowId, snapshot: item ? clone(item) : null, existed: !!item });
+    if (gridState.undoStack.length > 50) gridState.undoStack.shift();
+    gridState.redoStack = [];
+  }
+  function igRestoreSnapshot(entry) {
+    updateDoc(function (d) {
+      var idx = d.followups.findIndex(function (x) { return String(x.id) === String(entry.rowId); });
+      if (entry.existed) { if (idx >= 0) d.followups[idx] = entry.snapshot; else d.followups.unshift(entry.snapshot); }
+      else if (idx >= 0) d.followups.splice(idx, 1);
+    }, "grid-undo", true);
+  }
+  function igUndo() {
+    var entry = gridState.undoStack.pop();
+    if (!entry) return;
+    var doc = readDoc(), i = doc.followups.findIndex(function (x) { return String(x.id) === String(entry.rowId); });
+    gridState.redoStack.push({ rowId: entry.rowId, snapshot: i >= 0 ? clone(doc.followups[i]) : null, existed: i >= 0 });
+    igRestoreSnapshot(entry);
+  }
+  function igRedo() {
+    var entry = gridState.redoStack.pop();
+    if (!entry) return;
+    igRestoreSnapshot(entry);
+  }
+
+  function igBeginEdit(rowId, colKey) {
+    var row = gridState.byId[rowId], col = igColDef(colKey);
+    if (!row || !col || !igEditable(col, row)) return;
+    if (gridState.editing) igCommitEdit();
+    var cell = gridState.cellEls[rowId] && gridState.cellEls[rowId][colKey];
+    if (!cell) return;
+    gridState.editing = { rowId: rowId, col: colKey };
+    var value = igRawValue(row, colKey), inputHTML;
+    if (colKey === "currency") inputHTML = '<select class="ig-edit-input">' + option("UGX", "UGX", value) + option("USD", "USD", value) + '</select>';
+    else if (colKey === "due") inputHTML = '<input class="ig-edit-input" type="date" value="' + attr(value) + '">';
+    else if (colKey === "gross") inputHTML = '<input class="ig-edit-input ig-edit-num" type="number" inputmode="decimal" min="0" step="1" value="' + attr(value) + '">';
+    else if (colKey === "phone") inputHTML = '<input class="ig-edit-input" type="text" inputmode="tel" value="' + attr(value) + '">';
+    else if (colKey === "client") inputHTML = '<input class="ig-edit-input" type="text" list="ig-client-list" value="' + attr(value) + '">';
+    else inputHTML = '<input class="ig-edit-input" type="text" value="' + attr(value) + '">';
+    cell.classList.add("ig-editing");
+    cell.innerHTML = inputHTML;
+    var input = cell.querySelector(".ig-edit-input");
+    input.setAttribute("enterkeyhint", gridState.quickEntry === rowId ? "next" : "done");
+    input.addEventListener("keydown", igEditKeydown);
+    input.addEventListener("blur", igEditBlur);
+    setTimeout(function () { input.focus(); if (input.select) input.select(); }, 0);
+  }
+  function igEditKeydown(e) {
+    if (e.key === "Enter") { e.preventDefault(); igCommitEdit(); igMoveAfterCommit(e.shiftKey ? "up" : "auto"); }
+    else if (e.key === "Tab") { e.preventDefault(); igCommitEdit(); igMoveAfterCommit(e.shiftKey ? "left" : "right"); }
+    else if (e.key === "Escape") { e.preventDefault(); igCancelEdit(); }
+  }
+  function igEditBlur() { if (gridState.editing) igCommitEdit(); }
+  function igCancelEdit() {
+    if (!gridState.editing) return;
+    var e = gridState.editing; gridState.editing = null;
+    igRepaintCell(e.rowId, e.col);
+    igFlushPendingExternalRender();
+  }
+  function igCommitEdit() {
+    if (!gridState.editing) return;
+    var e = gridState.editing, rowId = e.rowId, colKey = e.col;
+    var cell = gridState.cellEls[rowId] && gridState.cellEls[rowId][colKey];
+    var input = cell && cell.querySelector(".ig-edit-input");
+    var value = input ? input.value : "";
+    gridState.editing = null;
+    var row = gridState.byId[rowId], col = igColDef(colKey);
+    if (!row || !col) return;
+    if (String(value).trim() === String(igRawValue(row, colKey)).trim()) { igRepaintCell(rowId, colKey); igFlushPendingExternalRender(); return; }
+    igPushUndo(rowId);
+    var ok = igApplyCellValue(rowId, colKey, value);
+    if (!ok) { gridState.undoStack.pop(); igRepaintCell(rowId, colKey); toast(colKey === "gross" ? "Enter the deal total, or edit structure in Details" : "That field is locked", "error"); }
+  }
+
+  function igRunCellAction(key, row) {
+    if (key === "paid" || key === "balance") { if (row.open) openPaymentForm(row.id); else toast("This deal is already settled", "success"); return; }
+    if (key === "structure") { openUpcomingForm(row.id); return; }
+    if (key === "status") { igOpenStatusMenu(row); return; }
+  }
+  function igActivateCell(rowId, colKey, wantsEdit) {
+    var row = gridState.byId[rowId], col = igColDef(colKey);
+    if (!row || !col) return;
+    igSetActive(rowId, colKey);
+    if (col.action) { igRunCellAction(col.key, row); return; }
+    if (wantsEdit && igEditable(col, row)) igBeginEdit(rowId, colKey);
+  }
+
+  function igAddRow() {
+    var doc = readDoc();
+    var categories = (doc.settings && doc.settings.categories) || [];
+    var id = uid("fu");
+    igPushUndo(id);
+    updateDoc(function (d) {
+      d.followups.unshift({ id: id, client: "", category: categories[0] || "One Time", gross: 0, paid: 0, amount: 0, currency: "UGX", status: "Pending", expectedBy: "", phone: "", note: "" });
+    }, "grid-add-row", true);
+    gridState.quickEntry = id;
+    gridState.pendingFocusRow = id;
+  }
+  function igDeleteRow(rowId) {
+    var doc = readDoc(), item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(rowId); });
+    if (!item) return;
+    if (dealHasRecordedMoney(item)) { toast("A deal with recorded money cannot be deleted", "error"); return; }
+    if (!confirm('Delete this row? "' + (item.client || "Untitled") + '"')) return;
+    igPushUndo(rowId);
+    updateDoc(function (d) { d.followups = d.followups.filter(function (x) { return String(x.id) !== String(rowId); }); }, "grid-delete-row", true);
+    if (gridState.active && gridState.active.rowId === rowId) gridState.active = null;
+    toast("Row deleted", "success");
+  }
+
+  function igClearableKeys() { return { category: 1, phone: 1, note: 1, due: 1 }; }
+  function igClearSelectionValues() {
+    var bounds = igRangeBounds();
+    if (!bounds) return;
+    var clearable = igClearableKeys(), plan = [], seen = {};
+    for (var c = bounds.c0; c <= bounds.c1; c++) {
+      var key = bounds.cols[c];
+      if (!clearable[key]) continue;
+      for (var r = bounds.r0; r <= bounds.r1; r++) {
+        var rid = gridState.order[r];
+        if (!gridState.byId[rid]) continue;
+        plan.push({ rowId: rid, key: key }); seen[rid] = true;
+      }
+    }
+    if (!plan.length) return;
+    Object.keys(seen).forEach(function (rid) { igPushUndo(rid); });
+    updateDoc(function (doc) {
+      var byId = {}; (doc.followups || []).forEach(function (it) { byId[it.id] = it; });
+      plan.forEach(function (p) { var item = byId[p.rowId]; if (item) igMutateField(doc, item, p.key, ""); });
+    }, "grid-clear", true);
+  }
+
+  function igCopySelection() {
+    var bounds = igRangeBounds();
+    if (!bounds) return;
+    var lines = [];
+    for (var r = bounds.r0; r <= bounds.r1; r++) {
+      var row = gridState.byId[gridState.order[r]], vals = [];
+      for (var c = bounds.c0; c <= bounds.c1; c++) vals.push(igCellText(igColDef(bounds.cols[c]), row));
+      lines.push(vals.join("\t"));
+    }
+    var text = lines.join("\n");
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { toast("Copied", "success"); }, function () { igFallbackCopy(text); });
+    else igFallbackCopy(text);
+  }
+  function igFallbackCopy(text) {
+    var ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); toast("Copied", "success"); } catch (_) {}
+    document.body.removeChild(ta);
+  }
+  function igPasteClipboard() {
+    if (!gridState.active) return;
+    if (!navigator.clipboard || !navigator.clipboard.readText) { toast("Use your device's paste gesture on the field", "error"); return; }
+    navigator.clipboard.readText().then(function (text) {
+      if (!text) return;
+      var lines = text.replace(/\r/g, "").split("\n"); if (lines.length && lines[lines.length - 1] === "") lines.pop();
+      var cols = igVisibleCols().map(function (c) { return c.key; });
+      var ci0 = cols.indexOf(gridState.active.col), ri0 = gridState.order.indexOf(gridState.active.rowId), plan = [], touched = {};
+      lines.forEach(function (line, r) {
+        var rid = gridState.order[ri0 + r];
+        if (!rid) return;
+        line.split("\t").forEach(function (val, c) {
+          var key = cols[ci0 + c];
+          if (!key) return;
+          var col = igColDef(key), row = gridState.byId[rid];
+          if (!col || !row || !igEditable(col, row)) return;
+          touched[rid] = true;
+          plan.push({ rowId: rid, key: key, value: val });
+        });
+      });
+      if (!plan.length) return;
+      Object.keys(touched).forEach(function (rid) { igPushUndo(rid); });
+      updateDoc(function (doc) {
+        var byId = {}; (doc.followups || []).forEach(function (it) { byId[it.id] = it; });
+        plan.forEach(function (p) { var item = byId[p.rowId]; if (item) igMutateField(doc, item, p.key, p.value); });
+      }, "grid-paste", true);
+      toast("Pasted " + plan.length + " cell" + (plan.length === 1 ? "" : "s"), "success");
+    }, function () { toast("Clipboard permission was blocked", "error"); });
+  }
+
+  function igCloseMenu() {
+    if (gridState.menuEl) { gridState.menuEl.remove(); gridState.menuEl = null; }
+    document.removeEventListener("mousedown", igMenuOutsideClick, true);
+  }
+  function igMenuOutsideClick(e) { if (gridState.menuEl && !gridState.menuEl.contains(e.target)) igCloseMenu(); }
+  function igPlaceMenu(menu, x, y) {
+    document.body.appendChild(menu);
+    var vw = window.innerWidth, vh = window.innerHeight, mw = menu.offsetWidth || 180, mh = menu.offsetHeight || 160;
+    menu.style.left = Math.max(6, Math.min(x, vw - mw - 6)) + "px";
+    menu.style.top = Math.max(6, Math.min(y, vh - mh - 6)) + "px";
+    gridState.menuEl = menu;
+    setTimeout(function () { document.addEventListener("mousedown", igMenuOutsideClick, true); }, 0);
+  }
+  function igOpenCellMenuAt(x, y, rowId) {
+    igCloseMenu();
+    var row = gridState.byId[rowId];
+    if (!row) return;
+    var menu = document.createElement("div");
+    menu.className = "ig-menu";
+    var items = [
+      { label: "Copy", action: "copy" }, { label: "Paste", action: "paste" }, { label: "Clear", action: "clear" },
+      { label: row.open ? "Record payment" : "View payment history", action: "pay" },
+      { label: "Open deal details", action: "open" },
+      { label: "Delete row", action: "delete", danger: !row.locked, disabled: row.locked }
+    ];
+    menu.innerHTML = items.map(function (it) { return '<button class="ig-menu-item' + (it.danger ? " danger" : "") + '" data-menu="' + it.action + '"' + (it.disabled ? " disabled" : "") + '>' + esc(it.label) + '</button>'; }).join("");
+    menu.addEventListener("click", function (e) {
+      var btn = e.target.closest && e.target.closest(".ig-menu-item");
+      if (!btn) return;
+      var act = btn.getAttribute("data-menu"); igCloseMenu();
+      if (act === "copy") igCopySelection();
+      else if (act === "paste") igPasteClipboard();
+      else if (act === "clear") igClearSelectionValues();
+      else if (act === "pay") { if (row.open) openPaymentForm(row.id); else openUpcomingForm(row.id); }
+      else if (act === "open") openUpcomingForm(row.id);
+      else if (act === "delete") igDeleteRow(row.id);
+    });
+    igPlaceMenu(menu, x, y);
+  }
+  function igOpenCellMenu(cellEl) {
+    var rect = cellEl.getBoundingClientRect();
+    var rowId = cellEl.getAttribute("data-row") || cellEl.getAttribute("data-rownum");
+    igOpenCellMenuAt(rect.left, rect.bottom, rowId);
+  }
+  function igOpenStatusMenu(row) {
+    igCloseMenu();
+    var cell = gridState.cellEls[row.id] && gridState.cellEls[row.id].status;
+    if (!cell) return;
+    var rect = cell.getBoundingClientRect();
+    var menu = document.createElement("div");
+    menu.className = "ig-menu";
+    var items = [];
+    if (row.open) items.push({ label: "Record payment", action: "pay" }, { label: "Cancel deal", action: "cancel" });
+    else if (row.status === "Cancelled") items.push({ label: "Reopen as Pending", action: "reopen" });
+    else items.push({ label: "View payment history", action: "pay" });
+    items.push({ label: "Open deal details", action: "open" });
+    menu.innerHTML = items.map(function (it) { return '<button class="ig-menu-item" data-menu="' + it.action + '">' + esc(it.label) + '</button>'; }).join("");
+    menu.addEventListener("click", function (e) {
+      var btn = e.target.closest && e.target.closest(".ig-menu-item"); if (!btn) return;
+      var act = btn.getAttribute("data-menu"); igCloseMenu();
+      if (act === "pay") openPaymentForm(row.id);
+      else if (act === "open") openUpcomingForm(row.id);
+      else if (act === "cancel") { igPushUndo(row.id); updateDoc(function (doc) { var it = (doc.followups || []).find(function (x) { return String(x.id) === String(row.id); }); if (it) it.status = "Cancelled"; }, "grid-cancel", true); }
+      else if (act === "reopen") { igPushUndo(row.id); updateDoc(function (doc) { var it = (doc.followups || []).find(function (x) { return String(x.id) === String(row.id); }); if (it) it.status = paidOf(it) > 0 ? "Part Paid" : "Pending"; }, "grid-reopen", true); }
+    });
+    igPlaceMenu(menu, rect.left, rect.bottom + 4);
+  }
+
+  function igOnClick(e) {
+    var rownum = e.target.closest && e.target.closest(".ig-rownum:not(.ig-colhead)");
+    if (rownum) {
+      var rid = rownum.getAttribute("data-rownum"), cols = igVisibleCols();
+      if (cols.length) { gridState.anchor = { rowId: rid, col: cols[0].key }; gridState.active = { rowId: rid, col: cols[cols.length - 1].key }; igPaintActive(); }
+      return;
+    }
+    var colhead = e.target.closest && e.target.closest(".ig-colhead:not(.ig-rownum)");
+    if (colhead && !(e.target.closest && e.target.closest(".ig-resize"))) {
+      var key = colhead.getAttribute("data-colhead");
+      if (key && gridState.order.length) { gridState.anchor = { rowId: gridState.order[0], col: key }; gridState.active = { rowId: gridState.order[gridState.order.length - 1], col: key }; igPaintActive(); }
+    }
+  }
+  function igOnDblClick(e) {
+    var cell = e.target.closest && e.target.closest(".ig-cell:not(.ig-rownum):not(.ig-colhead)");
+    if (!cell) return;
+    igActivateCell(cell.getAttribute("data-row"), cell.getAttribute("data-col"), true);
+  }
+  function igOnContextMenu(e) {
+    var cell = e.target.closest && e.target.closest(".ig-cell:not(.ig-colhead)");
+    if (!cell) return;
+    e.preventDefault();
+    var rowId = cell.getAttribute("data-row") || cell.getAttribute("data-rownum");
+    if (!rowId) return;
+    if (cell.hasAttribute("data-col")) igSelectCellFromEl(cell, false);
+    igOpenCellMenuAt(e.clientX, e.clientY, rowId);
+  }
+
+  function igWireCellEvents(scroll) {
+    scroll.addEventListener("click", igOnClick);
+    scroll.addEventListener("dblclick", igOnDblClick);
+    scroll.addEventListener("contextmenu", igOnContextMenu);
+    var dragging = false, lpTimer = null, lpFired = false, startX = 0, startY = 0, startCell = null;
+    scroll.addEventListener("pointerdown", function (e) {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      var cell = e.target.closest && e.target.closest(".ig-cell:not(.ig-colhead)");
+      if (!cell || gridState.editing) return;
+      startX = e.clientX; startY = e.clientY; startCell = cell; lpFired = false;
+      if (cell.classList.contains("ig-rownum")) return;
+      dragging = true;
+      igSelectCellFromEl(cell, !!e.shiftKey);
+      if (e.pointerType === "touch") {
+        clearTimeout(lpTimer);
+        lpTimer = setTimeout(function () { lpFired = true; dragging = false; igOpenCellMenu(cell); }, 520);
+      }
+    });
+    scroll.addEventListener("pointermove", function (e) {
+      if (!startCell) return;
+      if (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8) {
+        clearTimeout(lpTimer);
+        if (dragging && !lpFired) {
+          var el = document.elementFromPoint(e.clientX, e.clientY);
+          var overCell = el && el.closest && el.closest(".ig-cell:not(.ig-rownum):not(.ig-colhead)");
+          if (overCell) igSelectCellFromEl(overCell, true);
+        }
+      }
+    });
+    scroll.addEventListener("pointerup", function () { dragging = false; clearTimeout(lpTimer); startCell = null; });
+    scroll.addEventListener("pointercancel", function () { dragging = false; clearTimeout(lpTimer); startCell = null; });
+  }
+
+  function igWireResize(inner) {
+    Array.prototype.slice.call(inner.querySelectorAll(".ig-resize")).forEach(function (handle) {
+      handle.addEventListener("pointerdown", function (e) {
+        e.preventDefault(); e.stopPropagation();
+        var key = handle.getAttribute("data-resize"), startX = e.clientX, startW = igColWidth(key);
+        try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+        function onMove(ev) {
+          var col = igColDef(key);
+          gridState.widths[key] = Math.max(col.min, startW + (ev.clientX - startX));
+          inner.style.setProperty("--ig-tpl", igTemplate());
+        }
+        function onUp() { document.removeEventListener("pointermove", onMove); document.removeEventListener("pointerup", onUp); igSavePersistedWidths(); }
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+      });
+      handle.addEventListener("dblclick", function (e) {
+        e.stopPropagation();
+        delete gridState.widths[handle.getAttribute("data-resize")];
+        inner.style.setProperty("--ig-tpl", igTemplate());
+        igSavePersistedWidths();
+      });
+    });
+  }
+
+  function igWireFormulaBar() {
+    var input = document.getElementById("ig-formula-input");
+    if (!input) return;
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (!gridState.active || input.disabled) return;
+        var rowId = gridState.active.rowId, colKey = gridState.active.col, row = gridState.byId[rowId];
+        if (String(input.value).trim() !== String(igRawValue(row, colKey)).trim()) { igPushUndo(rowId); igApplyCellValue(rowId, colKey, input.value); }
+        igMoveAfterCommit("down");
+      } else if (e.key === "Escape") { e.preventDefault(); igUpdateFormulaBar(); input.blur(); }
+    });
+  }
+
+  function igWireKeyboard(scroll) {
+    scroll.addEventListener("keydown", function (e) {
+      if (gridState.editing) return;
+      if (!gridState.active) {
+        if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Enter"].indexOf(e.key) >= 0 && gridState.order.length) {
+          e.preventDefault();
+          igSetActive(gridState.order[0], igVisibleCols()[0].key);
+        }
+        return;
+      }
+      var mod = e.metaKey || e.ctrlKey;
+      if (mod && !e.shiftKey && (e.key === "c" || e.key === "C")) { e.preventDefault(); igCopySelection(); return; }
+      if (mod && !e.shiftKey && (e.key === "v" || e.key === "V")) { e.preventDefault(); igPasteClipboard(); return; }
+      if (mod && !e.shiftKey && (e.key === "x" || e.key === "X")) { e.preventDefault(); igCopySelection(); igClearSelectionValues(); return; }
+      if (mod && !e.shiftKey && (e.key === "z" || e.key === "Z")) { e.preventDefault(); igUndo(); return; }
+      if (mod && ((e.shiftKey && (e.key === "z" || e.key === "Z")) || e.key === "y" || e.key === "Y")) { e.preventDefault(); igRedo(); return; }
+      if (mod && (e.key === "f" || e.key === "F")) { e.preventDefault(); var s = document.getElementById("x97-up-search"); if (s) s.focus(); return; }
+      if (e.key === "ArrowDown") { e.preventDefault(); igStep(e.shiftKey, 1, 0); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); igStep(e.shiftKey, -1, 0); return; }
+      if (e.key === "ArrowLeft") { e.preventDefault(); igStep(e.shiftKey, 0, -1); return; }
+      if (e.key === "ArrowRight") { e.preventDefault(); igStep(e.shiftKey, 0, 1); return; }
+      if (e.key === "Tab") { e.preventDefault(); igMoveAfterCommit(e.shiftKey ? "left" : "right"); return; }
+      if (e.key === "Home") { e.preventDefault(); igSetActive(gridState.active.rowId, igVisibleCols()[0].key); return; }
+      if (e.key === "End") { var cs = igVisibleCols(); e.preventDefault(); igSetActive(gridState.active.rowId, cs[cs.length - 1].key); return; }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        var row = gridState.byId[gridState.active.rowId], col = igColDef(gridState.active.col);
+        if (col && col.action) igRunCellAction(col.key, row);
+        else if (col && igEditable(col, row)) igBeginEdit(gridState.active.rowId, gridState.active.col);
+        return;
+      }
+      if (e.key === "Escape") { igCloseMenu(); return; }
+      if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); igClearSelectionValues(); return; }
+      if (e.key.length === 1 && !mod && !e.altKey) {
+        var rrow = gridState.byId[gridState.active.rowId], rcol = igColDef(gridState.active.col);
+        if (rcol && igEditable(rcol, rrow) && rcol.key !== "due" && rcol.key !== "currency") {
+          igBeginEdit(gridState.active.rowId, gridState.active.col);
+          var rid = gridState.active.rowId, key = gridState.active.col, ch = e.key;
+          setTimeout(function () { var input = gridState.cellEls[rid] && gridState.cellEls[rid][key] && gridState.cellEls[rid][key].querySelector(".ig-edit-input"); if (input) input.value = ch; }, 0);
+        }
+      }
+    });
+  }
+
+  function mountIncomingGrid() {
+    var scroll = document.getElementById("ig-scroll");
+    if (!scroll) return;
+    var inner = document.getElementById("ig-grid-inner"), body = document.getElementById("ig-body");
+    igIndexDom(body);
+    scroll.scrollTop = gridState.scrollTop || 0;
+    scroll.scrollLeft = gridState.scrollLeft || 0;
+    scroll.addEventListener("scroll", function () { gridState.scrollTop = scroll.scrollTop; gridState.scrollLeft = scroll.scrollLeft; }, { passive: true });
+    if (!gridState.active && gridState.order.length) {
+      var cols0 = igVisibleCols();
+      if (cols0.length) { gridState.anchor = { rowId: gridState.order[0], col: cols0[0].key }; gridState.active = gridState.anchor; }
+    }
+    igWireCellEvents(scroll);
+    igWireResize(inner);
+    igWireKeyboard(scroll);
+    igWireFormulaBar();
+    igPaintActive();
+    if (gridState.pendingFocusRow && gridState.byId[gridState.pendingFocusRow]) {
+      var pfr = gridState.pendingFocusRow; gridState.pendingFocusRow = null;
+      igSetActive(pfr, "client");
+      setTimeout(function () { igBeginEdit(pfr, "client"); }, 30);
+    }
+    igFlushPendingExternalRender();
+  }
+
+  /* ── Filter sheet (mobile-first, live count) & columns panel ────────── */
+
+  function igFilterCount(doc) { return (doc.followups || []).filter(function (item) { return followupMatches(item, doc); }).length; }
+
+  function openGridFilters(doc) {
+    var f = state.upcoming;
+    var currencies = Array.from(new Set((doc.followups || []).map(function (x) { return String(x.currency || "UGX").toUpperCase(); }))).sort();
+    var categories = Array.from(new Set((doc.followups || []).map(function (x) { return String(x.category || ""); }))).filter(Boolean).sort();
+    function chip(kind, label, value, on) { return '<button type="button" class="ig-filter-chip' + (on ? " on" : "") + '" data-grid-filter="' + attr(kind) + '" data-value="' + attr(value) + '">' + esc(label) + '</button>'; }
+    var body = '<div class="ig-filter-sheet">' +
+      '<div class="ig-filter-section"><label>Status</label><div class="ig-filter-chiprow">' +
+        chip("status", "Paid", "Paid", f.statuses.indexOf("Paid") >= 0) + chip("status", "Partial", "Part Paid", f.statuses.indexOf("Part Paid") >= 0) + chip("status", "Unpaid", "Pending", f.statuses.indexOf("Pending") >= 0) + chip("status", "Cancelled", "Cancelled", f.statuses.indexOf("Cancelled") >= 0) +
+      '</div></div>' +
+      '<div class="ig-filter-section"><label>Due</label><div class="ig-filter-chiprow">' +
+        chip("due", "Overdue", "overdue", f.quick === "overdue") + chip("due", "Today", "today", f.quick === "today") + chip("due", "This week", "next7", f.quick === "next7") + chip("due", "This month", "thisMonth", f.quick === "thisMonth") + chip("due", "No date", "unscheduled", f.quick === "unscheduled") +
+      '</div></div>' +
+      (categories.length ? '<div class="ig-filter-section"><label>Category</label><div class="ig-filter-chiprow">' + categories.map(function (c) { return chip("category", c, c, f.categories.indexOf(c) >= 0); }).join("") + '</div></div>' : "") +
+      (currencies.length > 1 ? '<div class="ig-filter-section"><label>Currency</label><div class="ig-filter-chiprow">' + currencies.map(function (c) { return chip("currency", c, c, f.currencies.indexOf(c) >= 0); }).join("") + '</div></div>' : "") +
+      '<div class="ig-filter-section"><label>Client</label><input class="x97-input" id="ig-filter-client" placeholder="Search client…" value="' + attr(f.search) + '"></div>' +
+      '<div class="ig-filter-section x97-fields-2"><div>' + field("Min amount", '<input class="x97-input" id="ig-filter-min" type="number" min="0" value="' + attr(f.minAmount) + '" placeholder="0">') + '</div><div>' + field("Max amount", '<input class="x97-input" id="ig-filter-max" type="number" min="0" value="' + attr(f.maxAmount) + '" placeholder="No limit">') + '</div></div>' +
+    '</div>';
+    var foot = '<button class="x97-btn" data-x97-action="grid-filters-reset">Reset</button><button class="x97-btn primary" type="button" data-x97-action="grid-filters-apply">' + icon("check", 15) + ' <span id="ig-filter-count">Show ' + igFilterCount(doc) + ' rows</span></button>';
+    openSheet("Filter Incoming", body, foot, { afterOpen: function (back) {
+      function refreshCount() { var el = back.querySelector("#ig-filter-count"); if (el) el.textContent = "Show " + igFilterCount(readDoc()) + " rows"; }
+      back.addEventListener("click", function (e) {
+        var chipEl = e.target.closest && e.target.closest("[data-grid-filter]");
+        if (!chipEl) return;
+        var kind = chipEl.getAttribute("data-grid-filter"), value = chipEl.getAttribute("data-value");
+        if (kind === "status") {
+          var i = f.statuses.indexOf(value); if (i >= 0) f.statuses.splice(i, 1); else f.statuses.push(value); chipEl.classList.toggle("on");
+          if (f.statuses.length && (f.quick === "open" || f.quick === "attention")) {
+            f.quick = "all";
+            Array.prototype.slice.call(back.querySelectorAll('[data-grid-filter="due"]')).forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-value") === f.quick); });
+          }
+        }
+        else if (kind === "category") { var j = f.categories.indexOf(value); if (j >= 0) f.categories.splice(j, 1); else f.categories.push(value); chipEl.classList.toggle("on"); }
+        else if (kind === "currency") { var k = f.currencies.indexOf(value); if (k >= 0) f.currencies.splice(k, 1); else f.currencies.push(value); chipEl.classList.toggle("on"); }
+        else if (kind === "due") {
+          f.quick = f.quick === value ? "all" : value;
+          Array.prototype.slice.call(back.querySelectorAll('[data-grid-filter="due"]')).forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-value") === f.quick); });
+        }
+        refreshCount();
+      });
+      var minEl = back.querySelector("#ig-filter-min"), maxEl = back.querySelector("#ig-filter-max"), clientEl = back.querySelector("#ig-filter-client");
+      if (minEl) minEl.addEventListener("input", function () { f.minAmount = minEl.value; refreshCount(); });
+      if (maxEl) maxEl.addEventListener("input", function () { f.maxAmount = maxEl.value; refreshCount(); });
+      if (clientEl) clientEl.addEventListener("input", function () { f.search = clientEl.value; refreshCount(); });
+    } });
+  }
+
+  function openGridColumns() {
+    var body = '<div class="x97-checks">' + IG_COLS.map(function (c) {
+      var visible = !gridState.hidden[c.key];
+      return '<label class="x97-check"><input type="checkbox" data-col-toggle="' + attr(c.key) + '" ' + (visible ? "checked" : "") + (c.key === "client" ? " disabled" : "") + '><span>' + esc(c.label) + '</span></label>';
+    }).join("") + '</div><div class="x97-help" style="margin-top:10px">Hidden columns keep their data — nothing is deleted.</div>';
+    openSheet("Visible columns", body, '<button class="x97-btn primary" data-x97-action="close-sheet">Done</button>', { afterOpen: function (back) {
+      back.addEventListener("change", function (e) {
+        var box = e.target.closest && e.target.closest("[data-col-toggle]");
+        if (!box) return;
+        var key = box.getAttribute("data-col-toggle");
+        if (box.checked) delete gridState.hidden[key]; else gridState.hidden[key] = true;
+        igSavePersistedHidden(); scheduleRender(0);
+      });
+    } });
+  }
+
+  function openGridMore() {
+    var body = '<div class="ig-more-list">' +
+      '<button class="x97-card-action full" data-x97-action="grid-add-row">' + icon("plus", 15) + ' Add row</button>' +
+      '<button class="x97-card-action full" data-x97-action="grid-undo">' + icon("undo", 15) + ' Undo</button>' +
+      '<button class="x97-card-action full" data-x97-action="grid-redo">' + icon("redo", 15) + ' Redo</button>' +
+      '<button class="x97-card-action full" data-x97-action="open-grid-columns">' + icon("columns", 15) + ' Columns</button>' +
+      '<button class="x97-card-action full" data-x97-action="open-exports">' + icon("list", 15) + ' Export</button>' +
+    '</div>';
+    openSheet("More", body, "");
   }
 
   function networkClass(network) {
@@ -4466,6 +5289,15 @@
     if(action==="copy-document"){var ta=document.getElementById("x97-doc-text");if(ta){navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(ta.value).then(function(){toast("Copied","success");},function(){toast("Could not copy","error");}):(ta.style.display="block",ta.select(),toast("Select and copy","success"));}return;}
     if(action==="send-document"){var sdoc=readDoc();var sitem=sdoc&&(sdoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(sitem){var body=documentText(sitem,sdoc,btn.dataset.kind);window.open("https://wa.me/"+waNumber(sitem.phone,sdoc)+"?text="+encodeURIComponent(body),"_blank");closeSheet();}return;}
     if(action==="fx-amount"){fxConv.amount=btn.dataset.value;var amt=document.getElementById("x97-fx-amount");if(amt)amt.value=fxConv.amount;fxPaint();return;}
+    if(action==="grid-add-row"){igAddRow();return;}
+    if(action==="grid-undo"){igUndo();return;}
+    if(action==="grid-redo"){igRedo();return;}
+    if(action==="grid-sort"){var gsKey=btn.dataset.col;if(gsKey==="client")state.upcoming.sort="client";else if(gsKey==="gross"||gsKey==="balance")state.upcoming.sort=state.upcoming.sort==="amountDesc"?"amountAsc":"amountDesc";else if(gsKey==="due")state.upcoming.sort=state.upcoming.sort==="dateAsc"?"dateDesc":"dateAsc";savePrefs();scheduleRender(0);return;}
+    if(action==="open-grid-filters"){openGridFilters(readDoc());return;}
+    if(action==="grid-filters-apply"){savePrefs();closeSheet();scheduleRender(0);return;}
+    if(action==="grid-filters-reset"){state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.quick="open";state.upcoming.sort="urgency";state.upcoming.search="";savePrefs();closeSheet();scheduleRender(0);return;}
+    if(action==="open-grid-columns"){openGridColumns();return;}
+    if(action==="open-grid-more"){openGridMore();return;}
   }, true);
 
   function resumeOriginalTab() {
@@ -4479,7 +5311,7 @@
       updateCloudPill();
       if (!currentScreen) return;
       var raw="";try{raw=localStorage.getItem(DATA_KEY)||"";}catch(_){}
-      if(raw&&raw!==lastRaw){lastRaw=raw;scheduleRender(50);}
+      if(raw&&raw!==lastRaw){lastRaw=raw;if(gridState.editing){gridState.pendingExternalRender=true;return;}scheduleRender(50);}
     },1000);
   }
 
