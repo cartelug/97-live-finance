@@ -92,7 +92,9 @@
       sort: "urgency",
       gridWidths: {},
       gridHidden: [],
-      gridZoom: null
+      gridZoom: null,
+      gridOrder: null,
+      gridFreeze: 1
     },
     creditView: "available"
   };
@@ -2481,14 +2483,19 @@
   function filterTagHTML() {
     var f = state.upcoming, tags = [];
     if (f.month !== "all") tags.push({ label: monthLabel(f.month, true), key: "month" });
+    // The chip says what the sort does, not what the code calls it.
     if (f.statuses.length) tags.push({ label: f.statuses.join(", "), key: "statuses" });
     if (f.currencies.length) tags.push({ label: f.currencies.join(" + "), key: "currencies" });
     if (f.categories.length) tags.push({ label: f.categories.length + " categories", key: "categories" });
     if (f.from || f.to) tags.push({ label: (f.from ? formatDate(f.from, true) : "Any") + " – " + (f.to ? formatDate(f.to, true) : "Any"), key: "dates" });
     if (f.minAmount || f.maxAmount) tags.push({ label: "Amount " + (f.minAmount || "0") + "–" + (f.maxAmount || "∞"), key: "amount" });
-    if (f.sort !== "urgency") tags.push({ label: "Sorted: " + f.sort, key: "sort" });
+    if (f.sort !== "urgency") tags.push({ label: "Sorted: " + igSortLabel(f.sort), key: "sort" });
     if (!tags.length) return "";
     return '<div class="x97-active-filters">' + tags.map(function (t) { return '<button class="x97-filter-tag" data-x97-action="clear-filter" data-filter="' + attr(t.key) + '">' + esc(t.label) + ' ' + icon("close", 11) + '</button>'; }).join("") + '<button class="x97-filter-tag" data-x97-action="clear-all-filters" style="color:var(--neg)">Clear all</button></div>';
+  }
+
+  function igSortLabel(mode) {
+    return { urgency: "Most urgent", client: "Client A–Z", amountDesc: "Largest first", amountAsc: "Smallest first", dateAsc: "Earliest due", dateDesc: "Latest due" }[mode] || mode;
   }
 
   function collectionStats(doc) {
@@ -2569,8 +2576,69 @@
   };
   var IG_ZOOM_MIN = 0.6, IG_ZOOM_MAX = 1.3, IG_ZOOM_STEP = 0.1;
 
-  function igVisibleCols() { return IG_COLS.filter(function (c) { return !gridState.hidden[c.key]; }); }
+  // Columns sit in whatever order the user dragged them into. Anything the
+  // saved order doesn't mention (a column added in a later build) keeps its
+  // place from IG_COLS at the end, so an old preference never hides a column.
+  function igOrderedCols() {
+    var saved = state.upcoming.gridOrder;
+    if (!Array.isArray(saved) || !saved.length) return IG_COLS.slice();
+    var out = [], seen = {};
+    saved.forEach(function (key) {
+      var c = igColDef(key);
+      if (c && !seen[key]) { seen[key] = true; out.push(c); }
+    });
+    IG_COLS.forEach(function (c) { if (!seen[c.key]) out.push(c); });
+    return out;
+  }
+  function igVisibleCols() { return igOrderedCols().filter(function (c) { return !gridState.hidden[c.key]; }); }
   function igColDef(key) { return IG_COLS.filter(function (c) { return c.key === key; })[0]; }
+  function igSaveColOrder(cols) { state.upcoming.gridOrder = cols.map(function (c) { return c.key; }); savePrefs(); }
+  // Move a column to where it was dropped. The order is stored over every
+  // column, hidden ones included, so hiding and re-showing keeps the place.
+  function igMoveColumn(key, toVisibleIndex) {
+    var visible = igVisibleCols(), from = visible.map(function (c) { return c.key; }).indexOf(key);
+    if (from < 0) return false;
+    toVisibleIndex = Math.max(0, Math.min(visible.length - 1, toVisibleIndex));
+    if (toVisibleIndex === from) return false;
+    var moved = visible.splice(from, 1)[0];
+    visible.splice(toVisibleIndex, 0, moved);
+    var order = [], placed = {};
+    visible.forEach(function (c) { order.push(c); placed[c.key] = true; });
+    igOrderedCols().forEach(function (c) { if (!placed[c.key]) order.push(c); });
+    igSaveColOrder(order);
+    return true;
+  }
+
+  /* Frozen columns. Sheets freezes a run of leading columns; here that run is
+     whatever the user picked, defaulting to the client name. On a narrow phone
+     a deep freeze would swallow the window, so the run is clamped to what
+     still leaves room to read the rest of the sheet. */
+  function igFreezeCount() {
+    var visible = igVisibleCols();
+    var n = state.upcoming.gridFreeze;
+    n = n === undefined || n === null ? 1 : Math.max(0, Math.min(visible.length, n | 0));
+    var room = (window.innerWidth || 900) * 0.62 - igRownumWidth(), used = 0, fit = 0;
+    for (var i = 0; i < n; i++) {
+      used += igColWidth(visible[i].key);
+      if (used > room && fit > 0) break;
+      fit++;
+    }
+    return fit;
+  }
+  function igFreezeOffsets() {
+    var offs = [], run = igRownumWidth(), visible = igVisibleCols(), n = igFreezeCount();
+    for (var i = 0; i < n; i++) { offs.push(run); run += igColWidth(visible[i].key); }
+    return offs;
+  }
+  // Rebuilt once per render so every cell string can ask "am I frozen?"
+  // without recomputing the run for all ten columns, ten times a row.
+  function igRefreshFrozenMap() {
+    var map = {}, visible = igVisibleCols(), n = igFreezeCount();
+    for (var i = 0; i < n; i++) map[visible[i].key] = i;
+    gridState.frozen = map;
+    gridState.frozenLast = n > 0 ? visible[n - 1].key : null;
+    return map;
+  }
   function igColWidth(key) {
     var c = igColDef(key), w = gridState.widths[key] || (c ? c.width : 100), z = gridState.zoom || 1;
     return Math.max(36, Math.round((c ? c.min : 60) * Math.min(1, z)), Math.round(w * z));
@@ -2607,10 +2675,76 @@
   }
   function igSavePersistedWidths() { state.upcoming.gridWidths = Object.assign({}, gridState.widths); savePrefs(); }
   function igSavePersistedHidden() { state.upcoming.gridHidden = Object.keys(gridState.hidden).filter(function (k) { return gridState.hidden[k]; }); savePrefs(); }
+  // Every measurement the grid layout depends on, in one place: the column
+  // template, the row-number gutter and the left offset of each frozen
+  // column. Zoom, a resize drag and an autofit all go through here so the
+  // frozen run can never drift out of step with the columns it sits on.
+  function igLayoutVars() {
+    var vars = { "--ig-zoom": String(gridState.zoom || 1), "--ig-rownum-w": igRownumWidth() + "px", "--ig-tpl": igTemplate() };
+    igFreezeOffsets().forEach(function (px, i) { vars["--ig-fz-" + i] = px + "px"; });
+    return vars;
+  }
+  function igLayoutStyle() {
+    var vars = igLayoutVars();
+    return Object.keys(vars).map(function (k) { return k + ":" + vars[k]; }).join(";");
+  }
+  function igApplyLayout(inner) {
+    inner = inner || document.getElementById("ig-grid-inner");
+    if (!inner) return;
+    var vars = igLayoutVars();
+    Object.keys(vars).forEach(function (k) { inner.style.setProperty(k, vars[k]); });
+  }
   function igApplyZoomLive() {
-    var inner = document.getElementById("ig-grid-inner");
-    if (inner) { inner.style.setProperty("--ig-zoom", gridState.zoom || 1); inner.style.setProperty("--ig-rownum-w", igRownumWidth() + "px"); inner.style.setProperty("--ig-tpl", igTemplate()); }
+    igApplyLayout();
+    igFillEmptyRows();
     var pct = document.querySelector(".ig-zpct"); if (pct) pct.textContent = Math.round((gridState.zoom || 1) * 100) + "%";
+  }
+
+  /* An empty sheet in Sheets is still a sheet: the gridlines run to the
+     bottom of the window whether there are three rows or three hundred.
+     These filler rows carry no data and take no events — they exist so the
+     grid fills whatever space the device gives it. */
+  var IG_FILLER_MAX = 40;
+  function igFillerRowHTML(cols) {
+    var cells = '<div class="ig-cell ig-rownum ig-sticky-num ig-filler-cell"></div>';
+    cells += cols.map(function (c) {
+      return '<div class="ig-cell ig-filler-cell' + igFrozenClasses(c.key).map(function (k) { return " " + k; }).join("") + '"' + igFrozenAttrs(c.key) + '></div>';
+    }).join("");
+    return '<div class="ig-row ig-filler-row">' + cells + '</div>';
+  }
+  function igFillEmptyRows() {
+    var scroll = document.getElementById("ig-scroll"), filler = document.getElementById("ig-filler"), body = document.getElementById("ig-body");
+    if (!scroll || !filler || !body) return;
+    var first = body.firstElementChild;
+    var rowH = first ? first.offsetHeight : 0;
+    if (rowH < 8) rowH = Math.max(8, Math.round(36 * (gridState.zoom || 1)));
+    var head = document.querySelector(".ig-head-row");
+    var space = scroll.clientHeight - (head ? head.offsetHeight : 0) - body.offsetHeight;
+    // Floor, never ceil: a filler row that overshoots would invent a
+    // scrollbar on a sheet that actually fits.
+    var want = space > rowH ? Math.min(IG_FILLER_MAX, Math.floor(space / rowH)) : 0;
+    var cols = igVisibleCols();
+    var sig = want + ":" + cols.map(function (c) { return c.key; }).join(",");
+    if (filler.getAttribute("data-fill") === sig) return;
+    var html = "";
+    for (var i = 0; i < want; i++) html += igFillerRowHTML(cols);
+    filler.innerHTML = html;
+    filler.setAttribute("data-fill", sig);
+  }
+
+  // Rotating a phone changes the auto zoom and how many columns can stay
+  // frozen; without this the sheet kept its portrait shape until something
+  // else happened to trigger a render.
+  function igOnViewportChange() {
+    var inner = document.getElementById("ig-grid-inner");
+    if (!inner) return;
+    if (!state.upcoming.gridZoom) gridState.zoom = igAutoZoom();
+    var before = Object.keys(gridState.frozen || {}).join(",");
+    igRefreshFrozenMap();
+    if (Object.keys(gridState.frozen || {}).join(",") !== before) { scheduleRender(0); return; }
+    igApplyLayout(inner);
+    igFillEmptyRows();
+    igPaintActive();
   }
   function igSetZoom(action) {
     var z = gridState.zoom || 1;
@@ -2677,9 +2811,21 @@
   }
   function igRawValue(row, key) { return row[key] == null ? "" : row[key]; }
 
+  // Frozen columns carry their left offset as a CSS variable rather than a
+  // baked pixel value, so a resize drag or a zoom moves the whole run without
+  // rebuilding a single cell.
+  function igFrozenAttrs(key) {
+    var idx = gridState.frozen ? gridState.frozen[key] : undefined;
+    if (idx === undefined) return "";
+    return ' style="left:var(--ig-fz-' + idx + ',0px)"';
+  }
+  function igFrozenClasses(key) {
+    var idx = gridState.frozen ? gridState.frozen[key] : undefined;
+    if (idx === undefined) return [];
+    return gridState.frozenLast === key ? ["ig-frozen", "ig-frozen-last"] : ["ig-frozen"];
+  }
   function igCellClass(col, row) {
-    var cls = ["ig-cell", "ig-c-" + col.key, "ig-a-" + col.align];
-    if (col.sticky) cls.push("ig-sticky", "ig-sticky-client");
+    var cls = ["ig-cell", "ig-c-" + col.key, "ig-a-" + col.align].concat(igFrozenClasses(col.key));
     if (igEditable(col, row)) cls.push("ig-editable");
     else cls.push("ig-readonly");
     if (col.key === "status") cls.push("ig-tone-badge");
@@ -2703,7 +2849,7 @@
   }
   function igCellHTML(col, row) {
     var text = igCellText(col, row);
-    return '<div class="' + igCellClass(col, row) + '" role="gridcell" data-col="' + attr(col.key) + '" data-row="' + attr(row.id) + '" tabindex="-1" title="' + attr(text) + '">' + igCellInner(col, row) + '</div>';
+    return '<div class="' + igCellClass(col, row) + '" role="gridcell" data-col="' + attr(col.key) + '" data-row="' + attr(row.id) + '" tabindex="-1" title="' + attr(text) + '"' + igFrozenAttrs(col.key) + '>' + igCellInner(col, row) + '</div>';
   }
   function igRowHTML(row) {
     var cells = '<div class="ig-cell ig-rownum ig-sticky ig-sticky-num" role="rowheader" data-rownum="' + attr(row.id) + '">' + row.index + '</div>';
@@ -2718,11 +2864,11 @@
     return "";
   }
   function igHeaderHTML() {
-    var head = '<div class="ig-cell ig-rownum ig-colhead ig-sticky ig-sticky-num" role="columnheader">#</div>';
+    var head = '<div class="ig-cell ig-rownum ig-colhead ig-sticky-num" role="columnheader" title="Select the whole sheet">#</div>';
     head += igVisibleCols().map(function (c) {
       var sortable = c.key === "client" || c.key === "gross" || c.key === "balance" || c.key === "due";
       var active = igSortMatches(c.key);
-      return '<div class="ig-cell ig-colhead ig-a-' + c.align + (c.sticky ? " ig-sticky ig-sticky-client" : "") + (active ? " ig-sorted" : "") + '" role="columnheader" data-colhead="' + attr(c.key) + '"' + (sortable ? ' data-x97-action="grid-sort" data-col="' + attr(c.key) + '"' : "") + '><span>' + esc(c.label) + '</span>' + (active ? '<i class="ig-sort-ic">' + icon("chevron", 10) + '</i>' : "") + '<b class="ig-resize" data-resize="' + attr(c.key) + '"></b></div>';
+      return '<div class="ig-cell ig-colhead ig-a-' + c.align + igFrozenClasses(c.key).map(function (k) { return " " + k; }).join("") + (active ? " ig-sorted" : "") + '" role="columnheader" data-colhead="' + attr(c.key) + '"' + (sortable ? ' data-x97-action="grid-sort" data-col="' + attr(c.key) + '"' : "") + igFrozenAttrs(c.key) + '><span>' + esc(c.label) + '</span>' + (active ? '<i class="ig-sort-ic">' + icon("chevron", 10) + '</i>' : "") + '<b class="ig-colmenu" data-colmenu="' + attr(c.key) + '" title="Column options" aria-label="Column options">' + icon("chevron", 9) + '</b><b class="ig-resize" data-resize="' + attr(c.key) + '"></b></div>';
     }).join("");
     return '<div class="ig-row ig-head-row" role="row">' + head + '</div>';
   }
@@ -2833,6 +2979,7 @@
 
   function renderUpcoming(doc) {
     igSyncPersisted();
+    igRefreshFrozenMap();
     var all = doc.followups || [];
     var filtered = sortFollowups(all.filter(function (item) { return followupMatches(item, doc); }), doc);
     // A row you just created belongs at the top, not wherever urgency sort
@@ -2863,7 +3010,7 @@
       (activeFilterCount() ? '<div class="ig-filterchips">' + filterTagHTML() + '</div>' : "") +
       igFormulaBarHTML() +
       '<div class="ig-gridwrap" id="ig-gridwrap"><div class="ig-scroll" id="ig-scroll" tabindex="0" role="grid" aria-rowcount="' + rows.length + '" aria-label="Incoming receivables">' +
-        '<div class="ig-grid-inner" id="ig-grid-inner" style="--ig-zoom:' + (gridState.zoom || 1) + ';--ig-rownum-w:' + igRownumWidth() + 'px;--ig-tpl:' + igTemplate() + '">' + igHeaderHTML() + '<div class="ig-body" id="ig-body">' + bodyRows + '</div><div id="ig-range-frame" class="ig-range-frame" aria-hidden="true"></div></div>' +
+        '<div class="ig-grid-inner" id="ig-grid-inner" style="' + igLayoutStyle() + '">' + igHeaderHTML() + '<div class="ig-body" id="ig-body">' + bodyRows + '</div><div class="ig-filler" id="ig-filler" aria-hidden="true"></div><div id="ig-range-frame" class="ig-range-frame" aria-hidden="true"></div></div>' +
         empty +
       '</div></div>' +
       igStatusBarHTML(filtered.length, all.length, stats) +
@@ -3462,6 +3609,64 @@
     var rowId = cellEl.getAttribute("data-row") || cellEl.getAttribute("data-rownum");
     igOpenCellMenuAt(rect.left, rect.bottom, rowId);
   }
+
+  /* The column menu — Sheets' header dropdown. It is also the whole
+     column toolkit on a phone, where there is no room for a drag and no
+     hover to reveal anything: sort, move, freeze, hide and fit all live
+     here so a touch user can reshape the sheet with one thumb. */
+  function igSortModeFor(key, dir) {
+    if (key === "client") return "client";
+    if (key === "gross" || key === "balance") return dir === "asc" ? "amountAsc" : "amountDesc";
+    if (key === "due") return dir === "asc" ? "dateAsc" : "dateDesc";
+    return null;
+  }
+  function igOpenColMenu(key, x, y) {
+    igCloseMenu();
+    var col = igColDef(key);
+    if (!col) return;
+    var visible = igVisibleCols(), idx = visible.map(function (c) { return c.key; }).indexOf(key);
+    if (idx < 0) return;
+    var frozen = igFreezeCount(), sortable = !!igSortModeFor(key, "asc");
+    var items = [];
+    if (sortable) {
+      var asc = col.type === "money" || col.type === "date" ? "Sort smallest first" : "Sort A → Z";
+      var desc = col.type === "money" || col.type === "date" ? "Sort largest first" : "Sort Z → A";
+      if (col.type === "date") { asc = "Sort earliest first"; desc = "Sort latest first"; }
+      items.push({ label: asc, action: "sort-asc" }, { label: desc, action: "sort-desc" });
+    }
+    items.push({ label: "Move left", action: "move-left", disabled: idx === 0 });
+    items.push({ label: "Move right", action: "move-right", disabled: idx === visible.length - 1 });
+    items.push(frozen === idx + 1
+      ? { label: "Unfreeze columns", action: "freeze-none" }
+      : { label: idx === 0 ? "Freeze this column" : "Freeze up to here", action: "freeze-here" });
+    items.push({ label: "Fit to content", action: "autofit" });
+    items.push({ label: "Reset width", action: "reset-width" });
+    items.push({ label: "Hide column", action: "hide", disabled: visible.length <= 1 });
+    var menu = document.createElement("div");
+    menu.className = "ig-menu";
+    menu.innerHTML = items.map(function (it) { return '<button class="ig-menu-item" data-menu="' + it.action + '"' + (it.disabled ? " disabled" : "") + '>' + esc(it.label) + '</button>'; }).join("");
+    menu.addEventListener("click", function (e) {
+      var btn = e.target.closest && e.target.closest(".ig-menu-item");
+      if (!btn) return;
+      var act = btn.getAttribute("data-menu"); igCloseMenu();
+      var inner = document.getElementById("ig-grid-inner");
+      if (act === "sort-asc" || act === "sort-desc") {
+        var mode = igSortModeFor(key, act === "sort-asc" ? "asc" : "desc");
+        if (mode) { state.upcoming.sort = mode; savePrefs(); scheduleRender(0); }
+      } else if (act === "move-left") { if (igMoveColumn(key, idx - 1)) scheduleRender(0); }
+      else if (act === "move-right") { if (igMoveColumn(key, idx + 1)) scheduleRender(0); }
+      else if (act === "freeze-here") { state.upcoming.gridFreeze = idx + 1; savePrefs(); scheduleRender(0); }
+      else if (act === "freeze-none") { state.upcoming.gridFreeze = 0; savePrefs(); scheduleRender(0); }
+      else if (act === "autofit") { if (inner) igAutofitColumn(key, inner); }
+      else if (act === "reset-width") { delete gridState.widths[key]; igSavePersistedWidths(); if (inner) igApplyLayout(inner); }
+      else if (act === "hide") { gridState.hidden[key] = true; igSavePersistedHidden(); scheduleRender(0); }
+    });
+    igPlaceMenu(menu, x, y);
+  }
+  function igOpenColMenuFor(headEl) {
+    var rect = headEl.getBoundingClientRect();
+    igOpenColMenu(headEl.getAttribute("data-colhead"), rect.left, rect.bottom);
+  }
   function igSelectAll() {
     var allCols = igVisibleCols();
     if (!gridState.order.length || !allCols.length) return;
@@ -3470,9 +3675,16 @@
     igPaintActive();
   }
   function igOnClick(e) {
+    if (gridState.suppressClick) { gridState.suppressClick = false; return; }
+    var caret = e.target.closest && e.target.closest(".ig-colmenu");
+    if (caret) {
+      e.preventDefault(); e.stopPropagation();
+      igOpenColMenuFor(caret.closest(".ig-colhead"));
+      return;
+    }
     var corner = e.target.closest && e.target.closest(".ig-rownum.ig-colhead");
     if (corner) { igSelectAll(); return; }
-    var rownum = e.target.closest && e.target.closest(".ig-rownum:not(.ig-colhead)");
+    var rownum = e.target.closest && e.target.closest(".ig-rownum:not(.ig-colhead):not(.ig-filler-cell)");
     if (rownum) {
       var rid = rownum.getAttribute("data-rownum"), cols = igVisibleCols();
       if (cols.length) { gridState.anchor = { rowId: rid, col: cols[0].key }; gridState.active = { rowId: rid, col: cols[cols.length - 1].key }; igPaintActive(); }
@@ -3485,12 +3697,14 @@
     }
   }
   function igOnDblClick(e) {
-    var cell = e.target.closest && e.target.closest(".ig-cell:not(.ig-rownum):not(.ig-colhead)");
+    var cell = e.target.closest && e.target.closest(".ig-cell:not(.ig-rownum):not(.ig-colhead):not(.ig-filler-cell)");
     if (!cell) return;
     igActivateCell(cell.getAttribute("data-row"), cell.getAttribute("data-col"), true);
   }
   function igOnContextMenu(e) {
-    var cell = e.target.closest && e.target.closest(".ig-cell:not(.ig-colhead)");
+    var head = e.target.closest && e.target.closest(".ig-colhead[data-colhead]");
+    if (head) { e.preventDefault(); igOpenColMenu(head.getAttribute("data-colhead"), e.clientX, e.clientY); return; }
+    var cell = e.target.closest && e.target.closest(".ig-cell:not(.ig-colhead):not(.ig-filler-cell)");
     if (!cell) return;
     e.preventDefault();
     var rowId = cell.getAttribute("data-row") || cell.getAttribute("data-rownum");
@@ -3522,7 +3736,7 @@
       }
       if (pinching) return;
       if (e.pointerType === "mouse" && e.button !== 0) return;
-      var cell = e.target.closest && e.target.closest(".ig-cell:not(.ig-colhead)");
+      var cell = e.target.closest && e.target.closest(".ig-cell:not(.ig-colhead):not(.ig-filler-cell)");
       if (!cell || gridState.editing) return;
       startX = e.clientX; startY = e.clientY; startCell = cell; lpFired = false;
       if (cell.classList.contains("ig-rownum")) return;
@@ -3550,7 +3764,7 @@
         clearTimeout(lpTimer);
         if (dragging && !lpFired) {
           var el = document.elementFromPoint(e.clientX, e.clientY);
-          var overCell = el && el.closest && el.closest(".ig-cell:not(.ig-rownum):not(.ig-colhead)");
+          var overCell = el && el.closest && el.closest(".ig-cell:not(.ig-rownum):not(.ig-colhead):not(.ig-filler-cell)");
           if (overCell) igSelectCellFromEl(overCell, true);
         }
       }
@@ -3583,8 +3797,94 @@
     var zoom = gridState.zoom || 1;
     // Store the unzoomed base width, matching how igColWidth() re-scales it.
     gridState.widths[key] = Math.round(Math.max(col.min, Math.min(420, max + 20)) / zoom);
-    inner.style.setProperty("--ig-tpl", igTemplate());
+    igApplyLayout(inner);
     igSavePersistedWidths();
+  }
+
+  // A drag or a long press must not also land as a click on the header
+  // underneath it, but the click may never arrive (the row can re-render
+  // first), so the guard expires on its own rather than eating the next one.
+  function igSuppressNextClick() {
+    gridState.suppressClick = true;
+    setTimeout(function () { gridState.suppressClick = false; }, 350);
+  }
+
+  /* Drag a column header sideways to reorder, the way Sheets does. Touch is
+     deliberately left out: a sideways swipe on a phone has to stay a scroll,
+     so a long press there opens the column menu instead, where Move left and
+     Move right do the same job with a thumb. */
+  function igStartColDrag(e, head, key, inner) {
+    var startX = e.clientX, armed = false, targetIdx = null;
+    var visible = igVisibleCols().map(function (c) { return c.key; });
+    var fromIdx = visible.indexOf(key);
+    if (fromIdx < 0) return;
+    var indicator = null, ghost = null;
+    try { head.setPointerCapture(e.pointerId); } catch (_) {}
+    function headEls() { return Array.prototype.slice.call(inner.querySelectorAll(".ig-colhead[data-colhead]")); }
+    function onMove(ev) {
+      if (!armed) {
+        if (Math.abs(ev.clientX - startX) < 5) return;
+        armed = true;
+        document.body.classList.add("ig-coldragging");
+        head.classList.add("ig-col-dragging");
+        indicator = document.createElement("div");
+        indicator.className = "ig-col-drop";
+        inner.appendChild(indicator);
+        ghost = document.createElement("div");
+        ghost.className = "ig-col-ghost";
+        ghost.textContent = igColLabel(key);
+        document.body.appendChild(ghost);
+      }
+      ghost.style.left = ev.clientX + "px";
+      ghost.style.top = ev.clientY + "px";
+      var els = headEls(), idx = fromIdx;
+      for (var i = 0; i < els.length; i++) {
+        var r = els[i].getBoundingClientRect();
+        if (ev.clientX < r.right || i === els.length - 1) { idx = i; break; }
+      }
+      targetIdx = idx;
+      var drop = els[idx];
+      indicator.style.left = (idx >= fromIdx ? drop.offsetLeft + drop.offsetWidth : drop.offsetLeft) + "px";
+    }
+    function onUp() {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+      document.body.classList.remove("ig-coldragging");
+      head.classList.remove("ig-col-dragging");
+      if (indicator) indicator.remove();
+      if (ghost) ghost.remove();
+      if (!armed) return;
+      igSuppressNextClick();
+      if (targetIdx !== null && targetIdx !== fromIdx && igMoveColumn(key, targetIdx)) scheduleRender(0);
+    }
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+  }
+  function igWireHeaderInteractions(inner) {
+    Array.prototype.slice.call(inner.querySelectorAll(".ig-colhead[data-colhead]")).forEach(function (head) {
+      head.addEventListener("pointerdown", function (e) {
+        if (e.target.closest && (e.target.closest(".ig-resize") || e.target.closest(".ig-colmenu"))) return;
+        var key = head.getAttribute("data-colhead");
+        if (e.pointerType === "touch") {
+          var lp = setTimeout(function () { igOpenColMenuFor(head); igSuppressNextClick(); }, 480);
+          var done = function () {
+            clearTimeout(lp);
+            document.removeEventListener("pointerup", done);
+            document.removeEventListener("pointercancel", done);
+            document.removeEventListener("pointermove", moved);
+          };
+          var moved = function (ev) { if (Math.abs(ev.clientX - e.clientX) > 8 || Math.abs(ev.clientY - e.clientY) > 8) done(); };
+          document.addEventListener("pointerup", done);
+          document.addEventListener("pointercancel", done);
+          document.addEventListener("pointermove", moved);
+          return;
+        }
+        if (e.pointerType === "mouse" && e.button !== 0) return;
+        igStartColDrag(e, head, key, inner);
+      });
+    });
   }
 
   function igWireResize(inner) {
@@ -3596,7 +3896,7 @@
         function onMove(ev) {
           var col = igColDef(key);
           gridState.widths[key] = Math.max(col.min, startW + (ev.clientX - startX));
-          inner.style.setProperty("--ig-tpl", igTemplate());
+          igApplyLayout(inner);
         }
         function onUp() { document.removeEventListener("pointermove", onMove); document.removeEventListener("pointerup", onUp); igSavePersistedWidths(); }
         document.addEventListener("pointermove", onMove);
@@ -3701,7 +4001,23 @@
       var cols0 = igVisibleCols();
       if (cols0.length) { gridState.anchor = { rowId: gridState.order[0], col: cols0[0].key }; gridState.active = gridState.anchor; }
     }
+    // The shell's flex layout is not final in the same tick the markup lands,
+    // so the first measurement can undercount the free space; take it again
+    // once the frame has settled. igFillEmptyRows() is a no-op if nothing moved.
+    igFillEmptyRows();
+    if (window.requestAnimationFrame) requestAnimationFrame(function () { requestAnimationFrame(igFillEmptyRows); });
+    if (!gridState.viewportWired) {
+      gridState.viewportWired = true;
+      var vpTimer = null;
+      var onViewport = function () {
+        clearTimeout(vpTimer);
+        vpTimer = setTimeout(function () { if (document.getElementById("ig-grid-inner")) igOnViewportChange(); }, 120);
+      };
+      window.addEventListener("resize", onViewport);
+      window.addEventListener("orientationchange", onViewport);
+    }
     igWireCellEvents(scroll);
+    igWireHeaderInteractions(inner);
     igWireResize(inner);
     igWireKeyboard(scroll);
     igWireFormulaBar();
@@ -3767,7 +4083,7 @@
   }
 
   function openGridColumns() {
-    var body = '<div class="x97-checks">' + IG_COLS.map(function (c) {
+    var body = '<div class="x97-checks">' + igOrderedCols().map(function (c) {
       var visible = !gridState.hidden[c.key];
       return '<label class="x97-check"><input type="checkbox" data-col-toggle="' + attr(c.key) + '" ' + (visible ? "checked" : "") + (c.key === "client" ? " disabled" : "") + '><span>' + esc(c.label) + '</span></label>';
     }).join("") + '</div><div class="x97-help" style="margin-top:10px">Hidden columns keep their data — nothing is deleted.</div>';

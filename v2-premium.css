@@ -1793,7 +1793,7 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 .ig-scroll:focus, .ig-scroll:focus-visible { outline: none; }
 .ig-grid-inner { --ig-rownum-w: 42px; --ig-zoom: 1; width: fit-content; min-width: 100%; position: relative; }
 .ig-row { display: grid; grid-template-columns: var(--ig-tpl, 42px 178px 116px 124px 112px 124px 58px 112px 118px 132px 130px 220px); align-items: stretch; }
-.ig-head-row { position: sticky; top: 0; z-index: 6; background: var(--card2); }
+.ig-head-row { position: sticky; top: 0; z-index: 10; background: var(--card2); }
 .ig-body { position: relative; content-visibility: auto; contain-intrinsic-size: 0 2000px; }
 
 .ig-cell {
@@ -1817,15 +1817,25 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
    same pointer affordance as every other clickable header. */
 .ig-rownum.ig-colhead { cursor: pointer; }
 .ig-sticky { position: sticky; z-index: 2; }
-.ig-sticky-num { left: 0; z-index: 3; }
+.ig-sticky-num { position: sticky; left: 0; z-index: 6; }
+/* The frozen run: however many leading columns the user pinned. Each one
+   carries its own left offset as a variable, so resizing or zooming moves
+   the whole run without touching the markup. */
+.ig-frozen { position: sticky; left: var(--ig-fz-0, 0px); z-index: 5; background: var(--card); }
+.ig-head-row .ig-frozen { z-index: 8; background: var(--card2); }
+.ig-head-row .ig-sticky-num { z-index: 9; }
 /* The client is the row's identity — small, but the boldest thing in it. */
-.ig-sticky-client { left: var(--ig-rownum-w); z-index: 2; font-weight: 800; font-size: max(9.5px, calc(11px * var(--ig-zoom, 1))) !important; background: var(--card); letter-spacing: -.01em; }
-.ig-head-row .ig-sticky { z-index: 7; }
-.ig-head-row .ig-sticky-num { z-index: 8; }
+.ig-c-client { font-weight: 800; font-size: max(9.5px, calc(11px * var(--ig-zoom, 1))) !important; letter-spacing: -.01em; }
 /* Sheets drops a faint shadow off the frozen pane once you've actually
    scrolled the sheet under it — a depth cue that it's floating above the
    rest of the columns. Stays invisible until there's something to float over. */
-.ig-shell.ig-scrolled-x .ig-sticky-client { box-shadow: 3px 0 6px -2px color-mix(in srgb, var(--tx) 35%, transparent); }
+.ig-shell.ig-scrolled-x .ig-frozen-last { box-shadow: 3px 0 6px -2px color-mix(in srgb, var(--tx) 35%, transparent); }
+
+/* Filler rows: gridlines only, no data, no events. They keep the sheet
+   looking like a sheet all the way to the bottom of the window. */
+.ig-filler { position: relative; }
+.ig-filler-cell { pointer-events: none; background: var(--card); }
+.ig-filler-row .ig-rownum { background: var(--card2); box-shadow: none; }
 
 .ig-cell.ig-editable { cursor: cell; }
 .ig-cell.ig-readonly { color: var(--tx2); }
@@ -1896,6 +1906,38 @@ body.ig-filling { cursor: crosshair !important; user-select: none !important; }
 .ig-row-undated .ig-rownum { box-shadow: inset 3px 0 0 var(--tx3); }
 .ig-row-muted .ig-rownum { box-shadow: inset 3px 0 0 var(--line2); }
 .ig-row-muted .ig-c-client { text-decoration: line-through; opacity: .7; }
+
+/* Column menu caret. Quiet until the column is the one you're working in
+   (or the pointer is over it), so ten of these never shout at once. */
+.ig-colmenu {
+  position: absolute; right: 11px; top: 50%; transform: translateY(-50%) rotate(90deg);
+  display: flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; border-radius: 4px; color: var(--tx3);
+  opacity: 0; pointer-events: none;
+  transition: opacity .12s var(--v2-ease), background .12s var(--v2-ease); cursor: pointer;
+}
+/* While it is showing, the header makes room for it — otherwise the caret
+   would sit on top of a right-aligned label and swallow clicks meant for
+   the sort. Hidden, it takes no space and no events. */
+.ig-colhead:hover .ig-colmenu, .ig-colhead.ig-col-active .ig-colmenu { opacity: 1; pointer-events: auto; background: var(--card2); }
+.ig-colhead:hover, .ig-colhead.ig-col-active { padding-right: 28px; }
+.ig-colmenu:hover { background: var(--card3); color: var(--tx); }
+@media (pointer: coarse) {
+  .ig-colmenu { opacity: 0; }
+  .ig-colhead.ig-col-active .ig-colmenu { opacity: 1; }
+}
+
+/* Dragging a column: the header follows the cursor as a chip, and a line
+   marks the boundary it would land on. */
+body.ig-coldragging { cursor: grabbing !important; user-select: none !important; }
+.ig-colhead.ig-col-dragging { opacity: .45; }
+.ig-col-drop { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--pos); pointer-events: none; z-index: 11; }
+.ig-col-ghost {
+  position: fixed; z-index: 90; transform: translate(10px, -50%); pointer-events: none;
+  background: var(--card); border: 1px solid var(--pos); color: var(--tx);
+  border-radius: 7px; padding: 4px 9px; font-size: 10.5px; font-weight: 800;
+  text-transform: uppercase; letter-spacing: .03em; box-shadow: var(--elev-2);
+}
 
 .ig-resize { position: absolute; right: 0; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; }
 .ig-resize:hover, .ig-resize:active { background: color-mix(in srgb, var(--pos) 22%, transparent); }
@@ -2011,12 +2053,20 @@ select.ig-edit-input { padding: 0 4px; }
   .ig-statusbar { font-size: 10px; }
   .ig-selstats { gap: 8px; font-size: 9.5px; }
 
-  /* Summary: one horizontally scrolling row of single-line pills. */
-  .ig-summary { display: flex; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  /* Summary: one horizontally scrolling row of single-line pills. The mask
+     fades the last one out at the edge so it reads as "swipe for more"
+     rather than as a tile someone forgot to finish. */
+  .ig-summary {
+    display: flex; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+  }
   .ig-summary::-webkit-scrollbar { display: none; }
   .ig-stat {
     flex: 0 0 auto; display: flex; align-items: baseline; gap: 5px;
     padding: 5px var(--ig-gut); max-width: none; white-space: nowrap;
+    scroll-snap-align: start;
   }
   .ig-stat-label { font-size: 9px; }
   .ig-stat-value { font-size: 12.5px; margin-top: 0; }
