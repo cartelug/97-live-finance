@@ -2587,12 +2587,11 @@
 
   var IG_ROWNUM_W = 42;
   var IG_COLS = [
-    { key: "client", label: "Client", width: 178, min: 120, type: "text", align: "left", sticky: true },
-    { key: "category", label: "Category", width: 116, min: 88, type: "text", align: "left" },
+    { key: "client", label: "Client", width: 168, min: 110, type: "text", align: "left", sticky: true },
     { key: "gross", label: "Total", width: 124, min: 92, type: "money", align: "right" },
     { key: "paid", label: "Paid", width: 112, min: 88, type: "money", align: "right", action: true },
     { key: "balance", label: "Balance", width: 124, min: 92, type: "money", align: "right", action: true },
-    { key: "currency", label: "Cur", width: 58, min: 54, type: "currency", align: "center" },
+    { key: "currency", label: "Cur", width: 68, min: 60, type: "currency", align: "center" },
     { key: "status", label: "Status", width: 112, min: 88, type: "status", align: "left", action: true },
     { key: "due", label: "Due date", width: 118, min: 96, type: "date", align: "left" },
     { key: "structure", label: "Structure", width: 132, min: 104, type: "structure", align: "left", action: true },
@@ -2708,6 +2707,7 @@
     if (col.key === "client" && !row.client) return '<span class="ig-muted">Untitled — click to name</span>';
     if (col.type === "money" || col.type === "date") return '<span class="tabnum">' + esc(text) + '</span>';
     if (col.key === "status") return '<span class="ig-badge ig-badge-' + esc(row.statusTone) + '">' + esc(text) + '</span>';
+    if (col.key === "currency") return '<span class="ig-badge ig-cur-' + esc(row.currency.toLowerCase()) + '">' + esc(text) + '</span>';
     if (col.key === "structure" && row.locked) return esc(text) + ' ' + icon("lock", 11);
     return esc(text);
   }
@@ -3031,9 +3031,20 @@
     var cell = gridState.cellEls[rowId] && gridState.cellEls[rowId][colKey];
     if (!cell) return;
     gridState.editing = { rowId: rowId, col: colKey };
+    if (colKey === "currency") {
+      var current = igRawValue(row, colKey);
+      cell.classList.add("ig-editing");
+      cell.innerHTML = '<div class="ig-cur-toggle">' +
+        '<button type="button" class="ig-cur-opt ig-cur-ugx' + (current === "UGX" ? " on" : "") + '" data-cur="UGX">UGX</button>' +
+        '<button type="button" class="ig-cur-opt ig-cur-usd' + (current === "USD" ? " on" : "") + '" data-cur="USD">USD</button>' +
+      '</div>';
+      Array.prototype.slice.call(cell.querySelectorAll(".ig-cur-opt")).forEach(function (btn) {
+        btn.addEventListener("click", function (e) { e.stopPropagation(); igCommitCurrencyChoice(rowId, btn.getAttribute("data-cur")); });
+      });
+      return;
+    }
     var value = igRawValue(row, colKey), inputHTML;
-    if (colKey === "currency") inputHTML = '<select class="ig-edit-input">' + option("UGX", "UGX", value) + option("USD", "USD", value) + '</select>';
-    else if (colKey === "due") inputHTML = '<input class="ig-edit-input" type="date" value="' + attr(value) + '">';
+    if (colKey === "due") inputHTML = '<input class="ig-edit-input" type="date" value="' + attr(value) + '">';
     else if (colKey === "gross") inputHTML = '<input class="ig-edit-input ig-edit-num" type="number" inputmode="decimal" min="0" step="1" value="' + attr(value) + '">';
     else if (colKey === "phone") inputHTML = '<input class="ig-edit-input" type="text" inputmode="tel" value="' + attr(value) + '">';
     else if (colKey === "client") inputHTML = '<input class="ig-edit-input" type="text" list="ig-client-list" value="' + attr(value) + '">';
@@ -3071,6 +3082,14 @@
     igPushUndo(rowId);
     var ok = igApplyCellValue(rowId, colKey, value);
     if (!ok) { gridState.undoStack.pop(); igRepaintCell(rowId, colKey); toast(colKey === "gross" ? "Enter the deal total, or edit structure in Details" : "That field is locked", "error"); }
+  }
+  function igCommitCurrencyChoice(rowId, value) {
+    var row = gridState.byId[rowId];
+    gridState.editing = null;
+    if (!row || String(value) === String(row.currency)) { igRepaintCell(rowId, "currency"); igFlushPendingExternalRender(); return; }
+    igPushUndo(rowId);
+    var ok = igApplyCellValue(rowId, "currency", value);
+    if (!ok) { gridState.undoStack.pop(); igRepaintCell(rowId, "currency"); toast("That field is locked", "error"); }
   }
 
   function igRunCellAction(key, row) {
@@ -3281,7 +3300,21 @@
     scroll.addEventListener("dblclick", igOnDblClick);
     scroll.addEventListener("contextmenu", igOnContextMenu);
     var dragging = false, lpTimer = null, lpFired = false, startX = 0, startY = 0, startCell = null;
+    var touches = {}, pinching = false, pinchStartDist = 0, pinchStartZoom = 1;
+    function touchIds() { return Object.keys(touches); }
+    function touchDist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
     scroll.addEventListener("pointerdown", function (e) {
+      if (e.pointerType === "touch") {
+        touches[e.pointerId] = { x: e.clientX, y: e.clientY };
+        if (touchIds().length === 2) {
+          pinching = true; dragging = false; lpFired = true; clearTimeout(lpTimer); igCloseMenu();
+          var ids = touchIds();
+          pinchStartDist = touchDist(touches[ids[0]], touches[ids[1]]);
+          pinchStartZoom = gridState.zoom || 1;
+          return;
+        }
+      }
+      if (pinching) return;
       if (e.pointerType === "mouse" && e.button !== 0) return;
       var cell = e.target.closest && e.target.closest(".ig-cell:not(.ig-colhead)");
       if (!cell || gridState.editing) return;
@@ -3295,6 +3328,17 @@
       }
     });
     scroll.addEventListener("pointermove", function (e) {
+      if (e.pointerType === "touch" && touches[e.pointerId]) touches[e.pointerId] = { x: e.clientX, y: e.clientY };
+      if (pinching) {
+        var ids = touchIds();
+        if (ids.length === 2 && pinchStartDist > 10) {
+          var d = touchDist(touches[ids[0]], touches[ids[1]]);
+          var z = Math.max(IG_ZOOM_MIN, Math.min(IG_ZOOM_MAX, Math.round((pinchStartZoom * (d / pinchStartDist)) * 100) / 100));
+          gridState.zoom = z;
+          igApplyZoomLive();
+        }
+        return;
+      }
       if (!startCell) return;
       if (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8) {
         clearTimeout(lpTimer);
@@ -3305,8 +3349,15 @@
         }
       }
     });
-    scroll.addEventListener("pointerup", function () { dragging = false; clearTimeout(lpTimer); startCell = null; });
-    scroll.addEventListener("pointercancel", function () { dragging = false; clearTimeout(lpTimer); startCell = null; });
+    function endTouch(e) {
+      if (e.pointerType === "touch") delete touches[e.pointerId];
+      if (pinching && touchIds().length < 2) {
+        pinching = false; pinchStartDist = 0;
+        state.upcoming.gridZoom = gridState.zoom; savePrefs();
+      }
+    }
+    scroll.addEventListener("pointerup", function (e) { endTouch(e); dragging = false; clearTimeout(lpTimer); startCell = null; });
+    scroll.addEventListener("pointercancel", function (e) { endTouch(e); dragging = false; clearTimeout(lpTimer); startCell = null; });
   }
 
   function igWireResize(inner) {
@@ -3432,6 +3483,7 @@
       '<div class="ig-filter-section"><label>Due</label><div class="ig-filter-chiprow">' +
         chip("due", "Overdue", "overdue", f.quick === "overdue") + chip("due", "Today", "today", f.quick === "today") + chip("due", "This week", "next7", f.quick === "next7") + chip("due", "This month", "thisMonth", f.quick === "thisMonth") + chip("due", "No date", "unscheduled", f.quick === "unscheduled") +
       '</div></div>' +
+      '<div class="ig-filter-section"><label>Month</label><select class="x97-select" id="ig-filter-month">' + option("all", "All months", f.month) + availableMonths(doc).map(function (k) { return option(k, monthLabel(k, true), f.month); }).join("") + option("unscheduled", "Unscheduled only", f.month) + '</select></div>' +
       (categories.length ? '<div class="ig-filter-section"><label>Category</label><div class="ig-filter-chiprow">' + categories.map(function (c) { return chip("category", c, c, f.categories.indexOf(c) >= 0); }).join("") + '</div></div>' : "") +
       (currencies.length > 1 ? '<div class="ig-filter-section"><label>Currency</label><div class="ig-filter-chiprow">' + currencies.map(function (c) { return chip("currency", c, c, f.currencies.indexOf(c) >= 0); }).join("") + '</div></div>' : "") +
       '<div class="ig-filter-section"><label>Client</label><input class="x97-input" id="ig-filter-client" placeholder="Search client…" value="' + attr(f.search) + '"></div>' +
@@ -3459,10 +3511,11 @@
         }
         refreshCount();
       });
-      var minEl = back.querySelector("#ig-filter-min"), maxEl = back.querySelector("#ig-filter-max"), clientEl = back.querySelector("#ig-filter-client");
+      var minEl = back.querySelector("#ig-filter-min"), maxEl = back.querySelector("#ig-filter-max"), clientEl = back.querySelector("#ig-filter-client"), monthEl = back.querySelector("#ig-filter-month");
       if (minEl) minEl.addEventListener("input", function () { f.minAmount = minEl.value; refreshCount(); });
       if (maxEl) maxEl.addEventListener("input", function () { f.maxAmount = maxEl.value; refreshCount(); });
       if (clientEl) clientEl.addEventListener("input", function () { f.search = clientEl.value; refreshCount(); });
+      if (monthEl) monthEl.addEventListener("change", function () { f.month = monthEl.value; refreshCount(); });
     } });
   }
 
@@ -5346,7 +5399,7 @@
     if(action==="grid-sort"){var gsKey=btn.dataset.col;if(gsKey==="client")state.upcoming.sort="client";else if(gsKey==="gross"||gsKey==="balance")state.upcoming.sort=state.upcoming.sort==="amountDesc"?"amountAsc":"amountDesc";else if(gsKey==="due")state.upcoming.sort=state.upcoming.sort==="dateAsc"?"dateDesc":"dateAsc";savePrefs();scheduleRender(0);return;}
     if(action==="open-grid-filters"){openGridFilters(readDoc());return;}
     if(action==="grid-filters-apply"){savePrefs();closeSheet();scheduleRender(0);return;}
-    if(action==="grid-filters-reset"){state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.quick="open";state.upcoming.sort="urgency";state.upcoming.search="";savePrefs();closeSheet();scheduleRender(0);return;}
+    if(action==="grid-filters-reset"){state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.quick="open";state.upcoming.sort="urgency";state.upcoming.search="";state.upcoming.month="all";savePrefs();closeSheet();scheduleRender(0);return;}
     if(action==="open-grid-columns"){openGridColumns();return;}
     if(action==="open-grid-more"){openGridMore();return;}
     if(action==="grid-zoom"){igSetZoom(btn.dataset.value);return;}
