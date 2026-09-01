@@ -1813,12 +1813,19 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 .ig-sort-ic { display: inline-flex; margin-left: 3px; transform: rotate(90deg); }
 .ig-rownum { justify-content: center; color: var(--tx3); font-size: max(9.5px, calc(10.5px * var(--ig-zoom, 1))); font-weight: 700; padding: 0; cursor: default; background: var(--card2); }
 .ig-head-row .ig-rownum { background: var(--card2); }
+/* The corner cell selects the whole sheet, same as Sheets — give it the
+   same pointer affordance as every other clickable header. */
+.ig-rownum.ig-colhead { cursor: pointer; }
 .ig-sticky { position: sticky; z-index: 2; }
 .ig-sticky-num { left: 0; z-index: 3; }
 /* The client is the row's identity — small, but the boldest thing in it. */
 .ig-sticky-client { left: var(--ig-rownum-w); z-index: 2; font-weight: 800; font-size: max(9.5px, calc(11px * var(--ig-zoom, 1))) !important; background: var(--card); letter-spacing: -.01em; }
 .ig-head-row .ig-sticky { z-index: 7; }
 .ig-head-row .ig-sticky-num { z-index: 8; }
+/* Sheets drops a faint shadow off the frozen pane once you've actually
+   scrolled the sheet under it — a depth cue that it's floating above the
+   rest of the columns. Stays invisible until there's something to float over. */
+.ig-shell.ig-scrolled-x .ig-sticky-client { box-shadow: 3px 0 6px -2px color-mix(in srgb, var(--tx) 35%, transparent); }
 
 .ig-cell.ig-editable { cursor: cell; }
 .ig-cell.ig-readonly { color: var(--tx2); }
@@ -1826,7 +1833,9 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 .ig-placeholder { color: var(--tx3); }
 
 .ig-cell.ig-in-range { background: color-mix(in srgb, var(--pos) 10%, var(--card)); }
-.ig-cell.ig-active { outline: 2px solid var(--pos); outline-offset: -2px; z-index: 4; background: color-mix(in srgb, var(--pos) 20%, var(--card)); }
+/* Sheets keeps the anchor cell itself clear — only the rest of the range
+   carries the tint — so the crisp border is what reads as "selected here". */
+.ig-cell.ig-active { outline: 2px solid var(--pos); outline-offset: -2px; z-index: 4; background: var(--card); }
 
 /* One crisp rectangle around a multi-cell selection, the way Sheets draws a
    range — the per-cell tint above still shows which cells are in it, this

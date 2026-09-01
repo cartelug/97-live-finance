@@ -3462,7 +3462,16 @@
     var rowId = cellEl.getAttribute("data-row") || cellEl.getAttribute("data-rownum");
     igOpenCellMenuAt(rect.left, rect.bottom, rowId);
   }
+  function igSelectAll() {
+    var allCols = igVisibleCols();
+    if (!gridState.order.length || !allCols.length) return;
+    gridState.anchor = { rowId: gridState.order[0], col: allCols[0].key };
+    gridState.active = { rowId: gridState.order[gridState.order.length - 1], col: allCols[allCols.length - 1].key };
+    igPaintActive();
+  }
   function igOnClick(e) {
+    var corner = e.target.closest && e.target.closest(".ig-rownum.ig-colhead");
+    if (corner) { igSelectAll(); return; }
     var rownum = e.target.closest && e.target.closest(".ig-rownum:not(.ig-colhead)");
     if (rownum) {
       var rid = rownum.getAttribute("data-rownum"), cols = igVisibleCols();
@@ -3631,16 +3640,7 @@
       if (mod && !e.shiftKey && (e.key === "z" || e.key === "Z")) { e.preventDefault(); igUndo(); return; }
       if (mod && ((e.shiftKey && (e.key === "z" || e.key === "Z")) || e.key === "y" || e.key === "Y")) { e.preventDefault(); igRedo(); return; }
       if (mod && (e.key === "f" || e.key === "F")) { e.preventDefault(); var s = document.getElementById("x97-up-search"); if (s) s.focus(); return; }
-      if (mod && !e.shiftKey && (e.key === "a" || e.key === "A")) {
-        e.preventDefault();
-        var allCols = igVisibleCols();
-        if (gridState.order.length && allCols.length) {
-          gridState.anchor = { rowId: gridState.order[0], col: allCols[0].key };
-          gridState.active = { rowId: gridState.order[gridState.order.length - 1], col: allCols[allCols.length - 1].key };
-          igPaintActive();
-        }
-        return;
-      }
+      if (mod && !e.shiftKey && (e.key === "a" || e.key === "A")) { e.preventDefault(); igSelectAll(); return; }
       if (mod && e.key === "Home") { e.preventDefault(); igSetActive(gridState.order[0], igVisibleCols()[0].key); return; }
       if (mod && e.key === "End") { var ec = igVisibleCols(); e.preventDefault(); igSetActive(gridState.order[gridState.order.length - 1], ec[ec.length - 1].key); return; }
       if (e.key === "F2") {
@@ -3691,9 +3691,12 @@
       if (shell) {
         var away = scroll.scrollTop > 24;
         if (away !== gridState.chromeAway) { gridState.chromeAway = away; shell.classList.toggle("ig-scrolled", away); }
+        var overX = scroll.scrollLeft > 2;
+        if (overX !== gridState.scrolledX) { gridState.scrolledX = overX; shell.classList.toggle("ig-scrolled-x", overX); }
       }
     }, { passive: true });
     if (shell && gridState.chromeAway) shell.classList.add("ig-scrolled");
+    if (shell && gridState.scrolledX) shell.classList.add("ig-scrolled-x");
     if (!gridState.active && gridState.order.length) {
       var cols0 = igVisibleCols();
       if (cols0.length) { gridState.anchor = { rowId: gridState.order[0], col: cols0[0].key }; gridState.active = gridState.anchor; }
