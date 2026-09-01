@@ -79,7 +79,6 @@
 
   var state = {
     upcoming: {
-      view: "list",
       quick: "open",
       month: "all",
       search: "",
@@ -2492,51 +2491,6 @@
     return '<div class="x97-active-filters">' + tags.map(function (t) { return '<button class="x97-filter-tag" data-x97-action="clear-filter" data-filter="' + attr(t.key) + '">' + esc(t.label) + ' ' + icon("close", 11) + '</button>'; }).join("") + '<button class="x97-filter-tag" data-x97-action="clear-all-filters" style="color:var(--neg)">Clear all</button></div>';
   }
 
-  function quickChip(key, label, alert) {
-    return '<button class="x97-chip ' + (alert ? "alert " : "") + (state.upcoming.quick === key ? "on" : "") + '" data-x97-action="quick-filter" data-value="' + attr(key) + '">' + esc(label) + '</button>';
-  }
-
-  function upcomingCard(item, doc) {
-    var t = timing(item, doc), currency = String(item.currency || "UGX").toUpperCase();
-    var gross = grossOf(item), already = paidOf(item), left = outstandingOf(item);
-    var next = t.next || nextScheduledPayment(doc, item);
-    var progress = gross > 0 ? Math.min(100, Math.round(already / gross * 100)) : 0;
-    var nextLeft = next ? Math.max(0, num(next.amount) - num(next.paid)) : 0;
-    var open = isOpenFollowup(item);
-    var structure = isDeal(item)
-      ? (normalizeDealType(item.dealType) === "deposit" ? "Deposit + balance" : DEAL_TYPES[normalizeDealType(item.dealType)] || "Payment schedule")
-      : "One payment";
-    var nextHTML = open
-      ? '<div class="x97-collection-next"><span class="x97-collection-next-icon ' + esc(t.cls) + '">' + icon(t.key === "overdue" || t.key === "today" ? "alert" : "calendar", 15) + '</span><span class="x97-collection-next-copy"><small>Next payment</small><b>' + esc(next ? next.label || "Payment" : "Schedule needed") + (nextLeft ? ' · ' + esc(money(nextLeft, currency)) : "") + '</b><em>' + esc(next && next.dueDate ? formatDate(next.dueDate, false) + " · " + t.label : "Add a due date so it enters your collection queue") + '</em></span></div>'
-      : '<div class="x97-collection-next settled"><span class="x97-collection-next-icon good">' + icon(isCancelled(item.status) ? "close" : "check", 15) + '</span><span class="x97-collection-next-copy"><small>' + (isCancelled(item.status) ? "Closed" : "Collection complete") + '</small><b>' + esc(isCancelled(item.status) ? "Cancelled deal" : money(gross, currency) + " received") + '</b><em>' + esc(isCancelled(item.status) ? "Excluded from every finance total" : "No balance remains") + '</em></span></div>';
-    var actions = open
-      ? '<button class="x97-card-action primary" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("wallet", 14) + ' Record payment</button>' +
-        (hasWa(item, doc) ? '<button class="x97-card-action whatsapp" data-x97-action="chase-one" data-id="' + attr(item.id) + '">' + icon("message", 14) + ' WhatsApp</button>' : '') +
-        '<button class="x97-card-action quiet" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">Details ' + icon("chevron", 13) + '</button>'
-      : '<button class="x97-card-action quiet full" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">View details ' + icon("chevron", 13) + '</button>';
-    return '<article class="x97-item x97-card x97-collection-card is-' + esc(t.key) + '" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">' +
-      '<div class="x97-item-top"><div class="x97-item-main"><div class="x97-item-category">' + esc(item.category || "Incoming") + ' · ' + esc(structure) + '</div><div class="x97-item-title">' + esc(item.client || "Untitled incoming deal") + '</div><div class="x97-item-next">' + esc(already ? money(already, currency) + " received of " + money(gross, currency) : "No money received yet") + '</div></div>' +
-      '<div class="x97-item-amount x97-money ' + (currency === "USD" ? "x97-teal" : open ? "" : "x97-green") + '"><small>' + (open ? "Still owed" : "Deal total") + '</small>' + esc(money(open ? left : gross, currency)) + '</div></div>' +
-      '<div class="x97-collection-progress" aria-label="' + progress + '% collected"><i style="--progress:' + progress + '%"></i></div>' +
-      nextHTML +
-      '<div class="x97-collection-actions">' + actions + '</div></article>';
-  }
-
-  function groupFollowups(items, doc) {
-    var groups = { overdue: [], today: [], soon: [], later: [], unscheduled: [], paid: [], cancelled: [] };
-    items.forEach(function (item) {
-      var t = timing(item, doc);
-      if (t.key === "overdue") groups.overdue.push(item);
-      else if (t.key === "today") groups.today.push(item);
-      else if (t.key === "very-soon" || t.key === "soon") groups.soon.push(item);
-      else if (t.key === "unscheduled") groups.unscheduled.push(item);
-      else if (t.key === "paid") groups.paid.push(item);
-      else if (t.key === "cancelled") groups.cancelled.push(item);
-      else groups.later.push(item);
-    });
-    return groups;
-  }
-
   function collectionStats(doc) {
     var open = (doc.followups || []).filter(isOpenFollowup);
     var events = scheduledEvents(doc, false);
@@ -2679,7 +2633,15 @@
     var t = timing(item, doc), next = t.next, due = next ? next.dueDate : item.expectedBy;
     var locked = dealHasRecordedMoney(item), structured = isDeal(item), status = igStatusInfo(item);
     var dueTone = t.key === "overdue" || t.key === "today" ? "bad" : (t.key === "very-soon" || t.key === "soon") ? "warn" : "";
+    // One tone per row drives the edge marker, the balance colour and the
+    // status badge together, so a colour always means the same thing.
+    var rowTone = isCancelled(item.status) ? "muted"
+      : outstandingOf(item) <= 0 ? "good"
+      : t.key === "overdue" ? "bad"
+      : (t.key === "today" || t.key === "very-soon" || t.key === "soon") ? "warn"
+      : !due ? "undated" : "";
     return {
+      tone: rowTone,
       id: item.id, index: index,
       client: item.client || "", category: item.category || "",
       gross: grossOf(item), paid: paidOf(item), balance: outstandingOf(item),
@@ -2719,6 +2681,11 @@
     if (col.key === "status") cls.push("ig-tone-badge");
     if (col.key === "due" && row.dueTone) cls.push("ig-tone-" + row.dueTone);
     if (col.key === "client" && !row.client) cls.push("ig-placeholder");
+    // Money reads by colour: what is still owed takes the row's urgency,
+    // what has been received reads as money in, and a cleared balance is
+    // green whatever the date said.
+    if (col.key === "balance") cls.push(row.balance <= 0 ? "ig-tone-good" : row.tone === "bad" || row.tone === "warn" ? "ig-tone-" + row.tone : "ig-tone-owed");
+    if (col.key === "paid" && row.paid > 0) cls.push("ig-tone-paid");
     return cls.join(" ");
   }
   function igCellInner(col, row) {
@@ -2737,7 +2704,7 @@
   function igRowHTML(row) {
     var cells = '<div class="ig-cell ig-rownum ig-sticky ig-sticky-num" role="rowheader" data-rownum="' + attr(row.id) + '">' + row.index + '</div>';
     cells += igVisibleCols().map(function (c) { return igCellHTML(c, row); }).join("");
-    return '<div class="ig-row' + (row.open ? "" : " ig-row-settled") + '" role="row" data-row-id="' + attr(row.id) + '">' + cells + '</div>';
+    return '<div class="ig-row' + (row.open ? "" : " ig-row-settled") + (row.tone ? " ig-row-" + row.tone : "") + '" role="row" data-row-id="' + attr(row.id) + '">' + cells + '</div>';
   }
   function igSortMatches(key) {
     var s = state.upcoming.sort;
@@ -2801,25 +2768,61 @@
         '<button class="ig-zbtn" data-x97-action="grid-zoom" data-value="in" title="Zoom in" aria-label="Zoom in">' + icon("plus", 13) + '</button>' +
       '</div></div>';
   }
-  function igSummaryHTML(stats) {
-    function tile(label, value, sub, tone) {
-      return '<div class="ig-stat' + (tone ? " ig-stat-" + tone : "") + '"><div class="ig-stat-label">' + esc(label) + '</div><div class="ig-stat-value tabnum">' + value + '</div>' + (sub ? '<div class="ig-stat-sub">' + sub + '</div>' : "") + '</div>';
+  /* What is expected, and when. Every unpaid scheduled payment falls into
+     exactly one time bucket so the tiles answer "what is late, what lands
+     today, what lands this week, what lands this month" at a glance. */
+  function igPeriodStats(doc) {
+    var today = todayDate(), endMonth = endOfMonth(today);
+    function bucket() { return { ugx: 0, usd: 0, count: 0 }; }
+    var b = { overdue: bucket(), today: bucket(), week: bucket(), month: bucket() };
+    function add(target, event) {
+      target.count++;
+      if (String(event.currency || "UGX").toUpperCase() === "USD") target.usd += num(event.amount);
+      else target.ugx += num(event.amount);
     }
-    function twoCurrency(ugx, usd) {
+    scheduledEvents(doc, false).forEach(function (event) {
+      var due = parseLocalDate(event.date);
+      if (!due) return;
+      var days = daysBetween(today, due);
+      if (days == null) return;
+      if (days < 0) { add(b.overdue, event); return; }
+      if (days === 0) add(b.today, event);
+      if (days <= 6) add(b.week, event);
+      if (due <= endMonth) add(b.month, event);
+    });
+    return b;
+  }
+
+  function igSummaryHTML(stats, periods) {
+    function amounts(ugx, usd) {
       var parts = [];
       if (ugx) parts.push(esc(money(ugx, "UGX", true)));
       if (usd) parts.push(esc(money(usd, "USD", true)));
-      return parts.join(" + ");
+      // An empty period reads as a dash; "UGX 0" is noise next to a sub
+      // line that already says nothing is due.
+      return parts.length ? parts.join(" + ") : '<span class="ig-stat-empty">—</span>';
     }
-    var outSub = stats.outstandingUSD ? esc(money(stats.outstandingUSD, "USD", true)) + " outstanding" : "";
-    var overdueSub = stats.overdue.length ? (twoCurrency(stats.overdueUGX, stats.overdueUSD) || esc(money(0, "UGX", true))) : "Nothing overdue";
-    var due7Sub = stats.due7.length ? (twoCurrency(stats.due7UGX, stats.due7USD) || esc(money(0, "UGX", true))) : "Nothing due soon";
-    var unschedSub = stats.unscheduled.length ? "Needs a due date" : "All scheduled";
+    function tile(label, primary, sub, tone) {
+      return '<div class="ig-stat' + (tone ? " ig-stat-" + tone : "") + '">' +
+        '<div class="ig-stat-label"><i class="ig-stat-dot"></i>' + esc(label) + '</div>' +
+        '<div class="ig-stat-value tabnum">' + primary + '</div>' +
+        '<div class="ig-stat-sub">' + sub + '</div>' +
+      '</div>';
+    }
+    function payments(n) { return n + (n === 1 ? " payment" : " payments"); }
     return '<div class="ig-summary">' +
-      tile("Outstanding", esc(money(stats.outstandingUGX, "UGX", true)), outSub, "") +
-      tile("Overdue", String(stats.overdue.length), overdueSub, stats.overdue.length ? "bad" : "") +
-      tile("Due in 7 days", String(stats.due7.length), due7Sub, stats.due7.length ? "warn" : "") +
-      tile("No date set", String(stats.unscheduled.length), unschedSub, stats.unscheduled.length ? "warn" : "") +
+      tile("Overdue", amounts(periods.overdue.ugx, periods.overdue.usd),
+        periods.overdue.count ? payments(periods.overdue.count) + " late" : "Nothing late",
+        periods.overdue.count ? "bad" : "good") +
+      tile("Due today", amounts(periods.today.ugx, periods.today.usd),
+        periods.today.count ? payments(periods.today.count) : "Nothing today", periods.today.count ? "warn" : "") +
+      tile("This week", amounts(periods.week.ugx, periods.week.usd),
+        periods.week.count ? payments(periods.week.count) + " to " + esc(formatDate(dateISO(addDays(todayDate(), 6)), true)) : "Nothing this week",
+        periods.week.count ? "warn" : "") +
+      tile("This month", amounts(periods.month.ugx, periods.month.usd),
+        periods.month.count ? payments(periods.month.count) + " by " + esc(formatDate(dateISO(endOfMonth(todayDate())), true)) : "Nothing this month", "") +
+      tile("Outstanding", amounts(stats.outstandingUGX, stats.outstandingUSD),
+        stats.open.length + " open · " + stats.unscheduled.length + " undated", "total") +
     '</div>';
   }
 
@@ -2827,6 +2830,12 @@
     igSyncPersisted();
     var all = doc.followups || [];
     var filtered = sortFollowups(all.filter(function (item) { return followupMatches(item, doc); }), doc);
+    // A row you just created belongs at the top, not wherever urgency sort
+    // files a deal with no amount and no date yet.
+    if (gridState.quickEntry) {
+      var qi = filtered.findIndex(function (x) { return String(x.id) === String(gridState.quickEntry); });
+      if (qi > 0) filtered.unshift(filtered.splice(qi, 1)[0]);
+    }
     var stats = collectionStats(doc);
     var rows = igBuildRows(doc, filtered);
     gridState.rows = rows;
@@ -2843,7 +2852,7 @@
 
     root.innerHTML = '<div class="ig-shell">' +
       pageHeader("Collections", "Incoming", "", '<button class="x97-icon-btn x97-add-primary" data-x97-action="grid-add-row" title="Add row">' + icon("plus") + '<span>Add row</span></button>') +
-      igSummaryHTML(stats) +
+      igSummaryHTML(stats, igPeriodStats(doc)) +
       igToolbarHTML() +
       igQuickViewsHTML(stats) +
       (activeFilterCount() ? '<div class="ig-filterchips">' + filterTagHTML() + '</div>' : "") +
@@ -2937,6 +2946,9 @@
   function igSetActive(rowId, col, opts) {
     opts = opts || {};
     if (gridState.editing && !(gridState.editing.rowId === rowId && gridState.editing.col === col)) igCommitEdit();
+    // Moving off a freshly added row ends its fast-entry run: it stops being
+    // pinned to the top and takes its place in the sort like any other row.
+    if (gridState.quickEntry && String(rowId) !== String(gridState.quickEntry)) gridState.quickEntry = null;
     if (!opts.extend) gridState.anchor = { rowId: rowId, col: col };
     gridState.active = { rowId: rowId, col: col };
     igPaintActive();
@@ -3128,6 +3140,13 @@
     var doc = readDoc();
     var categories = (doc.settings && doc.settings.categories) || [];
     var id = uid("fu");
+    // A blank row has no client and no date, so a narrow view or an active
+    // search would file it somewhere the user cannot see. Open the view up
+    // enough that the row they just asked for is the row they land on.
+    if (["all", "open", "attention", "unscheduled"].indexOf(state.upcoming.quick) < 0) state.upcoming.quick = "open";
+    if (state.upcoming.search) state.upcoming.search = "";
+    if (state.upcoming.month !== "all") state.upcoming.month = "all";
+    savePrefs();
     igPushUndo(id);
     updateDoc(function (d) {
       d.followups.unshift({ id: id, client: "", category: categories[0] || "One Time", gross: 0, paid: 0, amount: 0, currency: "UGX", status: "Pending", expectedBy: "", phone: "", note: "" });
@@ -3710,69 +3729,6 @@
     return chips + more;
   }
 
-  function openUpcomingFormLegacy(id) {
-    var doc = readDoc(), existing = id ? (doc.followups || []).find(function(x){return String(x.id)===String(id);}) : null;
-    var item = existing ? clone(existing) : { id:"", client:"", category:"One Time", amount:"", currency:"UGX", status:"Pending", expectedBy:"", phone:"", note:"", dealType:"one", partLabel:"parts", partCount:1, partEvery:7 };
-    var type = normalizeDealType(item.dealType || (Array.isArray(item.parts) ? "part" : "one"));
-    var locked = !!(existing && dealHasRecordedMoney(item));
-    var partCount = item.partCount || (item.parts && item.parts.length) || (type === "split" ? 2 : 1);
-    var partLabel = item.partLabel || (type === "monthly" ? "months" : "parts");
-    var amountValue = type === "monthly" || type === "part" ? (dealPartAmount(item) || item.amount || "") : (existing ? grossOf(item) : item.amount);
-    var firstDue = (item.parts && item.parts[0] && item.parts[0].dueDate) || item.expectedBy || "";
-    var secondDue = (item.parts && item.parts[1] && item.parts[1].dueDate) || "";
-    var categories = Array.from(new Set([].concat(doc.settings.categories || [], (doc.followups || []).map(function(x){return x.category;}), ["Design","One Time","Retainer"]).filter(Boolean))).sort();
-    var statuses = Array.from(new Set([].concat(doc.settings.fuStatuses || [], ["Pending","Paid","Cancelled"]).filter(Boolean)));
-    var hasContacts = campContacts(doc).length > 0;
-    var dealOptions = Object.keys(DEAL_TYPES).map(function (key) { return option(key, DEAL_TYPES[key], type); }).join("");
-    var labelOptions = ["parts","scenes","episodes","months","units","milestones"].map(function (x) { return option(x, x.charAt(0).toUpperCase() + x.slice(1), partLabel); }).join("");
-    var amountLabel = dealAmountLabel(type, partLabel);
-    var dealFields = '<div class="x97-deal-builder x97-card x97-pad"><div class="x97-deal-builder-top"><div><div class="x97-deal-eyebrow">Deal builder</div><div class="x97-deal-builder-title">Structure the money</div></div><span class="x97-deal-live-badge">Live preview</span></div><div class="x97-deal-builder-sub">One parent deal can contain payments, months, parts, scenes, episodes, units or milestones. The app creates the schedule for you.</div>' +
-      '<div class="x97-deal-steps"><span class="active"><i>1</i> Structure</span><span><i>2</i> Amount</span><span><i>3</i> Schedule</span></div>' +
-      '<div class="x97-fields-2">' + field("Payment structure", '<select class="x97-select x97-deal-control" name="dealType"' + (locked ? " disabled" : "") + '>' + dealOptions + '</select>') + field("Part label", '<select class="x97-select x97-deal-control" name="partLabel"' + (locked ? " disabled" : "") + '>' + labelOptions + '</select>') + '</div>' +
-      '<div class="x97-fields-2"><div class="x97-deal-count-field">' + field("Number of parts", '<input class="x97-input x97-deal-control" name="partCount" type="number" min="1" max="120" step="1" value="' + attr(partCount) + '"' + (locked ? " disabled" : "") + '>') + '</div><div class="x97-deal-interval-field">' + field("Days between parts", '<input class="x97-input x97-deal-control" name="partEvery" type="number" min="1" max="365" step="1" value="' + attr(item.partEvery || 7) + '"' + (locked ? " disabled" : "") + '>') + '</div></div>' +
-      '<div class="x97-fields-2"><div>' + fieldWithLabelId("x97-deal-amount-label", amountLabel, '<input class="x97-input x97-deal-control" name="amount" inputmode="decimal" type="number" min="0" step="1" value="' + attr(amountValue) + '" placeholder="0"' + (locked ? " disabled" : "") + '>', locked ? "Schedule locked after money was recorded." : "The app calculates the full deal value and every payment.") + '</div><div>' + field("Currency", '<select class="x97-select x97-deal-control" name="currency"' + (locked ? " disabled" : "") + '>' + option("UGX","UGX",item.currency) + option("USD","USD",item.currency) + '</select>') + '</div></div>' +
-      '<div class="x97-fields-2"><div>' + field("First due date", '<input class="x97-input x97-deal-control" name="startDate" type="date" value="' + attr(firstDue) + '"' + (locked ? " disabled" : "") + '>') + '</div><div class="x97-deal-second-field">' + field("Second half due", '<input class="x97-input x97-deal-control" name="secondDue" type="date" value="' + attr(secondDue) + '"' + (locked ? " disabled" : "") + '>') + '</div></div>' +
-      '<div id="x97-deal-hint" class="x97-deal-type-hint"></div><div id="x97-deal-glance" class="x97-deal-glance"></div><div class="x97-deal-schedule-heading"><div><b>Review the schedule</b><span>Adjust dates before saving.</span></div><span class="x97-deal-schedule-dot">●</span></div><div id="x97-deal-preview" class="x97-deal-preview"></div>' + (locked ? '<div class="x97-deal-lock-note">Money has already been recorded. Dates and financial structure are locked; you can still update the client, category, contact and note.</div>' : '') + '</div>';
-    var body = '<form id="x97-upcoming-form" data-x97-form="upcoming"><input type="hidden" name="id" value="' + attr(item.id) + '">' +
-      field("Client / project", '<input class="x97-input" name="client" required maxlength="160" placeholder="e.g. Apollo Studios" value="' + attr(item.client) + '">') +
-      field("WhatsApp number", '<input class="x97-input" name="phone" inputmode="tel" value="' + attr(item.phone || "") + '" placeholder="e.g. 0772 123 456">' +
-        (hasContacts ? '<input class="x97-input x97-contact-search" style="margin-top:8px" placeholder="Or search any contact — e.g. a name, nickname, part of a number…">' : '') +
-        '<div id="x97-contact-suggest">' + contactPickerHTML("", doc, item.client, item.phone) + '</div>', "Used for payment reminders. Local (0772…) or full (+256772…) both work.") +
-      dealFields +
-      '<details class="x97-more"' + (existing ? " open" : "") + '><summary class="x97-more-summary">' + icon("chevron", 12) + ' More details</summary><div class="x97-more-body">' +
-      '<div class="x97-fields-2">' +
-      field("Category", '<select class="x97-select" name="category">' + categories.map(function(x){return option(x,x,item.category);}).join("") + '</select>') +
-      field("Status", '<select class="x97-select" name="status">' + statuses.map(function(x){return option(x,x,item.status);}).join("") + '</select>') + '</div>' +
-      field("Expected date", '<input class="x97-input" name="expectedBy" type="date" value="' + attr(firstDue) + '"><div class="x97-chips" style="padding-top:7px"><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="0">Today</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="7">+7 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-days="30">+30 days</button><button type="button" class="x97-chip" data-x97-action="quick-date" data-value="month-end">Month end</button></div>') +
-      field("Note", '<textarea class="x97-textarea" name="note" maxlength="500" placeholder="Invoice, follow-up context, or next action">' + esc(item.note) + '</textarea>') + '</div></details></form>';
-    if (existing) body += '<div class="x97-doc-actions"><button type="button" class="x97-btn" data-x97-action="open-invoice" data-id="' + attr(item.id) + '">' + icon("list", 15) + ' Invoice</button>' +
-      (paidOf(item) > 0 ? '<button type="button" class="x97-btn" data-x97-action="open-receipt" data-id="' + attr(item.id) + '">' + icon("check", 15) + ' Receipt</button>' : '') +
-      (!isPaid(item.status) && !isCancelled(item.status) ? '<button type="button" class="x97-btn teal" data-x97-action="mark-paid" data-id="' + attr(item.id) + '">' + icon("wallet", 15) + ' Record payment</button>' : '') + '</div>';
-    var foot = (existing && !locked ? '<button class="x97-btn danger" data-x97-action="delete-upcoming" data-id="' + attr(item.id) + '">' + icon("trash") + ' Delete</button>' : '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button>') + '<button class="x97-btn primary" type="submit" form="x97-upcoming-form">' + icon("check") + (existing ? " Save changes" : " Add incoming deal") + '</button>';
-    openSheet(existing ? "Edit upcoming" : "Add upcoming", body, foot, { afterOpen: function (back) {
-      var clientInput = back.querySelector('input[name="client"]'), phoneInput = back.querySelector('input[name="phone"]'), searchInput = back.querySelector(".x97-contact-search"), box = back.querySelector("#x97-contact-suggest");
-      var form = back.querySelector("#x97-upcoming-form"), preview = back.querySelector("#x97-deal-preview"), typeInput = back.querySelector('[name="dealType"]');
-      function draftValues() { var values = formValues(form); Array.prototype.slice.call(back.querySelectorAll(".x97-deal-date")).forEach(function (el) { values[el.name] = el.value; }); return values; }
-      function refreshDealPreview(changed) { if (!preview || !typeInput) return; var values = draftValues(); var normalizedType = normalizeDealType(values.dealType || typeInput.value); var draft = clone(item); draft.dealType = normalizedType; draft.partLabel = values.partLabel || partLabel; draft.partCount = values.partCount || partCount; draft.partEvery = values.partEvery || item.partEvery || 7; draft.currency = values.currency || item.currency; draft.parts = locked && item.parts ? clone(item.parts) : dealPartsFor(item, values); var total = draft.parts.reduce(function (s, p) { return s + num(p.amount); }, 0); var hint = back.querySelector("#x97-deal-hint"), glance = back.querySelector("#x97-deal-glance"), amountLabelEl = back.querySelector("#x97-deal-amount-label"); if (hint) hint.textContent = dealTypeHint(normalizedType, draft.partLabel); if (amountLabelEl) amountLabelEl.textContent = dealAmountLabel(normalizedType, draft.partLabel); if (glance) glance.innerHTML = '<div><span>Structure</span><b>' + esc(DEAL_TYPES[normalizedType]) + '</b></div><div><span>Unit price</span><b>' + money(normalizedType === "split" || normalizedType === "one" ? (draft.parts[0] ? draft.parts[0].amount : 0) : (draft.parts[0] ? draft.parts[0].amount : 0), draft.currency) + '</b></div><div><span>Total value</span><b>' + money(total, draft.currency) + '</b></div>'; preview.innerHTML = dealScheduleHTML(draft, locked ? "locked" : true) + '<div class="x97-deal-total"><span>Deal total</span><b>' + money(total, draft.currency) + '</b></div>'; if (!locked) Array.prototype.slice.call(preview.querySelectorAll(".x97-deal-date")).forEach(function (el) { el.addEventListener("input", function () { var start = back.querySelector('[name="startDate"]'), expected = back.querySelector('[name="expectedBy"]'); if (el.name === "partDate_0") { if (start) start.value = el.value; if (expected) expected.value = el.value; } refreshDealPreview(el); }); }); }
-      function toggleDealFields() { var value = normalizeDealType(typeInput ? typeInput.value : "one"); var count = back.querySelector(".x97-deal-count-field"), interval = back.querySelector(".x97-deal-interval-field"), second = back.querySelector(".x97-deal-second-field"), label = back.querySelector('[name="partLabel"]'); if (count) count.style.display = value === "one" || value === "split" ? "none" : "block"; if (interval) interval.style.display = value === "monthly" || value === "one" || value === "split" ? "none" : "block"; if (second) second.style.display = value === "split" ? "block" : "none"; if (label) label.closest(".x97-field").style.display = value === "one" ? "none" : "block"; refreshDealPreview(); }
-      if (typeInput) { typeInput.addEventListener("change", toggleDealFields); Array.prototype.slice.call(back.querySelectorAll(".x97-deal-control, .x97-deal-builder input, [name=\"expectedBy\"]")).forEach(function (el) { function onDealInput() { if (el.name === "startDate" || el.name === "expectedBy") { var other = back.querySelector('[name="' + (el.name === "startDate" ? "expectedBy" : "startDate") + '"]'); if (other) other.value = el.value; Array.prototype.slice.call(preview.querySelectorAll(".x97-deal-date")).forEach(function (date) { date.value = ""; }); } refreshDealPreview(el); } el.addEventListener("input", onDealInput); el.addEventListener("change", onDealInput); }); toggleDealFields(); }
-      if (!clientInput || !phoneInput || !box) return;
-      var timer = null;
-      function refresh() {
-        clearTimeout(timer);
-        timer = setTimeout(function () { box.innerHTML = contactPickerHTML(searchInput ? searchInput.value : "", readDoc(), clientInput.value, phoneInput.value); }, 150);
-      }
-      clientInput.addEventListener("input", function () { if (!searchInput || !searchInput.value.trim()) refresh(); });
-      phoneInput.addEventListener("input", refresh);
-      if (searchInput) searchInput.addEventListener("input", refresh);
-      back.addEventListener("click", function (e) {
-        var chip = e.target.closest && e.target.closest(".x97-contact-chip"); if (!chip) return;
-        phoneInput.value = chip.dataset.phone;
-        refresh();
-      });
-    } });
-  }
-
   function openUpcomingForm(id) {
     var doc = readDoc(), existing = id ? (doc.followups || []).find(function (x) { return String(x.id) === String(id); }) : null;
     var item = existing ? clone(existing) : { id: "", client: "", category: "One Time", amount: "", currency: "UGX", status: "Pending", expectedBy: "", phone: "", note: "", dealType: "one", partLabel: "parts", partCount: 1, partEvery: 7 };
@@ -3885,41 +3841,6 @@
     } });
   }
 
-  function openPaymentFormLegacy(id) {
-    var doc = readDoc();
-    var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(id); });
-    if (!item) { toast("That payment is no longer there", "error"); return; }
-    var currency = String(item.currency || "UGX").toUpperCase();
-    var gross = grossOf(item), already = paidOf(item), left = outstandingOf(item);
-    var history = paymentsFor(doc, item.id);
-    var accounts = (doc.balances || []).map(function (b) { return option(b.id, b.account + " · " + money(b.balance, FX_HOME), ""); }).join("");
-    var progress = already > 0
-      ? '<div class="x97-pay-progress"><div class="x97-pay-bar"><i style="width:' + Math.min(100, Math.round(already / (gross || 1) * 100)) + '%"></i></div>' +
-        '<div class="x97-pay-split"><span>Paid ' + money(already, currency) + '</span><b>' + money(left, currency) + ' left</b></div></div>'
-      : "";
-    var historyHTML = history.length
-      ? '<div class="x97-field"><label>Payments so far</label><div class="x97-pay-log">' + history.map(function (p) {
-          return '<div class="x97-pay-row"><div><b class="x97-money">' + money(p.amount, p.currency) + '</b><span>' + esc(formatDate(p.date, true)) + (p.accountName ? " · " + esc(p.accountName) : "") + '</span></div>' +
-            '<button type="button" class="x97-mini danger" data-x97-action="undo-payment" data-id="' + attr(p.id) + '">' + icon("trash", 12) + ' Undo</button></div>';
-        }).join("") + '</div></div>'
-      : "";
-    var body = '<form id="x97-pay-form" data-x97-form="payment"><input type="hidden" name="id" value="' + attr(item.id) + '">' +
-      '<div class="x97-card x97-pad" style="margin-bottom:14px"><div class="x97-row-sub">' + esc(item.client || "Receivable") + '</div>' +
-        '<div class="x97-money" style="font-size:28px;margin-top:5px">' + money(left, currency) + '</div>' +
-        '<div class="x97-row-sub">Still owed of ' + esc(money(gross, currency)) + '</div>' + progress + '</div>' +
-      field("Amount received", '<input class="x97-input" name="amount" type="number" required min="1" max="' + attr(left) + '" step="1" value="' + attr(left) + '">' +
-        '<div class="x97-chips" style="padding-top:7px"><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="25">25%</button><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="50">50%</button><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="75">75%</button><button type="button" class="x97-chip" data-x97-action="pay-part" data-value="100">Full amount</button></div>',
-        "Enter less than the full amount to record a part payment — the rest stays outstanding.") +
-      field("Date received", '<input class="x97-input" name="date" type="date" required value="' + todayISO() + '">') +
-      field("Into which account", '<select class="x97-select" name="accountId"><option value="">Don\'t change any balance</option>' + accounts + '</select>',
-        currency === "USD" ? "Dollars are converted at today's live rate before the balance moves." : "The selected account balance goes up by this amount.") +
-      field("Note", '<input class="x97-input" name="note" maxlength="200" placeholder="Optional — e.g. MoMo ref, deposit slip">') +
-      historyHTML + '</form>';
-    var foot = '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button>' +
-      '<button class="x97-btn primary" type="submit" form="x97-pay-form">' + icon("check") + ' Record payment</button>';
-    openSheet("Record payment", body, foot);
-  }
-
   function openPaymentForm(id) {
     var doc = readDoc(), item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(id); });
     if (!item) { toast("That payment is no longer there", "error"); return; }
@@ -3967,21 +3888,6 @@
     var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(v.id); });
     var left = item ? outstandingOf(item) : 0;
     toast(left > 0 ? money(left, String(saved.currency)) + " still outstanding" : "Settled in full — nice one", "success");
-  }
-
-  function openFilters(doc) {
-    var f = state.upcoming;
-    var statuses = Array.from(new Set((doc.followups || []).map(function(x){return normalizeStatus(x.status);}).concat(["Pending","Paid"]))).filter(Boolean).sort();
-    var currencies = Array.from(new Set((doc.followups || []).map(function(x){return String(x.currency||"UGX").toUpperCase();}))).filter(Boolean).sort();
-    var categories = Array.from(new Set((doc.followups || []).map(function(x){return String(x.category||"");}))).filter(Boolean).sort();
-    function checks(name, values, selected) { return '<div class="x97-checks">' + values.map(function(v){return '<label class="x97-check"><input type="checkbox" name="' + attr(name) + '" value="' + attr(v) + '" ' + (selected.indexOf(v)>=0?"checked":"") + '><span>' + esc(v) + '</span></label>';}).join("") + '</div>'; }
-    var body = '<form id="x97-filter-form" data-x97-form="filters">' +
-      field("Status", checks("statuses",statuses,f.statuses)) + field("Currency",checks("currencies",currencies,f.currencies)) + field("Category",checks("categories",categories,f.categories)) +
-      '<div class="x97-fields-2">' + field("Date from",'<input class="x97-input" type="date" name="from" value="'+attr(f.from)+'">') + field("Date to",'<input class="x97-input" type="date" name="to" value="'+attr(f.to)+'">') + '</div>' +
-      '<div class="x97-fields-2">' + field("Minimum amount",'<input class="x97-input" type="number" min="0" name="minAmount" value="'+attr(f.minAmount)+'" placeholder="0">') + field("Maximum amount",'<input class="x97-input" type="number" min="0" name="maxAmount" value="'+attr(f.maxAmount)+'" placeholder="No limit">') + '</div>' +
-      field("Sort results",'<select class="x97-select" name="sort">'+option("urgency","Urgency first",f.sort)+option("dateAsc","Date — earliest first",f.sort)+option("dateDesc","Date — latest first",f.sort)+option("amountDesc","Amount — highest first",f.sort)+option("amountAsc","Amount — lowest first",f.sort)+option("client","Client A–Z",f.sort)+'</select>') + '</form>';
-    var foot = '<button class="x97-btn" data-x97-action="reset-advanced-filters">Reset</button><button class="x97-btn primary" type="submit" form="x97-filter-form">' + icon("filter") + ' Apply filters</button>';
-    openSheet("Filter Upcoming",body,foot);
   }
 
   function openAccountForm(id) {
@@ -4051,33 +3957,6 @@
       } else data[el.name] = el.value;
     });
     return data;
-  }
-
-  function submitUpcomingLegacy(form) {
-    var v=formValues(form), id=v.id||uid("fu");
-    updateDoc(function(doc){
-      var i=doc.followups.findIndex(function(x){return String(x.id)===String(id);});
-      var old=i>=0?doc.followups[i]:null;
-      var locked=!!(old&&dealHasRecordedMoney(old));
-      if (locked) {
-        doc.followups[i]=Object.assign({},old,{client:v.client.trim(),category:v.category,phone:(v.phone||"").trim(),note:(v.note||"").trim()});
-        return;
-      }
-      var type=normalizeDealType(v.dealType||"one");
-      var structured=type!=="one";
-      var parts=structured?dealPartsFor(old||{},v):[];
-      var gross=structured?parts.reduce(function(s,p){return s+num(p.amount);},0):roundMoney(v.amount);
-      var already=old?paidOf(old):0;
-      var due=structured?(parts[0]&&parts[0].dueDate||v.expectedBy||""):(v.startDate||v.expectedBy||"");
-      var settled=already>0&&already>=gross-0.5;
-      var item={id:id,client:v.client.trim(),category:v.category,gross:gross,paid:already,amount:already>0&&!settled?roundMoney(gross-already):gross,currency:String(v.currency||"UGX").toUpperCase(),status:settled?"Paid":v.status,expectedBy:due,phone:(v.phone||"").trim(),note:(v.note||"").trim()};
-      if(structured){item.dealType=type;item.partLabel=dealLabel({partLabel:v.partLabel||(type==="monthly"?"months":"parts")});item.partCount=parts.length;item.partEvery=Math.max(1,Math.round(num(v.partEvery||7)));item.partAmount=parts[0]?num(parts[0].amount):0;item.parts=parts;}
-      var next=Object.assign({},old||{},item);
-      if(structured) rebuildDealParts(doc,next);
-      else {delete next.dealType;delete next.partLabel;delete next.partCount;delete next.partEvery;delete next.partAmount;delete next.parts;}
-      if(i>=0)doc.followups[i]=next;else doc.followups.unshift(next);
-    },"upcoming-save");
-    closeSheet(); if(remindState.open) refreshRemind();
   }
 
   function submitUpcoming(form) {
@@ -5335,10 +5214,6 @@
     var s = document.createElement("style"); s.id = "x97-camp-css"; s.textContent = css; document.head.appendChild(s);
   }
 
-  function submitFilters(form) {
-    var v=formValues(form);state.upcoming.statuses=v.statuses||[];state.upcoming.currencies=v.currencies||[];state.upcoming.categories=v.categories||[];state.upcoming.from=v.from||"";state.upcoming.to=v.to||"";state.upcoming.minAmount=v.minAmount||"";state.upcoming.maxAmount=v.maxAmount||"";state.upcoming.sort=v.sort||"urgency";savePrefs();closeSheet();scheduleRender(0);
-  }
-
   function submitAccount(form) {
     var v=formValues(form),id=v.id||uid("acct");updateDoc(function(doc){var i=doc.balances.findIndex(function(x){return String(x.id)===String(id);});var item={id:id,account:v.account.trim(),line:v.line.trim(),balance:roundMoney(v.balance),notes:v.notes.trim()};if(i>=0)doc.balances[i]=Object.assign({},doc.balances[i],item);else doc.balances.push(item);},"account-save");closeSheet();
   }
@@ -5361,7 +5236,7 @@
   }
 
   document.addEventListener("submit", function (e) {
-    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="payment")submitPayment(form);else if(type==="filters")submitFilters(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);else if(type==="wa-numbers")submitNumbers(form);else if(type==="google-setup")submitGoogleSetup(form);
+    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="payment")submitPayment(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);else if(type==="wa-numbers")submitNumbers(form);else if(type==="google-setup")submitGoogleSetup(form);
   });
 
   document.addEventListener("input", function (e) {
@@ -5389,14 +5264,11 @@
     if(action==="undo-payment"){if(confirm("Undo this payment? The amount goes back to outstanding and any account credit is reversed.")){var pid=btn.dataset.id,fid="";updateDoc(function(doc){var p=(doc.payments||[]).find(function(x){return String(x.id)===String(pid);});if(p)fid=p.followupId;reversePayment(doc,pid);},"payment-undo");closeSheet();if(fid)openPaymentForm(fid);}return;}
     if(action==="delete-upcoming"){var targetDoc=readDoc(),targetItem=targetDoc&&(targetDoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(targetItem&&dealHasRecordedMoney(targetItem)){toast("A deal with recorded money cannot be deleted","error");return;}if(confirm("Delete this upcoming payment?")){updateDoc(function(doc){doc.followups=doc.followups.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"upcoming-delete");closeSheet();}return;}
     if(action==="quick-date"){var value=btn.dataset.value==="month-end"?dateISO(endOfMonth(todayDate())):dateISO(addDays(todayDate(),num(btn.dataset.days))),changed=[];var input=document.querySelector("#x97-upcoming-form [name=expectedBy]"),start=document.querySelector("#x97-upcoming-form [name=startDate]"),first=document.querySelector("#x97-upcoming-form [name=firstDue]"),depositDue=document.querySelector("#x97-upcoming-form [name=depositDue]");if(input){input.value=value;changed.push(input);}if(start){start.value=value;changed.push(start);}if(first){first.value=value;changed.push(first);}if(depositDue){depositDue.value=value;changed.push(depositDue);}var second=document.querySelector("#x97-upcoming-form [name=secondDue]"),balanceDue=document.querySelector("#x97-upcoming-form [name=balanceDue]"),dealTypeInput=document.querySelector("#x97-upcoming-form [name=dealType]");if(second&&dealTypeInput&&(dealTypeInput.value==="split"||dealTypeInput.value==="deposit")&&!second.value){second.value=value;changed.push(second);}if(balanceDue&&dealTypeInput&&dealTypeInput.value==="deposit"&&!balanceDue.value){balanceDue.value=value;changed.push(balanceDue);}changed.forEach(function(el){try{el.dispatchEvent(new Event("input",{bubbles:true}));}catch(_){}});return;}
-    if(action==="upcoming-view"){state.upcoming.view=btn.dataset.value;savePrefs();scheduleRender(0);return;}
     if(action==="quick-filter"){state.upcoming.quick=btn.dataset.value;savePrefs();scheduleRender(0);return;}
-    if(action==="month-filter"){state.upcoming.month=btn.dataset.value;savePrefs();scheduleRender(0);return;}
-    if(action==="open-month"){state.upcoming.view="list";state.upcoming.month=btn.dataset.month;state.upcoming.quick="open";savePrefs();var item=findNavItem("upcoming");if(item&&!item.classList.contains("on"))item.click();else scheduleRender(0);return;}
-    if(action==="open-filters"){openFilters(readDoc());return;}
+    if(action==="open-month"){state.upcoming.month=btn.dataset.month;state.upcoming.quick="open";savePrefs();var item=findNavItem("upcoming");if(item&&!item.classList.contains("on"))item.click();else scheduleRender(0);return;}
     if(action==="clear-filter"){var k=btn.dataset.filter;if(k==="month")state.upcoming.month="all";else if(k==="statuses")state.upcoming.statuses=[];else if(k==="currencies")state.upcoming.currencies=[];else if(k==="categories")state.upcoming.categories=[];else if(k==="dates"){state.upcoming.from="";state.upcoming.to="";}else if(k==="amount"){state.upcoming.minAmount="";state.upcoming.maxAmount="";}else if(k==="sort")state.upcoming.sort="urgency";savePrefs();scheduleRender(0);return;}
-    if(action==="clear-all-filters"||action==="reset-advanced-filters"){state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.sort="urgency";if(action==="clear-all-filters"){state.upcoming.month="all";state.upcoming.quick="all";}savePrefs();if(action==="reset-advanced-filters")openFilters(readDoc());else scheduleRender(0);return;}
-    if(action==="go-upcoming"||action==="go-upcoming-months"){if(action.indexOf("months")>=0)state.upcoming.view="months";var up=findNavItem("upcoming");if(up)up.click();return;}
+    if(action==="clear-all-filters"){state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.sort="urgency";state.upcoming.month="all";state.upcoming.quick="all";savePrefs();scheduleRender(0);return;}
+    if(action==="go-upcoming"||action==="go-upcoming-months"){var up=findNavItem("upcoming");if(up)up.click();return;}
     if(action==="record-payment"){var current=readDoc(), summary=current&&analytics(current), target=summary&&(summary.overdue[0]||summary.next7[0]);if(target)openPaymentForm(target.itemId);else {var firstOpen=current&&(current.followups||[]).find(isOpenFollowup);if(firstOpen)openPaymentForm(firstOpen.id);else toast("Add an incoming deal first","error");}return;}
     if(action==="go-expenses"){var expenses=findNavItem("expenses");if(expenses)expenses.click();return;}
     if(action==="go-credit"){var cr=findNavItem("credit");if(cr)cr.click();return;}

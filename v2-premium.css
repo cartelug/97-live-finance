@@ -1725,7 +1725,10 @@ body > .x97-fab.x97-fab-viewport,
   flex-direction: column;
   overflow: hidden;
   box-sizing: border-box;
-  padding-bottom: calc(var(--x97-nav-h, 67px) + env(safe-area-inset-bottom)) !important;
+  /* The nav is a floating pill, not a docked bar: it sits --v4-nav-gap above
+     the bottom edge and is --v4-nav-height tall. Reserving only the old
+     67px bar height let it sit on top of the status bar and zoom control. */
+  padding-bottom: calc(var(--v4-nav-height, 70px) + var(--v4-nav-gap, 12px) + 8px + env(safe-area-inset-bottom)) !important;
   width: 100%;
   max-width: 2200px;
   margin-inline: auto;
@@ -1812,7 +1815,8 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 .ig-head-row .ig-rownum { background: var(--card2); }
 .ig-sticky { position: sticky; z-index: 2; }
 .ig-sticky-num { left: 0; z-index: 3; }
-.ig-sticky-client { left: var(--ig-rownum-w); z-index: 2; font-weight: 600; font-size: max(9.5px, calc(11px * var(--ig-zoom, 1))) !important; background: var(--card); }
+/* The client is the row's identity — small, but the boldest thing in it. */
+.ig-sticky-client { left: var(--ig-rownum-w); z-index: 2; font-weight: 800; font-size: max(9.5px, calc(11px * var(--ig-zoom, 1))) !important; background: var(--card); letter-spacing: -.01em; }
 .ig-head-row .ig-sticky { z-index: 7; }
 .ig-head-row .ig-sticky-num { z-index: 8; }
 
@@ -1843,8 +1847,25 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 .ig-cur-opt.on.ig-cur-ugx { background: var(--posdim); border-color: color-mix(in srgb, var(--pos) 40%, transparent); }
 .ig-cur-opt.on.ig-cur-usd { background: var(--usddim); border-color: color-mix(in srgb, var(--usd) 40%, transparent); }
 
+/* ── One colour vocabulary, used the same way everywhere ───────────────────
+   red = late · amber = due now/soon · green = money in or settled ·
+   grey = cancelled or undated. It appears three times per row — the edge
+   marker, the due date, and the balance — so a glance down any one of them
+   tells the same story. */
 .ig-tone-bad { color: var(--neg); font-weight: 700; }
 .ig-tone-warn { color: var(--warn); font-weight: 700; }
+.ig-tone-good { color: var(--pos); font-weight: 700; }
+.ig-tone-owed { color: var(--tx); font-weight: 700; }
+.ig-tone-paid { color: var(--pos); }
+
+/* Row edge marker: the row's state, readable without reading a single word. */
+.ig-row .ig-rownum { box-shadow: inset 3px 0 0 transparent; }
+.ig-row-bad .ig-rownum { box-shadow: inset 3px 0 0 var(--neg); color: var(--neg); }
+.ig-row-warn .ig-rownum { box-shadow: inset 3px 0 0 var(--warn); color: var(--warn); }
+.ig-row-good .ig-rownum { box-shadow: inset 3px 0 0 var(--pos); color: var(--pos); }
+.ig-row-undated .ig-rownum { box-shadow: inset 3px 0 0 var(--tx3); }
+.ig-row-muted .ig-rownum { box-shadow: inset 3px 0 0 var(--line2); }
+.ig-row-muted .ig-c-client { text-decoration: line-through; opacity: .7; }
 
 .ig-resize { position: absolute; right: 0; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; }
 .ig-resize:hover, .ig-resize:active { background: color-mix(in srgb, var(--pos) 22%, transparent); }
@@ -1868,20 +1889,28 @@ select.ig-edit-input { padding: 0 4px; }
 .ig-zpct:hover { color: var(--pos); }
 
 .ig-summary {
-  /* Exactly four tiles: always one row, each capped so they stay dense on a
+  /* Five period tiles: always one row, each capped so they stay dense on a
      2560px monitor and shrink to fit rather than wrapping on a tablet. */
-  display: grid; grid-template-columns: repeat(4, minmax(0, 210px)); justify-content: start;
+  display: grid; grid-template-columns: repeat(5, minmax(0, 190px)); justify-content: start;
   background: var(--card); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
   flex: 0 0 auto; overflow: hidden;
 }
 .ig-stat { background: var(--card); padding: clamp(5px, 1.2vw, 8px) var(--ig-gut); min-width: 0; border-right: 1px solid var(--line); }
-.ig-stat-label { font-size: clamp(8.5px, 1.6vw, 9.5px); font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ig-stat-label { display: flex; align-items: center; gap: 5px; font-size: clamp(8.5px, 1.6vw, 9.5px); font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ig-stat-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--tx3); opacity: .55; }
 .ig-stat-value { font-size: clamp(13.5px, 2.6vw, 16px); font-weight: 650; color: var(--tx); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -.02em; }
 .ig-stat-sub { font-size: clamp(9px, 1.8vw, 10px); color: var(--tx3); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ig-stat-bad .ig-stat-value { color: var(--neg); }
-.ig-stat-bad .ig-stat-sub { color: var(--neg); opacity: .82; }
-.ig-stat-warn .ig-stat-value { color: var(--warn); }
-.ig-stat-warn .ig-stat-sub { color: var(--warn); opacity: .82; }
+/* Tiles carry the same vocabulary as the rows, so "red" means the same
+   thing at the top of the screen as it does in the sheet. */
+.ig-stat-bad .ig-stat-value, .ig-stat-bad .ig-stat-label { color: var(--neg); }
+.ig-stat-bad .ig-stat-dot { background: var(--neg); opacity: 1; }
+.ig-stat-warn .ig-stat-value, .ig-stat-warn .ig-stat-label { color: var(--warn); }
+.ig-stat-warn .ig-stat-dot { background: var(--warn); opacity: 1; }
+.ig-stat-good .ig-stat-dot { background: var(--pos); opacity: 1; }
+.ig-stat-total { background: var(--card2); }
+.ig-stat-total .ig-stat-value { color: var(--tx); font-weight: 800; }
+.ig-stat-total .ig-stat-dot { background: var(--tx2); opacity: .8; }
+.ig-stat-empty { color: var(--tx3); opacity: .6; font-weight: 500; }
 
 .ig-menu { position: fixed; z-index: 70; min-width: 170px; background: var(--card); border: 1px solid var(--line2); border-radius: 12px; box-shadow: var(--elev-2); padding: 6px; display: flex; flex-direction: column; gap: 1px; }
 .ig-menu-item { text-align: left; padding: 8px 10px; border-radius: 8px; border: 0; background: transparent; font-size: 12.5px; font-weight: 650; color: var(--tx); cursor: pointer; }
