@@ -1726,19 +1726,39 @@ body > .x97-fab.x97-fab-viewport,
   overflow: hidden;
   box-sizing: border-box;
   padding-bottom: calc(var(--x97-nav-h, 67px) + env(safe-area-inset-bottom)) !important;
-  width: 100vw;
-  margin-left: calc(50% - 50vw);
+  width: 100%;
   max-width: 2200px;
+  margin-inline: auto;
 }
-body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap { padding-bottom: 0; }
+/* The app centres every screen in a 520/1040px column. A sheet wants the
+   whole window, so the column is released while Incoming is on screen — by
+   widening the container rather than the old 100vw + negative-margin
+   breakout, which overflowed the page by the scrollbar's width. */
+body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
+  max-width: none !important;
+  padding-bottom: 0;
+}
 
-.ig-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
-.ig-shell .x97-top { padding: max(8px, env(safe-area-inset-top)) clamp(12px, 2vw, 20px) 4px; flex: 0 0 auto; }
-.ig-shell .x97-title { font-size: clamp(16px, 3.4vw, 20px); }
+.ig-shell {
+  /* One knob controls the horizontal rhythm of every chrome strip, so the
+     whole workspace tightens together as the viewport narrows. */
+  --ig-gut: clamp(8px, 2vw, 18px);
+  display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden;
+}
+.ig-shell .x97-top { padding: max(6px, env(safe-area-inset-top)) var(--ig-gut) 4px; flex: 0 0 auto; }
+/* The shared header ships a 46px display title and a 56px status pill — right
+   for a dashboard, far too heavy above a spreadsheet. These win with the same
+   !important the injected base styles use, and only inside .ig-shell. */
+.ig-shell .x97-title { font-size: clamp(15px, 2vw, 20px) !important; line-height: 1.15 !important; letter-spacing: -.03em !important; }
+.ig-shell .x97-cloud { min-height: 0 !important; padding: 5px 10px !important; font-size: 9.5px !important; box-shadow: none !important; }
+.ig-shell .x97-add-primary { height: 32px !important; min-height: 0 !important; border-radius: 9px !important; }
 .ig-shell .x97-top-copy { gap: 1px; }
+/* "COLLECTIONS" above a title that already reads "Incoming" costs 31px of
+   every screen to say nothing twice. */
+.ig-shell .x97-eyebrow { display: none; }
 .ig-shell .x97-sub { display: none; }
 
-.ig-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px clamp(10px, 2vw, 18px); flex: 0 0 auto; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.ig-toolbar { display: flex; align-items: center; gap: 6px; padding: 5px var(--ig-gut); flex: 0 0 auto; border-top: 1px solid var(--line); flex-wrap: nowrap; }
 .ig-toolbar-group { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
 .ig-tsep { width: 1px; align-self: stretch; background: var(--line2); margin: 4px 2px; }
 .ig-tbtn { height: 34px; min-width: 34px; padding: 0 9px; border-radius: 9px; border: 1px solid transparent; background: transparent; color: var(--tx2); display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 750; cursor: pointer; }
@@ -1750,19 +1770,19 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap { padding-botto
 .ig-toolbar-search input { flex: 1; min-width: 0; border: 0; background: transparent; font-size: 12.5px; color: var(--tx); outline: none; }
 .ig-search-ic { color: var(--tx3); display: flex; }
 
-.ig-quickviews { display: flex; gap: 6px; padding: 0 clamp(10px, 2vw, 18px) 6px; flex: 0 0 auto; overflow-x: auto; scrollbar-width: none; }
+.ig-quickviews { display: flex; gap: 5px; padding: 0 var(--ig-gut) 5px; flex: 0 0 auto; overflow-x: auto; scrollbar-width: none; }
 .ig-quickviews::-webkit-scrollbar { display: none; }
 .ig-quick { white-space: nowrap; height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--tx2); font-size: 10.5px; font-weight: 750; display: inline-flex; align-items: center; gap: 5px; }
 .ig-quick b { font-weight: 800; color: var(--tx3); }
 .ig-quick.on { background: var(--posdim); border-color: rgba(14,117,72,.25); color: var(--pos); }
 .ig-quick.on b { color: var(--pos); }
 
-.ig-filterchips { padding: 0 clamp(10px, 2vw, 18px) 6px; flex: 0 0 auto; }
+.ig-filterchips { padding: 0 var(--ig-gut) 5px; flex: 0 0 auto; }
 .ig-filterchips .x97-active-filters { margin: 0; }
 
-.ig-formula-bar { display: flex; align-items: center; gap: 8px; padding: 5px clamp(10px, 2vw, 18px); flex: 0 0 auto; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--card2); }
-.ig-cell-ref { flex: 0 0 auto; min-width: 64px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 800; color: var(--tx3); padding: 0 8px; height: 28px; display: flex; align-items: center; border-right: 1px solid var(--line2); }
-.ig-formula-input { flex: 1; min-width: 0; height: 28px; border: 0; background: transparent; font-size: 12.5px; color: var(--tx); outline: none; font-family: var(--fnum); }
+.ig-formula-bar { display: flex; align-items: center; gap: 8px; padding: 4px var(--ig-gut); flex: 0 0 auto; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--card2); }
+.ig-cell-ref { flex: 0 0 auto; min-width: 64px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 800; color: var(--tx3); padding: 0 8px; height: 24px; display: flex; align-items: center; border-right: 1px solid var(--line2); }
+.ig-formula-input { flex: 1; min-width: 0; height: 24px; border: 0; background: transparent; font-size: 12.5px; color: var(--tx); outline: none; font-family: var(--fnum); }
 .ig-formula-input:disabled { color: var(--tx3); }
 
 .ig-gridwrap { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; }
@@ -1837,8 +1857,9 @@ select.ig-edit-input { padding: 0 4px; }
 .ig-empty strong { font-size: 14px; color: var(--tx); }
 .ig-empty p { font-size: 12px; color: var(--tx3); max-width: 260px; margin: 0; }
 
-.ig-statusbar { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px clamp(10px, 2vw, 18px); font-size: 10.5px; color: var(--tx3); border-top: 1px solid var(--line); background: var(--card2); padding-bottom: max(6px, env(safe-area-inset-bottom)); }
-.ig-statusbar-info { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ig-statusbar { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; padding: 4px var(--ig-gut); font-size: 10.5px; color: var(--tx3); border-top: 1px solid var(--line); background: var(--card2); padding-bottom: max(4px, env(safe-area-inset-bottom)); }
+.ig-statusbar-info { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ig-statusbar-info > span { overflow: hidden; text-overflow: ellipsis; }
 .ig-statusbar-sep { opacity: .5; }
 .ig-zoom { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; background: var(--card); border: 1px solid var(--line2); border-radius: 999px; padding: 3px; box-shadow: var(--elev-1); }
 .ig-zbtn { width: 28px; height: 28px; border-radius: 999px; border: 0; background: transparent; color: var(--tx2); display: grid; place-items: center; cursor: pointer; }
@@ -1846,8 +1867,14 @@ select.ig-edit-input { padding: 0 4px; }
 .ig-zpct { min-width: 42px; height: 28px; padding: 0 6px; border: 0; background: transparent; color: var(--tx2); font-size: 10.5px; font-weight: 800; cursor: pointer; }
 .ig-zpct:hover { color: var(--pos); }
 
-.ig-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(138px, 1fr)); gap: 1px; background: var(--line); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); flex: 0 0 auto; }
-.ig-stat { background: var(--card); padding: clamp(6px, 1.4vw, 8px) clamp(10px, 2vw, 16px); min-width: 0; }
+.ig-summary {
+  /* Exactly four tiles: always one row, each capped so they stay dense on a
+     2560px monitor and shrink to fit rather than wrapping on a tablet. */
+  display: grid; grid-template-columns: repeat(4, minmax(0, 210px)); justify-content: start;
+  background: var(--card); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  flex: 0 0 auto; overflow: hidden;
+}
+.ig-stat { background: var(--card); padding: clamp(5px, 1.2vw, 8px) var(--ig-gut); min-width: 0; border-right: 1px solid var(--line); }
 .ig-stat-label { font-size: clamp(8.5px, 1.6vw, 9.5px); font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ig-stat-value { font-size: clamp(13.5px, 2.6vw, 16px); font-weight: 650; color: var(--tx); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -.02em; }
 .ig-stat-sub { font-size: clamp(9px, 1.8vw, 10px); color: var(--tx3); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1883,20 +1910,85 @@ select.ig-edit-input { padding: 0 4px; }
   .ig-zpct { height: 32px; }
 }
 
-/* Narrow phones: compact toolbar labels, keep every control reachable,
-   summary tiles fold from 4-across to a 2x2 grid. */
+/* ── Compact title row (any screen that is narrow OR short) ────────────────
+   The title block costs ~72px at rest: a 34px title (its underline padding)
+   plus a 56px save-state pill. Neither earns that on a phone — the bottom
+   nav already says "Incoming" — so the row collapses to a single line and
+   the pill shrinks to a chip. Scoped to .ig-shell, so the same header on
+   Dashboard and Credit is untouched. */
+@media (max-width: 759px), (max-height: 520px) {
+  .ig-shell .x97-top {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: max(4px, env(safe-area-inset-top)) var(--ig-gut) 4px;
+  }
+  .ig-shell .x97-title { font-size: 15px !important; margin: 0 !important; padding: 0 !important; min-height: 0; line-height: 1.2 !important; }
+  .ig-shell .x97-title::after, .ig-shell .x97-title::before { display: none !important; }
+  .ig-shell .x97-top-copy { display: block; min-width: 0; }
+  .ig-shell .x97-top-actions { gap: 6px; flex: 0 0 auto; }
+  .ig-shell .x97-add-primary { display: none; }
+  .ig-shell .x97-cloud {
+    min-height: 0 !important; padding: 3px 8px !important; font-size: 9px !important; gap: 5px;
+    border-radius: 999px !important; box-shadow: none !important;
+  }
+  .ig-shell .x97-cloud i { width: 6px !important; height: 6px !important; box-shadow: none !important; }
+}
+
+/* ── Phones ────────────────────────────────────────────────────────────────
+   A phone screen is a vertical budget, not a canvas. Every strip above the
+   grid is money spent, so on narrow screens the title row collapses to one
+   line, the four summary tiles become one scrolling row of pills, the
+   toolbar stays on a single row (undo/redo and columns live in More), and
+   the value bar steps aside — tapping a cell edits it in place anyway.
+   This is what takes chrome from ~400px to ~170px on a 375px phone. */
 @media (max-width: 759px) {
   .ig-tlabel { display: none; }
-  .ig-toolbar { padding: 6px 10px; gap: 6px; }
-  .ig-shell .x97-top { padding: max(8px, env(safe-area-inset-top)) 10px 4px; }
-  .ig-cell-ref { min-width: 56px; }
-  .ig-statusbar { font-size: 10px; flex-wrap: wrap; }
-  .ig-statusbar-info { flex: 1 1 auto; }
+  .ig-cell-ref { min-width: 48px; max-width: 120px; }
+  .ig-statusbar { font-size: 10px; }
+
+  /* Summary: one horizontally scrolling row of single-line pills. */
+  .ig-summary { display: flex; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .ig-summary::-webkit-scrollbar { display: none; }
+  .ig-stat {
+    flex: 0 0 auto; display: flex; align-items: baseline; gap: 5px;
+    padding: 5px var(--ig-gut); max-width: none; white-space: nowrap;
+  }
+  .ig-stat-label { font-size: 9px; }
+  .ig-stat-value { font-size: 12.5px; margin-top: 0; }
+  .ig-stat-sub { font-size: 9.5px; margin-top: 0; }
+  .ig-stat-sub::before { content: "· "; opacity: .55; }
+
+  /* Value bar duplicates in-cell editing on touch; give the rows its 38px. */
+  .ig-formula-bar { display: none; }
+
+  /* Secondary controls move to the More sheet so the toolbar never wraps. */
+  .ig-toolbar { padding: 4px var(--ig-gut); gap: 4px; }
+  .ig-tbtn-redo, .ig-tbtn-columns { display: none; }
+  .ig-tsep { display: none; }
+  .ig-toolbar-search { flex: 1 1 90px; }
 }
-@media (max-width: 420px) {
-  .ig-toolbar-search { order: 3; flex-basis: 100%; }
+
+/* ── Short viewports (landscape phones) ────────────────────────────────────
+   844x390 previously rendered zero grid rows. Below ~520px tall, everything
+   optional is cut so the sheet itself survives rotation. */
+@media (max-height: 520px) {
+  .ig-summary, .ig-quickviews, .ig-formula-bar, .ig-filterchips { display: none; }
+  .ig-shell .x97-top { padding: 2px var(--ig-gut); }
+  .ig-shell .x97-title { font-size: 13px !important; }
+  .ig-toolbar { padding: 3px var(--ig-gut); }
+  .ig-statusbar { padding: 2px var(--ig-gut); padding-bottom: max(2px, env(safe-area-inset-bottom)); font-size: 9.5px; }
+  .ig-tbtn { height: 30px; min-width: 30px; }
+  .ig-zbtn { width: 26px; height: 26px; }
+  .ig-zpct { height: 26px; }
+}
+
+/* ── Scroll-away chrome ────────────────────────────────────────────────────
+   Once the user starts working down the sheet, the summary row folds away
+   and hands its height to the rows. It comes straight back at the top. */
+@media (max-width: 759px) {
+  .ig-summary { transition: max-height 140ms ease, opacity 120ms ease; max-height: 60px; }
+  .ig-shell.ig-scrolled .ig-summary { max-height: 0; opacity: 0; border-bottom-width: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ig-cell, .ig-menu { transition: none !important; }
+  .ig-cell, .ig-menu, .ig-summary { transition: none !important; }
 }

@@ -2604,7 +2604,7 @@
     rows: [], byId: {}, order: [], rowEls: {}, cellEls: {},
     widths: {}, hidden: {}, zoom: 1,
     scrollTop: 0, scrollLeft: 0,
-    quickEntry: null, pendingFocusRow: null,
+    quickEntry: null, pendingFocusRow: null, chromeAway: false,
     undoStack: [], redoStack: [],
     pendingExternalRender: false,
     menuEl: null, selEls: [], activeEl: null, activeRowEl: null, activeHeadEl: null
@@ -2754,14 +2754,14 @@
     return '<div class="ig-toolbar">' +
       '<div class="ig-toolbar-group">' +
         '<button class="ig-tbtn" data-x97-action="grid-undo" title="Undo"' + (gridState.undoStack.length ? "" : " disabled") + '>' + icon("undo", 16) + '</button>' +
-        '<button class="ig-tbtn" data-x97-action="grid-redo" title="Redo"' + (gridState.redoStack.length ? "" : " disabled") + '>' + icon("redo", 16) + '</button>' +
+        '<button class="ig-tbtn ig-tbtn-redo" data-x97-action="grid-redo" title="Redo"' + (gridState.redoStack.length ? "" : " disabled") + '>' + icon("redo", 16) + '</button>' +
         '<span class="ig-tsep"></span>' +
         '<button class="ig-tbtn" data-x97-action="grid-add-row" title="Add row">' + icon("plus", 16) + '<span class="ig-tlabel">Row</span></button>' +
       '</div>' +
       '<div class="ig-toolbar-search"><span class="ig-search-ic">' + icon("search", 15) + '</span><input id="x97-up-search" autocomplete="off" placeholder="Search Incoming" value="' + attr(f.search) + '"></div>' +
       '<div class="ig-toolbar-group">' +
         '<button class="ig-tbtn" data-x97-action="open-grid-filters" title="Filter"><span class="ig-tbtn-badge-wrap">' + icon("filter", 16) + (count ? '<b class="ig-tbadge">' + count + '</b>' : "") + '</span><span class="ig-tlabel">Filter</span></button>' +
-        '<button class="ig-tbtn" data-x97-action="open-grid-columns" title="Columns">' + icon("columns", 16) + '</button>' +
+        '<button class="ig-tbtn ig-tbtn-columns" data-x97-action="open-grid-columns" title="Columns">' + icon("columns", 16) + '</button>' +
         '<button class="ig-tbtn" data-x97-action="open-grid-more" title="More">' + icon("dots", 16) + '</button>' +
       '</div>' +
     '</div>';
@@ -3449,7 +3449,18 @@
     igIndexDom(body);
     scroll.scrollTop = gridState.scrollTop || 0;
     scroll.scrollLeft = gridState.scrollLeft || 0;
-    scroll.addEventListener("scroll", function () { gridState.scrollTop = scroll.scrollTop; gridState.scrollLeft = scroll.scrollLeft; }, { passive: true });
+    var shell = root && root.querySelector(".ig-shell");
+    scroll.addEventListener("scroll", function () {
+      gridState.scrollTop = scroll.scrollTop;
+      gridState.scrollLeft = scroll.scrollLeft;
+      // Hand the summary strip's height back to the rows once the user is
+      // working down the sheet; it returns as soon as they scroll back up.
+      if (shell) {
+        var away = scroll.scrollTop > 24;
+        if (away !== gridState.chromeAway) { gridState.chromeAway = away; shell.classList.toggle("ig-scrolled", away); }
+      }
+    }, { passive: true });
+    if (shell && gridState.chromeAway) shell.classList.add("ig-scrolled");
     if (!gridState.active && gridState.order.length) {
       var cols0 = igVisibleCols();
       if (cols0.length) { gridState.anchor = { rowId: gridState.order[0], col: cols0[0].key }; gridState.active = gridState.anchor; }
