@@ -1827,6 +1827,28 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 
 .ig-cell.ig-in-range { background: color-mix(in srgb, var(--pos) 10%, var(--card)); }
 .ig-cell.ig-active { outline: 2px solid var(--pos); outline-offset: -2px; z-index: 4; background: color-mix(in srgb, var(--pos) 20%, var(--card)); }
+
+/* One crisp rectangle around a multi-cell selection, the way Sheets draws a
+   range — the per-cell tint above still shows which cells are in it, this
+   is what makes the selection read as one shape instead of a smear. */
+.ig-range-frame { position: absolute; display: none; border: 2px solid var(--pos); pointer-events: none; z-index: 3; box-sizing: border-box; }
+
+/* Fill handle: a small square anchored to the active cell's corner, the
+   single most identifiable Sheets affordance. Dragging it down or up a
+   column copies the cell's value onto whatever it passes over. */
+.ig-fill-handle {
+  position: absolute; right: -4px; bottom: -4px; width: 9px; height: 9px;
+  background: var(--pos); border: 2px solid var(--card); border-radius: 2px;
+  cursor: crosshair; z-index: 6; touch-action: none;
+}
+.ig-fill-handle:hover { transform: scale(1.15); }
+body.ig-filling { cursor: crosshair !important; user-select: none !important; }
+.ig-cell.ig-fill-preview { outline: 1px dashed var(--pos); outline-offset: -1px; background: color-mix(in srgb, var(--pos) 6%, var(--card)); }
+
+/* Sum/Count for a numeric range — the live answer to "what does this add
+   up to" without leaving the sheet. */
+.ig-selstats { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; font-size: 10.5px; color: var(--tx2); white-space: nowrap; }
+.ig-selstats b { color: var(--tx); font-weight: 800; margin-left: 3px; }
 .ig-row.ig-row-active .ig-rownum { background: var(--posdim); color: var(--pos); }
 .ig-colhead.ig-col-active { color: var(--pos); }
 .ig-row-settled .ig-c-client, .ig-row-settled .ig-c-gross { opacity: .72; }
@@ -1978,6 +2000,7 @@ select.ig-edit-input { padding: 0 4px; }
   .ig-tlabel { display: none; }
   .ig-cell-ref { min-width: 48px; max-width: 120px; }
   .ig-statusbar { font-size: 10px; }
+  .ig-selstats { gap: 8px; font-size: 9.5px; }
 
   /* Summary: one horizontally scrolling row of single-line pills. */
   .ig-summary { display: flex; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }

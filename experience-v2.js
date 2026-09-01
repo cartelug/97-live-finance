@@ -2565,7 +2565,7 @@
     quickEntry: null, pendingFocusRow: null, chromeAway: false,
     undoStack: [], redoStack: [],
     pendingExternalRender: false,
-    menuEl: null, selEls: [], activeEl: null, activeRowEl: null, activeHeadEl: null
+    menuEl: null, selEls: [], activeEl: null, activeRowEl: null, activeHeadEl: null, fillPreviewEls: []
   };
   var IG_ZOOM_MIN = 0.6, IG_ZOOM_MAX = 1.3, IG_ZOOM_STEP = 0.1;
 
@@ -2766,6 +2766,7 @@
   function igStatusBarHTML(filteredCount, totalCount, stats) {
     var zoomPct = Math.round((gridState.zoom || 1) * 100);
     return '<div class="ig-statusbar"><div class="ig-statusbar-info"><span>' + filteredCount + ' of ' + totalCount + ' row' + (totalCount === 1 ? "" : "s") + '</span><span class="ig-statusbar-sep">·</span><span>Outstanding ' + esc(money(stats.outstandingUGX, "UGX", true)) + (stats.outstandingUSD ? " + " + esc(money(stats.outstandingUSD, "USD", true)) : "") + '</span></div>' +
+      '<div class="ig-selstats" id="ig-selstats" hidden></div>' +
       '<div class="ig-zoom" role="group" aria-label="Grid zoom">' +
         '<button class="ig-zbtn" data-x97-action="grid-zoom" data-value="out" title="Zoom out" aria-label="Zoom out">' + icon("minus", 13) + '</button>' +
         '<button class="ig-zpct" data-x97-action="grid-zoom" data-value="reset" title="Reset zoom">' + zoomPct + '%</button>' +
@@ -2862,7 +2863,7 @@
       (activeFilterCount() ? '<div class="ig-filterchips">' + filterTagHTML() + '</div>' : "") +
       igFormulaBarHTML() +
       '<div class="ig-gridwrap" id="ig-gridwrap"><div class="ig-scroll" id="ig-scroll" tabindex="0" role="grid" aria-rowcount="' + rows.length + '" aria-label="Incoming receivables">' +
-        '<div class="ig-grid-inner" id="ig-grid-inner" style="--ig-zoom:' + (gridState.zoom || 1) + ';--ig-rownum-w:' + igRownumWidth() + 'px;--ig-tpl:' + igTemplate() + '">' + igHeaderHTML() + '<div class="ig-body" id="ig-body">' + bodyRows + '</div></div>' +
+        '<div class="ig-grid-inner" id="ig-grid-inner" style="--ig-zoom:' + (gridState.zoom || 1) + ';--ig-rownum-w:' + igRownumWidth() + 'px;--ig-tpl:' + igTemplate() + '">' + igHeaderHTML() + '<div class="ig-body" id="ig-body">' + bodyRows + '</div><div id="ig-range-frame" class="ig-range-frame" aria-hidden="true"></div></div>' +
         empty +
       '</div></div>' +
       igStatusBarHTML(filtered.length, all.length, stats) +
@@ -2891,7 +2892,11 @@
 
   function igClearActiveClasses() {
     (gridState.selEls || []).forEach(function (el) { el.classList.remove("ig-in-range"); });
-    if (gridState.activeEl) gridState.activeEl.classList.remove("ig-active");
+    if (gridState.activeEl) {
+      gridState.activeEl.classList.remove("ig-active");
+      var oldHandle = gridState.activeEl.querySelector(".ig-fill-handle");
+      if (oldHandle) oldHandle.remove();
+    }
     if (gridState.activeRowEl) gridState.activeRowEl.classList.remove("ig-row-active");
     if (gridState.activeHeadEl) gridState.activeHeadEl.classList.remove("ig-col-active");
     gridState.selEls = []; gridState.activeEl = null; gridState.activeRowEl = null; gridState.activeHeadEl = null;
@@ -2920,9 +2925,52 @@
     if (document.activeElement !== input) input.value = igRawValue(row, col.key);
   }
 
+  function igUpdateRangeFrame(bounds) {
+    var frame = document.getElementById("ig-range-frame");
+    if (!frame) return;
+    var single = !bounds || (bounds.r0 === bounds.r1 && bounds.c0 === bounds.c1);
+    if (single) { frame.style.display = "none"; return; }
+    var tl = gridState.cellEls[gridState.order[bounds.r0]] && gridState.cellEls[gridState.order[bounds.r0]][bounds.cols[bounds.c0]];
+    var br = gridState.cellEls[gridState.order[bounds.r1]] && gridState.cellEls[gridState.order[bounds.r1]][bounds.cols[bounds.c1]];
+    if (!tl || !br) { frame.style.display = "none"; return; }
+    frame.style.display = "block";
+    frame.style.left = tl.offsetLeft + "px";
+    frame.style.top = tl.offsetTop + "px";
+    frame.style.width = (br.offsetLeft + br.offsetWidth - tl.offsetLeft) + "px";
+    frame.style.height = (br.offsetTop + br.offsetHeight - tl.offsetTop) + "px";
+  }
+
+  // What a marquee of numbers is worth — Sheets' Sum/Count status strip.
+  // Split by currency, since adding UGX to USD would just be wrong.
+  function igSelectionStats(bounds) {
+    if (!bounds || (bounds.r0 === bounds.r1 && bounds.c0 === bounds.c1)) return null;
+    var count = 0, sums = { UGX: 0, USD: 0 }, numericCount = 0;
+    for (var r = bounds.r0; r <= bounds.r1; r++) {
+      var row = gridState.byId[gridState.order[r]];
+      if (!row) continue;
+      for (var c = bounds.c0; c <= bounds.c1; c++) {
+        var col = igColDef(bounds.cols[c]);
+        count++;
+        if (col && col.type === "money") { sums[row.currency === "USD" ? "USD" : "UGX"] += num(row[col.key]); numericCount++; }
+      }
+    }
+    return { count: count, numericCount: numericCount, sums: sums };
+  }
+  function igUpdateSelectionStats(bounds) {
+    var el = document.getElementById("ig-selstats");
+    if (!el) return;
+    var s = igSelectionStats(bounds);
+    if (!s || !s.numericCount) { el.hidden = true; el.innerHTML = ""; return; }
+    var parts = [];
+    if (s.sums.UGX) parts.push(esc(money(s.sums.UGX, "UGX", true)));
+    if (s.sums.USD) parts.push(esc(money(s.sums.USD, "USD", true)));
+    el.innerHTML = '<span>Count <b class="tabnum">' + s.count + '</b></span><span>Sum <b class="tabnum">' + (parts.join(" + ") || "0") + '</b></span>';
+    el.hidden = false;
+  }
+
   function igPaintActive() {
     igClearActiveClasses();
-    if (!gridState.active || !gridState.byId[gridState.active.rowId]) { igUpdateFormulaBar(); return; }
+    if (!gridState.active || !gridState.byId[gridState.active.rowId]) { igUpdateFormulaBar(); igUpdateRangeFrame(null); igUpdateSelectionStats(null); return; }
     var bounds = igRangeBounds();
     if (bounds) {
       for (var r = bounds.r0; r <= bounds.r1; r++) {
@@ -2934,12 +2982,24 @@
       }
     }
     var activeEl = gridState.cellEls[gridState.active.rowId] && gridState.cellEls[gridState.active.rowId][gridState.active.col];
-    if (activeEl) { activeEl.classList.add("ig-active"); gridState.activeEl = activeEl; }
+    if (activeEl) {
+      activeEl.classList.add("ig-active"); gridState.activeEl = activeEl;
+      // The fill handle only makes sense on a value you can type into, and
+      // only when nothing is in the way of dragging it.
+      var col = igColDef(gridState.active.col), row = gridState.byId[gridState.active.rowId];
+      if (col && row && igEditable(col, row) && !gridState.editing) {
+        var handle = document.createElement("div");
+        handle.className = "ig-fill-handle";
+        activeEl.appendChild(handle);
+      }
+    }
     var rowEl = gridState.rowEls[gridState.active.rowId];
     if (rowEl) { rowEl.classList.add("ig-row-active"); gridState.activeRowEl = rowEl; }
     var headEl = document.querySelector('.ig-colhead[data-colhead="' + gridState.active.col + '"]');
     if (headEl) { headEl.classList.add("ig-col-active"); gridState.activeHeadEl = headEl; }
     igUpdateFormulaBar();
+    igUpdateRangeFrame(bounds);
+    igUpdateSelectionStats(bounds);
   }
 
   function igScrollCellIntoView(rowId, col) {
@@ -2994,7 +3054,10 @@
     cell.className = igCellClass(col, row);
     cell.title = igCellText(col, row);
     cell.innerHTML = igCellInner(col, row);
-    if (gridState.active && gridState.active.rowId === rowId && gridState.active.col === colKey) cell.classList.add("ig-active");
+    if (gridState.active && gridState.active.rowId === rowId && gridState.active.col === colKey) {
+      cell.classList.add("ig-active");
+      if (igEditable(col, row)) cell.appendChild(Object.assign(document.createElement("div"), { className: "ig-fill-handle" }));
+    }
   }
 
   function igFlushPendingExternalRender() {
@@ -3219,6 +3282,70 @@
     toast("Row deleted", "success");
   }
 
+  /* Fill handle — drag the active cell's corner down (or up) a column to
+     copy its value onto every cell it passes over, exactly like Sheets. One
+     batched write on release, not one per row crossed. */
+  function igFillPreview(fromIndex, toIndex, colKey) {
+    igClearFillPreview();
+    var lo = Math.min(fromIndex, toIndex), hi = Math.max(fromIndex, toIndex);
+    for (var i = lo; i <= hi; i++) {
+      var rid = gridState.order[i];
+      var el = rid && gridState.cellEls[rid] && gridState.cellEls[rid][colKey];
+      if (el) { el.classList.add("ig-fill-preview"); gridState.fillPreviewEls.push(el); }
+    }
+  }
+  function igClearFillPreview() {
+    (gridState.fillPreviewEls || []).forEach(function (el) { el.classList.remove("ig-fill-preview"); });
+    gridState.fillPreviewEls = [];
+  }
+  function igCommitFill(startRowId, startIndex, endIndex, colKey, sourceValue) {
+    var lo = Math.min(startIndex, endIndex), hi = Math.max(startIndex, endIndex);
+    if (lo === hi) return;
+    var col = igColDef(colKey), touched = [];
+    for (var i = lo; i <= hi; i++) {
+      var rid = gridState.order[i];
+      if (!rid || String(rid) === String(startRowId)) continue;
+      var row = gridState.byId[rid];
+      if (row && igEditable(col, row)) touched.push(rid);
+    }
+    if (!touched.length) return;
+    touched.forEach(function (rid) { igPushUndo(rid); });
+    updateDoc(function (doc) {
+      var byId = {}; (doc.followups || []).forEach(function (it) { byId[it.id] = it; });
+      touched.forEach(function (rid) { var item = byId[rid]; if (item) igMutateField(doc, item, colKey, sourceValue); });
+    }, "grid-fill", true);
+    toast("Filled " + touched.length + " cell" + (touched.length === 1 ? "" : "s"), "success");
+  }
+  function igStartFillDrag(e) {
+    if (!gridState.active || gridState.editing) return;
+    var startRowId = gridState.active.rowId, colKey = gridState.active.col;
+    var col = igColDef(colKey), row = gridState.byId[startRowId];
+    if (!col || !row || !igEditable(col, row)) return;
+    var sourceValue = igRawValue(row, colKey);
+    var startIndex = gridState.order.indexOf(startRowId);
+    if (startIndex < 0) return;
+    var lastTarget = startIndex, moved = false;
+    document.body.classList.add("ig-filling");
+    function onMove(ev) {
+      var el = document.elementFromPoint(ev.clientX, ev.clientY);
+      var cell = el && el.closest && el.closest('.ig-cell[data-col="' + colKey + '"]');
+      if (!cell) return;
+      var rid = cell.getAttribute("data-row"), idx = gridState.order.indexOf(rid);
+      if (idx < 0) return;
+      moved = true; lastTarget = idx;
+      igFillPreview(startIndex, idx, colKey);
+    }
+    function onUp() {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("ig-filling");
+      igClearFillPreview();
+      if (moved) igCommitFill(startRowId, startIndex, lastTarget, colKey, sourceValue);
+    }
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  }
+
   function igClearableKeys() { return { category: 1, phone: 1, note: 1, due: 1 }; }
   function igClearSelectionValues() {
     var bounds = igRangeBounds();
@@ -3372,6 +3499,8 @@
     function touchIds() { return Object.keys(touches); }
     function touchDist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
     scroll.addEventListener("pointerdown", function (e) {
+      var fillHandle = e.target.closest && e.target.closest(".ig-fill-handle");
+      if (fillHandle) { e.preventDefault(); e.stopPropagation(); igStartFillDrag(e); return; }
       if (e.pointerType === "touch") {
         touches[e.pointerId] = { x: e.clientX, y: e.clientY };
         if (touchIds().length === 2) {
@@ -3428,6 +3557,27 @@
     scroll.addEventListener("pointercancel", function (e) { endTouch(e); dragging = false; clearTimeout(lpTimer); startCell = null; });
   }
 
+  // Real autofit, not a reset to the default: every row is already in the
+  // DOM (nothing here is virtualised), so the widest rendered cell in the
+  // column is measured directly rather than guessed.
+  function igAutofitColumn(key, inner) {
+    var col = igColDef(key);
+    if (!col) return;
+    var max = 0;
+    var headEl = document.querySelector('.ig-colhead[data-colhead="' + key + '"]');
+    if (headEl) max = Math.max(max, headEl.scrollWidth);
+    Object.keys(gridState.cellEls).forEach(function (rid) {
+      var cell = gridState.cellEls[rid][key];
+      if (cell) max = Math.max(max, cell.scrollWidth);
+    });
+    if (!max) return;
+    var zoom = gridState.zoom || 1;
+    // Store the unzoomed base width, matching how igColWidth() re-scales it.
+    gridState.widths[key] = Math.round(Math.max(col.min, Math.min(420, max + 20)) / zoom);
+    inner.style.setProperty("--ig-tpl", igTemplate());
+    igSavePersistedWidths();
+  }
+
   function igWireResize(inner) {
     Array.prototype.slice.call(inner.querySelectorAll(".ig-resize")).forEach(function (handle) {
       handle.addEventListener("pointerdown", function (e) {
@@ -3445,9 +3595,7 @@
       });
       handle.addEventListener("dblclick", function (e) {
         e.stopPropagation();
-        delete gridState.widths[handle.getAttribute("data-resize")];
-        inner.style.setProperty("--ig-tpl", igTemplate());
-        igSavePersistedWidths();
+        igAutofitColumn(handle.getAttribute("data-resize"), inner);
       });
     });
   }
@@ -3483,6 +3631,24 @@
       if (mod && !e.shiftKey && (e.key === "z" || e.key === "Z")) { e.preventDefault(); igUndo(); return; }
       if (mod && ((e.shiftKey && (e.key === "z" || e.key === "Z")) || e.key === "y" || e.key === "Y")) { e.preventDefault(); igRedo(); return; }
       if (mod && (e.key === "f" || e.key === "F")) { e.preventDefault(); var s = document.getElementById("x97-up-search"); if (s) s.focus(); return; }
+      if (mod && !e.shiftKey && (e.key === "a" || e.key === "A")) {
+        e.preventDefault();
+        var allCols = igVisibleCols();
+        if (gridState.order.length && allCols.length) {
+          gridState.anchor = { rowId: gridState.order[0], col: allCols[0].key };
+          gridState.active = { rowId: gridState.order[gridState.order.length - 1], col: allCols[allCols.length - 1].key };
+          igPaintActive();
+        }
+        return;
+      }
+      if (mod && e.key === "Home") { e.preventDefault(); igSetActive(gridState.order[0], igVisibleCols()[0].key); return; }
+      if (mod && e.key === "End") { var ec = igVisibleCols(); e.preventDefault(); igSetActive(gridState.order[gridState.order.length - 1], ec[ec.length - 1].key); return; }
+      if (e.key === "F2") {
+        e.preventDefault();
+        var f2row = gridState.byId[gridState.active.rowId], f2col = igColDef(gridState.active.col);
+        if (f2col && igEditable(f2col, f2row)) igBeginEdit(gridState.active.rowId, gridState.active.col);
+        return;
+      }
       if (e.key === "ArrowDown") { e.preventDefault(); igStep(e.shiftKey, 1, 0); return; }
       if (e.key === "ArrowUp") { e.preventDefault(); igStep(e.shiftKey, -1, 0); return; }
       if (e.key === "ArrowLeft") { e.preventDefault(); igStep(e.shiftKey, 0, -1); return; }
