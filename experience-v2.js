@@ -2543,12 +2543,12 @@
   var IG_COLS = [
     { key: "client", label: "Client", width: 148, min: 96, type: "text", align: "left", sticky: true },
     { key: "gross", label: "Total", width: 106, min: 84, type: "money", align: "right" },
-    { key: "paid", label: "Paid", width: 96, min: 78, type: "money", align: "right", action: true },
-    { key: "balance", label: "Balance", width: 106, min: 84, type: "money", align: "right", action: true },
+    { key: "paid", label: "Paid", width: 96, min: 78, type: "money", align: "right" },
+    { key: "balance", label: "Balance", width: 106, min: 84, type: "money", align: "right" },
     { key: "currency", label: "Cur", width: 60, min: 54, type: "currency", align: "center" },
-    { key: "status", label: "Status", width: 98, min: 84, type: "status", align: "left", action: true },
+    { key: "status", label: "Status", width: 98, min: 84, type: "status", align: "left" },
     { key: "due", label: "Due date", width: 100, min: 88, type: "date", align: "left" },
-    { key: "structure", label: "Structure", width: 116, min: 96, type: "structure", align: "left", action: true },
+    { key: "structure", label: "Structure", width: 116, min: 96, type: "structure", align: "left" },
     { key: "phone", label: "WhatsApp", width: 118, min: 96, type: "phone", align: "left" },
     { key: "note", label: "Notes", width: 190, min: 130, type: "text", align: "left" }
   ];
@@ -2656,9 +2656,14 @@
   function igBuildRows(doc, list) { return list.map(function (item, i) { return igBuildRow(item, doc, i + 1); }); }
 
   function igEditable(col, row) {
+    // Structure is the shape of a schedule rather than a value you type, so
+    // it stays read-only here; the deal builder is on the row's menu.
+    if (col.key === "structure") return false;
     if (col.key === "gross") return !row.structured && !row.locked;
     if (col.key === "currency" || col.key === "due") return !row.locked;
-    if (col.action) return false;
+    // Money is corrected in the cell, never behind a form. A cancelled deal
+    // takes no money.
+    if (col.key === "paid" || col.key === "balance") return row.statusTone !== "muted";
     return true;
   }
 
@@ -2675,8 +2680,7 @@
   function igCellClass(col, row) {
     var cls = ["ig-cell", "ig-c-" + col.key, "ig-a-" + col.align];
     if (col.sticky) cls.push("ig-sticky", "ig-sticky-client");
-    if (col.action) cls.push("ig-action");
-    else if (igEditable(col, row)) cls.push("ig-editable");
+    if (igEditable(col, row)) cls.push("ig-editable");
     else cls.push("ig-readonly");
     if (col.key === "status") cls.push("ig-tone-badge");
     if (col.key === "due" && row.dueTone) cls.push("ig-tone-" + row.dueTone);
@@ -2912,7 +2916,7 @@
     ref.textContent = (row.client || "Row " + row.index) + " · " + col.label;
     var editable = igEditable(col, row);
     input.disabled = !editable;
-    input.placeholder = editable ? "Type to edit, Enter to commit" : (col.action ? "Click the cell to open" : "Locked — edit via the deal");
+    input.placeholder = editable ? "Type to edit, Enter to commit" : "Read-only — set on the deal";
     if (document.activeElement !== input) input.value = igRawValue(row, col.key);
   }
 
@@ -2997,6 +3001,33 @@
     if (gridState.pendingExternalRender) { gridState.pendingExternalRender = false; scheduleRender(0); }
   }
 
+  /* Typing a figure into Paid (or Balance, which is its mirror) has to leave
+     the payment ledger telling the truth, because the dashboard, receipts
+     and account balances all read from it. Raising the figure records a
+     payment for the difference; lowering it reverses the most recent
+     payments until the totals agree again. */
+  function igSetPaidTotal(doc, item, target) {
+    var gross = grossOf(item);
+    target = Math.max(0, Math.min(roundMoney(target), gross));
+    if (Math.abs(target - paidOf(item)) < 0.5) return true;
+    if (target > paidOf(item)) {
+      return !!applyPayment(doc, item.id, { amount: roundMoney(target - paidOf(item)), date: todayISO(), accountId: "", note: "Entered in sheet" });
+    }
+    var newestFirst = paymentsFor(doc, item.id).slice().sort(function (a, b) {
+      return String(b.createdAt || b.date || "").localeCompare(String(a.createdAt || a.date || ""));
+    });
+    for (var i = 0; i < newestFirst.length && paidOf(item) > target + 0.5; i++) reversePayment(doc, newestFirst[i].id);
+    if (paidOf(item) > target + 0.5) {
+      // Older records carried a paid figure with no ledger entry behind it.
+      item.paid = roundMoney(target);
+      item.amount = roundMoney(Math.max(0, gross - target));
+      rebuildDealParts(doc, item);
+    } else if (paidOf(item) < target - 0.5) {
+      applyPayment(doc, item.id, { amount: roundMoney(target - paidOf(item)), date: todayISO(), accountId: "", note: "Entered in sheet" });
+    }
+    return true;
+  }
+
   function igMutateField(doc, item, colKey, value) {
     if (colKey === "client") { item.client = String(value || "").trim(); return true; }
     if (colKey === "category") { item.category = String(value || "").trim() || "One Time"; return true; }
@@ -3014,6 +3045,16 @@
       if (dealHasRecordedMoney(item)) return false;
       if (Array.isArray(item.parts) && item.parts.length) { item.parts[0].dueDate = value; rebuildDealParts(doc, item); }
       else item.expectedBy = value;
+      return true;
+    }
+    if (colKey === "paid") { if (isCancelled(item.status)) return false; return igSetPaidTotal(doc, item, value); }
+    // Balance is Paid seen from the other side: say what is still owed and
+    // the received figure follows.
+    if (colKey === "balance") { if (isCancelled(item.status)) return false; return igSetPaidTotal(doc, item, grossOf(item) - roundMoney(value)); }
+    if (colKey === "status") {
+      if (/cancel/i.test(String(value))) { item.status = "Cancelled"; return true; }
+      // Reopening hands the status back to whatever the money says it is.
+      item.status = paidOf(item) <= 0 ? "Pending" : outstandingOf(item) > 0 ? "Part Paid" : "Paid";
       return true;
     }
     return false;
@@ -3071,12 +3112,24 @@
       '</div>';
       Array.prototype.slice.call(cell.querySelectorAll(".ig-cur-opt")).forEach(function (btn) {
         btn.addEventListener("click", function (e) { e.stopPropagation(); igCommitCurrencyChoice(rowId, btn.getAttribute("data-cur")); });
+        btn.addEventListener("keydown", function (e) { if (e.key === "Escape") { e.preventDefault(); igCancelEdit(); } });
       });
+      var firstOpt = cell.querySelector(".ig-cur-opt");
+      if (firstOpt) setTimeout(function () { firstOpt.focus(); }, 0);
       return;
     }
     var value = igRawValue(row, colKey), inputHTML;
-    if (colKey === "due") inputHTML = '<input class="ig-edit-input" type="date" value="' + attr(value) + '">';
-    else if (colKey === "gross") inputHTML = '<input class="ig-edit-input ig-edit-num" type="number" inputmode="decimal" min="0" step="1" value="' + attr(value) + '">';
+    if (colKey === "status") {
+      // Paid and Part Paid are what the money says, so they are shown but
+      // not choosable; cancelling and reopening are the real decisions.
+      inputHTML = '<select class="ig-edit-input">' +
+        (row.status === "Paid" || row.status === "Part Paid" ? '<option value="' + attr(row.status) + '" selected>' + esc(row.status) + '</option>' : "") +
+        option("Pending", "Pending", row.status === "Pending" ? "Pending" : "") +
+        option("Cancelled", "Cancelled", row.status === "Cancelled" ? "Cancelled" : "") +
+      '</select>';
+    }
+    else if (colKey === "due") inputHTML = '<input class="ig-edit-input" type="date" value="' + attr(value) + '">';
+    else if (colKey === "gross" || colKey === "paid" || colKey === "balance") inputHTML = '<input class="ig-edit-input ig-edit-num" type="number" inputmode="decimal" min="0" step="1" value="' + attr(roundMoney(value)) + '">';
     else if (colKey === "phone") inputHTML = '<input class="ig-edit-input" type="text" inputmode="tel" value="' + attr(value) + '">';
     else if (colKey === "client") inputHTML = '<input class="ig-edit-input" type="text" list="ig-client-list" value="' + attr(value) + '">';
     else inputHTML = '<input class="ig-edit-input" type="text" value="' + attr(value) + '">';
@@ -3086,6 +3139,9 @@
     input.setAttribute("enterkeyhint", gridState.quickEntry === rowId ? "next" : "done");
     input.addEventListener("keydown", igEditKeydown);
     input.addEventListener("blur", igEditBlur);
+    // Picking from a dropdown is the decision — it should not also need an
+    // Enter or a tap elsewhere to stick.
+    if (input.tagName === "SELECT") input.addEventListener("change", function () { igCommitEdit(); });
     setTimeout(function () { input.focus(); if (input.select) input.select(); }, 0);
   }
   function igEditKeydown(e) {
@@ -3105,7 +3161,11 @@
     var e = gridState.editing, rowId = e.rowId, colKey = e.col;
     var cell = gridState.cellEls[rowId] && gridState.cellEls[rowId][colKey];
     var input = cell && cell.querySelector(".ig-edit-input");
-    var value = input ? input.value : "";
+    // Some editors are not a single input — the currency picker is a pair of
+    // buttons that commits on its own. With nothing to read there is nothing
+    // to commit, and writing an empty value here would blank the cell.
+    if (!input) { gridState.editing = null; igRepaintCell(rowId, colKey); igFlushPendingExternalRender(); return; }
+    var value = input.value;
     gridState.editing = null;
     var row = gridState.byId[rowId], col = igColDef(colKey);
     if (!row || !col) return;
@@ -3123,16 +3183,10 @@
     if (!ok) { gridState.undoStack.pop(); igRepaintCell(rowId, "currency"); toast("That field is locked", "error"); }
   }
 
-  function igRunCellAction(key, row) {
-    if (key === "paid" || key === "balance") { if (row.open) openPaymentForm(row.id); else toast("This deal is already settled", "success"); return; }
-    if (key === "structure") { openUpcomingForm(row.id); return; }
-    if (key === "status") { igOpenStatusMenu(row); return; }
-  }
   function igActivateCell(rowId, colKey, wantsEdit) {
     var row = gridState.byId[rowId], col = igColDef(colKey);
     if (!row || !col) return;
     igSetActive(rowId, colKey);
-    if (col.action) { igRunCellAction(col.key, row); return; }
     if (wantsEdit && igEditable(col, row)) igBeginEdit(rowId, colKey);
   }
 
@@ -3281,30 +3335,6 @@
     var rowId = cellEl.getAttribute("data-row") || cellEl.getAttribute("data-rownum");
     igOpenCellMenuAt(rect.left, rect.bottom, rowId);
   }
-  function igOpenStatusMenu(row) {
-    igCloseMenu();
-    var cell = gridState.cellEls[row.id] && gridState.cellEls[row.id].status;
-    if (!cell) return;
-    var rect = cell.getBoundingClientRect();
-    var menu = document.createElement("div");
-    menu.className = "ig-menu";
-    var items = [];
-    if (row.open) items.push({ label: "Record payment", action: "pay" }, { label: "Cancel deal", action: "cancel" });
-    else if (row.status === "Cancelled") items.push({ label: "Reopen as Pending", action: "reopen" });
-    else items.push({ label: "View payment history", action: "pay" });
-    items.push({ label: "Open deal details", action: "open" });
-    menu.innerHTML = items.map(function (it) { return '<button class="ig-menu-item" data-menu="' + it.action + '">' + esc(it.label) + '</button>'; }).join("");
-    menu.addEventListener("click", function (e) {
-      var btn = e.target.closest && e.target.closest(".ig-menu-item"); if (!btn) return;
-      var act = btn.getAttribute("data-menu"); igCloseMenu();
-      if (act === "pay") openPaymentForm(row.id);
-      else if (act === "open") openUpcomingForm(row.id);
-      else if (act === "cancel") { igPushUndo(row.id); updateDoc(function (doc) { var it = (doc.followups || []).find(function (x) { return String(x.id) === String(row.id); }); if (it) it.status = "Cancelled"; }, "grid-cancel", true); }
-      else if (act === "reopen") { igPushUndo(row.id); updateDoc(function (doc) { var it = (doc.followups || []).find(function (x) { return String(x.id) === String(row.id); }); if (it) it.status = paidOf(it) > 0 ? "Part Paid" : "Pending"; }, "grid-reopen", true); }
-    });
-    igPlaceMenu(menu, rect.left, rect.bottom + 4);
-  }
-
   function igOnClick(e) {
     var rownum = e.target.closest && e.target.closest(".ig-rownum:not(.ig-colhead)");
     if (rownum) {
@@ -3463,8 +3493,7 @@
       if (e.key === "Enter") {
         e.preventDefault();
         var row = gridState.byId[gridState.active.rowId], col = igColDef(gridState.active.col);
-        if (col && col.action) igRunCellAction(col.key, row);
-        else if (col && igEditable(col, row)) igBeginEdit(gridState.active.rowId, gridState.active.col);
+        if (col && igEditable(col, row)) igBeginEdit(gridState.active.rowId, gridState.active.col);
         return;
       }
       if (e.key === "Escape") { igCloseMenu(); return; }

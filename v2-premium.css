@@ -1821,7 +1821,6 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 .ig-head-row .ig-sticky-num { z-index: 8; }
 
 .ig-cell.ig-editable { cursor: cell; }
-.ig-cell.ig-action { cursor: pointer; color: var(--tx2); }
 .ig-cell.ig-readonly { color: var(--tx2); }
 .ig-cell .ig-muted { color: var(--tx3); font-style: italic; }
 .ig-placeholder { color: var(--tx3); }
