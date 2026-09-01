@@ -1774,7 +1774,7 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 .ig-quickviews::-webkit-scrollbar { display: none; }
 .ig-quick { white-space: nowrap; height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--tx2); font-size: 10.5px; font-weight: 750; display: inline-flex; align-items: center; gap: 5px; }
 .ig-quick b { font-weight: 800; color: var(--tx3); }
-.ig-quick.on { background: var(--posdim); border-color: rgba(14,117,72,.25); color: var(--pos); }
+.ig-quick.on { background: var(--posdim); border-color: color-mix(in srgb, var(--pos) 30%, transparent); color: var(--pos); }
 .ig-quick.on b { color: var(--pos); }
 
 .ig-filterchips { padding: 0 var(--ig-gut) 5px; flex: 0 0 auto; }
@@ -1822,8 +1822,8 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 .ig-cell .ig-muted { color: var(--tx3); font-style: italic; }
 .ig-placeholder { color: var(--tx3); }
 
-.ig-cell.ig-active { outline: 2px solid var(--pos); outline-offset: -2px; z-index: 4; background: var(--posdim); }
-.ig-cell.ig-in-range { background: rgba(14,117,72,.06); }
+.ig-cell.ig-in-range { background: color-mix(in srgb, var(--pos) 10%, var(--card)); }
+.ig-cell.ig-active { outline: 2px solid var(--pos); outline-offset: -2px; z-index: 4; background: color-mix(in srgb, var(--pos) 20%, var(--card)); }
 .ig-row.ig-row-active .ig-rownum { background: var(--posdim); color: var(--pos); }
 .ig-colhead.ig-col-active { color: var(--pos); }
 .ig-row-settled .ig-c-client, .ig-row-settled .ig-c-gross { opacity: .72; }
@@ -1840,14 +1840,14 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 .ig-cur-opt { flex: 1; border: 1px solid var(--line2); border-radius: 7px; background: var(--card); font-size: 10px; font-weight: 800; cursor: pointer; color: var(--tx3); }
 .ig-cur-opt.ig-cur-ugx { color: var(--pos); }
 .ig-cur-opt.ig-cur-usd { color: var(--usd); }
-.ig-cur-opt.on.ig-cur-ugx { background: var(--posdim); border-color: rgba(14,117,72,.35); }
-.ig-cur-opt.on.ig-cur-usd { background: var(--usddim); border-color: rgba(11,114,133,.35); }
+.ig-cur-opt.on.ig-cur-ugx { background: var(--posdim); border-color: color-mix(in srgb, var(--pos) 40%, transparent); }
+.ig-cur-opt.on.ig-cur-usd { background: var(--usddim); border-color: color-mix(in srgb, var(--usd) 40%, transparent); }
 
 .ig-tone-bad { color: var(--neg); font-weight: 700; }
 .ig-tone-warn { color: var(--warn); font-weight: 700; }
 
 .ig-resize { position: absolute; right: 0; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; }
-.ig-resize:hover, .ig-resize:active { background: rgba(14,117,72,.18); }
+.ig-resize:hover, .ig-resize:active { background: color-mix(in srgb, var(--pos) 22%, transparent); }
 
 .ig-edit-input { width: 100%; height: 100%; border: 0; background: var(--bg2); outline: 2px solid var(--pos); outline-offset: -2px; font: inherit; color: var(--tx); padding: 0 8px; margin: 0 -10px; box-sizing: border-box; user-select: text; -webkit-user-select: text; }
 .ig-cell.ig-editing { padding: 0; overflow: visible; z-index: 5; }
@@ -1889,11 +1889,17 @@ select.ig-edit-input { padding: 0 4px; }
 .ig-menu-item.danger { color: var(--neg); }
 .ig-menu-item[disabled] { opacity: .4; pointer-events: none; }
 
-.ig-filter-sheet { display: flex; flex-direction: column; gap: 16px; }
+.ig-filter-sheet { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.ig-filter-sheet > *, .ig-filter-section > *, .ig-filter-section .x97-field { min-width: 0; }
+.ig-filter-sheet input, .ig-filter-sheet select { max-width: 100%; box-sizing: border-box; }
+/* The shared two-up field grid does not fit a 320px sheet; stack it there. */
+@media (max-width: 380px) {
+  .ig-filter-sheet .x97-fields-2 { grid-template-columns: 1fr; }
+}
 .ig-filter-section label { display: block; font-size: 11px; font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 8px; }
 .ig-filter-chiprow { display: flex; flex-wrap: wrap; gap: 7px; }
 .ig-filter-chip { height: 34px; padding: 0 13px; border-radius: 999px; border: 1px solid var(--line2); background: var(--card); color: var(--tx2); font-size: 12px; font-weight: 750; }
-.ig-filter-chip.on { background: var(--posdim); border-color: rgba(14,117,72,.25); color: var(--pos); }
+.ig-filter-chip.on { background: var(--posdim); border-color: color-mix(in srgb, var(--pos) 30%, transparent); color: var(--pos); }
 .ig-more-list { display: flex; flex-direction: column; gap: 8px; }
 
 /* Coarse pointer (touch): larger rows and hit targets, scaled by the same

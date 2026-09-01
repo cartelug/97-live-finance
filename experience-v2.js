@@ -2587,17 +2587,21 @@
 
   var IG_ROWNUM_W = 42;
   var IG_COLS = [
-    { key: "client", label: "Client", width: 168, min: 110, type: "text", align: "left", sticky: true },
-    { key: "gross", label: "Total", width: 124, min: 92, type: "money", align: "right" },
-    { key: "paid", label: "Paid", width: 112, min: 88, type: "money", align: "right", action: true },
-    { key: "balance", label: "Balance", width: 124, min: 92, type: "money", align: "right", action: true },
-    { key: "currency", label: "Cur", width: 68, min: 60, type: "currency", align: "center" },
-    { key: "status", label: "Status", width: 112, min: 88, type: "status", align: "left", action: true },
-    { key: "due", label: "Due date", width: 118, min: 96, type: "date", align: "left" },
-    { key: "structure", label: "Structure", width: 132, min: 104, type: "structure", align: "left", action: true },
-    { key: "phone", label: "WhatsApp", width: 130, min: 100, type: "phone", align: "left" },
-    { key: "note", label: "Notes", width: 220, min: 140, type: "text", align: "left" }
+    { key: "client", label: "Client", width: 148, min: 96, type: "text", align: "left", sticky: true },
+    { key: "gross", label: "Total", width: 106, min: 84, type: "money", align: "right" },
+    { key: "paid", label: "Paid", width: 96, min: 78, type: "money", align: "right", action: true },
+    { key: "balance", label: "Balance", width: 106, min: 84, type: "money", align: "right", action: true },
+    { key: "currency", label: "Cur", width: 60, min: 54, type: "currency", align: "center" },
+    { key: "status", label: "Status", width: 98, min: 84, type: "status", align: "left", action: true },
+    { key: "due", label: "Due date", width: 100, min: 88, type: "date", align: "left" },
+    { key: "structure", label: "Structure", width: 116, min: 96, type: "structure", align: "left", action: true },
+    { key: "phone", label: "WhatsApp", width: 118, min: 96, type: "phone", align: "left" },
+    { key: "note", label: "Notes", width: 190, min: 130, type: "text", align: "left" }
   ];
+  // The columns a collections screen is actually read for. The default zoom
+  // on a phone is chosen to fit exactly these, so Balance never hides behind
+  // a horizontal scroll on the device most of this work happens on.
+  var IG_KEY_COLS = ["client", "gross", "paid", "balance"];
 
   var gridState = {
     active: null, anchor: null, editing: null,
@@ -2623,8 +2627,23 @@
     igVisibleCols().forEach(function (c) { parts.push(igColWidth(c.key) + "px"); });
     return parts.join(" ");
   }
+  // Default zoom is derived from the device, not guessed: shrink just enough
+  // that the row number, Client and the three money columns fit the window.
+  // A 320px phone lands near 0.63, a 412px phone near 0.82, anything with
+  // real width stays at 1.
   function igAutoZoom() {
-    try { return (window.innerWidth && window.innerWidth < 480) ? 0.82 : 1; } catch (_) { return 1; }
+    try {
+      var vw = window.innerWidth || 0;
+      if (!vw || vw >= 900) return 1;
+      var need = IG_ROWNUM_W;
+      IG_KEY_COLS.forEach(function (key) {
+        if (gridState.hidden[key]) return;
+        var c = igColDef(key);
+        if (c) need += (gridState.widths[key] || c.width);
+      });
+      if (need <= 0) return 1;
+      return Math.max(IG_ZOOM_MIN, Math.min(1, Math.round(((vw - 4) / need) * 100) / 100));
+    } catch (_) { return 1; }
   }
   function igSyncPersisted() {
     gridState.widths = Object.assign({}, state.upcoming.gridWidths || {});
