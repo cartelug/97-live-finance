@@ -38,6 +38,7 @@
   var EMOJIS = ["😀","😁","😅","😂","🙂","😉","😍","😘","😎","🤩","🥳","🙏","👍","👌","👏","🙌","💪","🔥","✨","🎉","💯","✅","❗","❓","⚠️","💰","💸","🧾","📅","⏰","📌","📞","📱","💬","➡️","👉","❤️","🧡","💚","💙","🙏🏾","😊","😄","🤝","🎬","🎥","📸","🌟"];
 
   var FX_KEY = "ns97.v2.fx";
+  var THEME_KEY = "ns97.v2.theme";
   var FX_BASE = "USD";
   var FX_HOME = "UGX";
   var FX_TICKER = ["EUR", "GBP", "KES", "TZS"];
@@ -698,6 +699,35 @@
         });
       }
     } catch (_) {}
+  }
+
+  /* Light and dark. The palette for both has been in the stylesheet all
+     along, but nothing ever set the attribute that switches it on, so the
+     app has only ever been light and the dark half was unreachable.
+     Light stays the default and the system's dark preference is deliberately
+     not consulted: this is a spreadsheet, spreadsheets are white, and a phone
+     that flips itself dark at sunset should not repaint a ledger the owner
+     knows as white. Dark is a choice, made once, and remembered. */
+  function loadTheme() {
+    var saved = "";
+    try { saved = localStorage.getItem(THEME_KEY) || ""; } catch (_) {}
+    return saved === "dark" ? "dark" : "light";
+  }
+  function applyTheme(mode) {
+    var dark = mode === "dark";
+    if (dark) document.documentElement.setAttribute("data-v2-theme", "dark");
+    else document.documentElement.removeAttribute("data-v2-theme");
+    // The browser's own chrome (status bar, address bar) follows too.
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", dark ? "#050B08" : "#FFFFFF");
+    try { localStorage.setItem(THEME_KEY, dark ? "dark" : "light"); } catch (_) {}
+  }
+  function setTheme(mode) {
+    if (loadTheme() === (mode === "dark" ? "dark" : "light")) return;
+    applyTheme(mode);
+    // Reopen the sheet so its own switch shows the choice that was just made.
+    if (document.getElementById("x97-sheet")) openGridMore();
+    scheduleRender(0);
   }
 
   function savePrefs() {
@@ -1363,7 +1393,9 @@
       lock: '<rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path>',
       pin: '<path d="M12 2 9 9l-6 2 4.5 3.5L6 21l6-4 6 4-1.5-6.5L21 11l-6-2Z"></path>',
       dots: '<circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle>',
-      info: '<circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path>'
+      info: '<circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path>',
+      sun: '<circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>',
+      moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"></path>'
     };
     return '<svg aria-hidden="true" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' + (paths[name] || paths.more) + '</svg>';
   }
@@ -4683,12 +4715,20 @@
   }
 
   function openGridMore() {
+    var theme = loadTheme();
     var body = '<div class="ig-more-list">' +
       '<button class="x97-card-action full" data-x97-action="grid-add-row">' + icon("plus", 15) + ' Add row</button>' +
       '<button class="x97-card-action full" data-x97-action="grid-undo">' + icon("undo", 15) + ' Undo</button>' +
       '<button class="x97-card-action full" data-x97-action="grid-redo">' + icon("redo", 15) + ' Redo</button>' +
       '<button class="x97-card-action full" data-x97-action="open-grid-columns">' + icon("columns", 15) + ' Columns</button>' +
       '<button class="x97-card-action full" data-x97-action="open-exports">' + icon("list", 15) + ' Export</button>' +
+      '<div class="ig-theme-row">' +
+        '<span class="ig-theme-label">Appearance</span>' +
+        '<div class="ig-theme-seg" role="group" aria-label="Appearance">' +
+          '<button class="ig-theme-opt' + (theme === "light" ? " on" : "") + '" data-x97-action="set-theme" data-value="light">' + icon("sun", 14) + 'Light</button>' +
+          '<button class="ig-theme-opt' + (theme === "dark" ? " on" : "") + '" data-x97-action="set-theme" data-value="dark">' + icon("moon", 14) + 'Dark</button>' +
+        '</div>' +
+      '</div>' +
     '</div>';
     openSheet("More", body, "");
   }
@@ -6404,6 +6444,7 @@
     if(action==="open-grid-columns"){openGridColumns();return;}
     if(action==="open-grid-more"){openGridMore();return;}
     if(action==="grid-zoom"){igSetZoom(btn.dataset.value);return;}
+    if(action==="set-theme"){setTheme(btn.dataset.value);return;}
   }, true);
 
   function resumeOriginalTab() {
@@ -6423,6 +6464,7 @@
 
   function boot() {
     try { localStorage.removeItem("ns97-ai-cfg-v1"); } catch (_) {}
+    applyTheme(loadTheme());
     injectCSS();injectMsgCSS();injectFeatureCSS();injectProCSS();injectRevampCSS();injectV2CSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
     var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
     var observer=new MutationObserver(function(mutations){
