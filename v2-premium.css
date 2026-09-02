@@ -1747,7 +1747,15 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
      whole workspace tightens together as the viewport narrows. */
   --ig-gut: clamp(8px, 2vw, 18px);
   display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden;
+  /* Set from visualViewport while a phone keyboard is up. */
+  --ig-kb: 0px;
 }
+/* The keyboard covers the window without resizing it, so the sheet hands
+   back exactly the covered height and keeps the open cell in view. */
+.ig-shell.ig-kb-open { height: calc(100% - var(--ig-kb)); }
+.ig-shell.ig-kb-open .ig-summary,
+.ig-shell.ig-kb-open .ig-quickviews,
+.ig-shell.ig-kb-open .ig-filterchips { display: none; }
 .ig-shell .x97-top { padding: max(6px, env(safe-area-inset-top)) var(--ig-gut) 4px; flex: 0 0 auto; }
 /* The shared header ships a 46px display title and a 56px status pill — right
    for a dashboard, far too heavy above a spreadsheet. These win with the same
@@ -1830,6 +1838,30 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
    scrolled the sheet under it — a depth cue that it's floating above the
    rest of the columns. Stays invisible until there's something to float over. */
 .ig-shell.ig-scrolled-x .ig-frozen-last { box-shadow: 3px 0 6px -2px color-mix(in srgb, var(--tx) 35%, transparent); }
+
+/* Instalment rows. A deal with a schedule shows a row per payment under the
+   row that totals them — same grid, same cells, nothing behind a form. */
+.ig-row-part .ig-c-client { padding-left: calc(20px * var(--ig-zoom, 1)); font-weight: 600; color: var(--tx2); }
+.ig-row-part .ig-c-client::before {
+  content: ""; position: absolute; left: calc(9px * var(--ig-zoom, 1)); top: 0; bottom: 50%;
+  width: calc(7px * var(--ig-zoom, 1)); border-left: 1px solid var(--line2); border-bottom: 1px solid var(--line2);
+  border-bottom-left-radius: 3px; pointer-events: none;
+}
+.ig-row-part .ig-rownum { color: var(--tx3); font-weight: 600; font-size: max(8.5px, calc(9.5px * var(--ig-zoom, 1))); }
+.ig-row-part .ig-c-structure { color: var(--tx3); }
+
+/* The group toggle in the row-number gutter: Sheets' outline control. */
+.ig-rownum.ig-has-parts { gap: 1px; padding: 0 1px; }
+.ig-group {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 13px; height: 13px; padding: 0; margin: 0; flex: 0 0 auto;
+  background: none; border: 0; border-radius: 3px; color: var(--tx2); cursor: pointer;
+  transform: rotate(90deg); transition: transform .12s var(--v2-ease), background .12s var(--v2-ease);
+}
+.ig-collapsed .ig-group { transform: rotate(0deg); }
+.ig-group:hover { background: var(--card3); color: var(--tx); }
+.ig-rownum-n { font-variant-numeric: tabular-nums; }
+.ig-rownum.ig-has-parts .ig-rownum-n { font-size: max(8.5px, calc(9.5px * var(--ig-zoom, 1))); }
 
 /* Filler rows: gridlines only, no data, no events. They keep the sheet
    looking like a sheet all the way to the bottom of the window. */

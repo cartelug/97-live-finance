@@ -94,7 +94,8 @@
       gridHidden: [],
       gridZoom: null,
       gridOrder: null,
-      gridFreeze: 1
+      gridFreeze: 1,
+      gridCollapsed: []
     },
     creditView: "available"
   };
@@ -2555,6 +2556,7 @@
     { key: "currency", label: "Cur", width: 60, min: 54, type: "currency", align: "center" },
     { key: "status", label: "Status", width: 98, min: 84, type: "status", align: "left" },
     { key: "due", label: "Due date", width: 100, min: 88, type: "date", align: "left" },
+    { key: "lastPaid", label: "Last paid", width: 96, min: 84, type: "date", align: "left" },
     { key: "structure", label: "Structure", width: 116, min: 96, type: "structure", align: "left" },
     { key: "phone", label: "WhatsApp", width: 118, min: 96, type: "phone", align: "left" },
     { key: "note", label: "Notes", width: 190, min: 130, type: "text", align: "left" }
@@ -2732,6 +2734,31 @@
     filler.setAttribute("data-fill", sig);
   }
 
+  /* The on-screen keyboard. A phone keyboard covers the bottom half of the
+     window without changing the layout viewport, so the cell being typed
+     into can sit underneath it. visualViewport says how much is covered;
+     the sheet gives up exactly that much height and scrolls the open cell
+     back into what is left. */
+  function igWireKeyboardInset() {
+    var vv = window.visualViewport;
+    if (!vv || gridState.kbWired) return;
+    gridState.kbWired = true;
+    var apply = function () {
+      var shell = root && root.querySelector(".ig-shell");
+      if (!shell) return;
+      var covered = Math.max(0, (window.innerHeight || 0) - (vv.height + vv.offsetTop));
+      var open = covered > 90;
+      shell.style.setProperty("--ig-kb", (open ? Math.round(covered) : 0) + "px");
+      shell.classList.toggle("ig-kb-open", open);
+      if (open && gridState.editing) {
+        igFillEmptyRows();
+        igScrollCellIntoView(gridState.editing.rowId, gridState.editing.col);
+      }
+    };
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
+  }
+
   // Rotating a phone changes the auto zoom and how many columns can stay
   // frozen; without this the sheet kept its portrait shape until something
   // else happened to trigger a render.
@@ -2763,6 +2790,17 @@
     return { label: label, tone: tone };
   }
 
+  // The date of the most recent receipt. It used to live only inside the
+  // payment form; it is a column now, so the row says when money last moved.
+  function igLastPaidDate(doc, item) {
+    var log = paymentsFor(doc, item.id);
+    if (!log.length) return item.paidOn || "";
+    var newest = log.slice().sort(function (a, b) {
+      return String(b.createdAt || b.date || "").localeCompare(String(a.createdAt || a.date || ""));
+    })[0];
+    return (newest && newest.date) || item.paidOn || "";
+  }
+
   function igBuildRow(item, doc, index) {
     var t = timing(item, doc), next = t.next, due = next ? next.dueDate : item.expectedBy;
     var locked = dealHasRecordedMoney(item), structured = isDeal(item), status = igStatusInfo(item);
@@ -2782,30 +2820,84 @@
       currency: String(item.currency || "UGX").toUpperCase(),
       status: status.label, statusTone: status.tone,
       due: due || "", dueTone: due ? dueTone : "warn",
+      lastPaid: igLastPaidDate(doc, item),
       structure: structured ? (DEAL_TYPES[normalizeDealType(item.dealType)] || "Payment schedule") : "One payment",
       phone: item.phone || "", note: item.note || "",
       locked: locked, structured: structured, open: isOpenFollowup(item), raw: item
     };
   }
-  function igBuildRows(doc, list) { return list.map(function (item, i) { return igBuildRow(item, doc, i + 1); }); }
-
-  function igEditable(col, row) {
-    // Structure is the shape of a schedule rather than a value you type, so
-    // it stays read-only here; the deal builder is on the row's menu.
-    if (col.key === "structure") return false;
-    if (col.key === "gross") return !row.structured && !row.locked;
-    if (col.key === "currency" || col.key === "due") return !row.locked;
-    // Money is corrected in the cell, never behind a form. A cancelled deal
-    // takes no money.
-    if (col.key === "paid" || col.key === "balance") return row.statusTone !== "muted";
-    return true;
+  /* A deal with a payment schedule is not one row: it is a row per
+     instalment, under a row that totals them. The instalment's amount, date,
+     money in and state are cells like any other — none of it lives behind a
+     form any more. Collapsing a deal is Sheets' row grouping, not a hiding
+     place: the toggle sits in the row-number gutter. */
+  function igCollapsed(id) { return (state.upcoming.gridCollapsed || []).indexOf(String(id)) >= 0; }
+  function igToggleCollapse(id) {
+    var list = (state.upcoming.gridCollapsed || []).slice(), i = list.indexOf(String(id));
+    if (i >= 0) list.splice(i, 1); else list.push(String(id));
+    state.upcoming.gridCollapsed = list;
+    savePrefs();
+    scheduleRender(0);
   }
+  function igBuildPartRow(parent, item, part, doc, index, count) {
+    var due = part.dueDate || "";
+    var t = due ? timingForDate(due) : null;
+    var paid = num(part.paid), amount = roundMoney(part.amount), balance = Math.max(0, amount - paid);
+    var status = paid >= amount - 0.5 && amount > 0 ? "Paid" : paid > 0 ? "Part Paid" : "Pending";
+    var tone = isCancelled(item.status) ? "muted"
+      : balance <= 0 ? "good"
+      : t === "overdue" ? "bad"
+      : t === "soon" ? "warn"
+      : !due ? "undated" : "";
+    return {
+      tone: tone, part: true, parentId: parent.id, partId: String(part.id), partIndex: index, partCount: count,
+      id: parent.id + "::" + part.id, index: parent.index + "." + index,
+      client: part.label || ("Payment " + index), category: parent.category,
+      gross: amount, paid: paid, balance: balance,
+      currency: parent.currency,
+      status: status, statusTone: balance <= 0 ? "good" : paid > 0 ? "warn" : "",
+      due: due, dueTone: tone === "bad" ? "bad" : tone === "warn" ? "warn" : "",
+      lastPaid: part.paidOn || "",
+      structure: "Part " + index + " of " + count,
+      phone: parent.phone, note: parent.note,
+      locked: paid > 0, structured: true, open: balance > 0 && !isCancelled(item.status), raw: item
+    };
+  }
+  // A part's date only needs the coarse buckets the row tone uses.
+  function timingForDate(iso) {
+    var days = daysBetween(todayISO(), iso);
+    if (days == null) return null;
+    return days < 0 ? "overdue" : days <= 7 ? "soon" : "";
+  }
+  function igBuildRows(doc, list) {
+    var out = [];
+    list.forEach(function (item, i) {
+      var parent = igBuildRow(item, doc, i + 1);
+      var parts = Array.isArray(item.parts) ? item.parts : [];
+      parent.hasParts = parts.length > 0;
+      parent.collapsed = parent.hasParts && igCollapsed(item.id);
+      out.push(parent);
+      if (parent.hasParts && !parent.collapsed) {
+        parts.forEach(function (part, pi) { out.push(igBuildPartRow(parent, item, part, doc, pi + 1, parts.length)); });
+      }
+    });
+    return out;
+  }
+
+  // There are no read-only cells. Where money is already recorded the edit
+  // does the ledger-safe thing — rescale the schedule, convert at the live
+  // rate, reverse the newest receipts — rather than refusing the keystroke.
+  function igEditable() { return true; }
 
   function igCellText(col, row) {
     if (col.type === "money") return money(row[col.key] || 0, "");
     if (col.type === "currency") return row.currency;
     if (col.type === "status") return row.status;
-    if (col.type === "date") return row.due ? formatDate(row.due, true) : (row.open ? "No date" : "—");
+    if (col.type === "date") {
+      var d = row[col.key];
+      if (d) return formatDate(d, true);
+      return col.key === "due" ? (row.open ? "No date" : "—") : "—";
+    }
     if (col.type === "structure") return row.structure;
     return row[col.key] || "";
   }
@@ -2852,9 +2944,12 @@
     return '<div class="' + igCellClass(col, row) + '" role="gridcell" data-col="' + attr(col.key) + '" data-row="' + attr(row.id) + '" tabindex="-1" title="' + attr(text) + '"' + igFrozenAttrs(col.key) + '>' + igCellInner(col, row) + '</div>';
   }
   function igRowHTML(row) {
-    var cells = '<div class="ig-cell ig-rownum ig-sticky ig-sticky-num" role="rowheader" data-rownum="' + attr(row.id) + '">' + row.index + '</div>';
+    var num0 = row.hasParts
+      ? '<button type="button" class="ig-group" data-group="' + attr(row.raw && row.raw.id || row.id) + '" aria-expanded="' + (row.collapsed ? "false" : "true") + '" title="' + (row.collapsed ? "Show instalments" : "Hide instalments") + '">' + icon("chevron", 9) + '</button><span class="ig-rownum-n">' + row.index + '</span>'
+      : '<span class="ig-rownum-n">' + row.index + '</span>';
+    var cells = '<div class="ig-cell ig-rownum ig-sticky ig-sticky-num' + (row.hasParts ? " ig-has-parts" : "") + (row.collapsed ? " ig-collapsed" : "") + '" role="rowheader" data-rownum="' + attr(row.id) + '">' + num0 + '</div>';
     cells += igVisibleCols().map(function (c) { return igCellHTML(c, row); }).join("");
-    return '<div class="ig-row' + (row.open ? "" : " ig-row-settled") + (row.tone ? " ig-row-" + row.tone : "") + '" role="row" data-row-id="' + attr(row.id) + '">' + cells + '</div>';
+    return '<div class="ig-row' + (row.open ? "" : " ig-row-settled") + (row.tone ? " ig-row-" + row.tone : "") + (row.part ? " ig-row-part" : "") + '" role="row" data-row-id="' + attr(row.id) + '">' + cells + '</div>';
   }
   function igSortMatches(key) {
     var s = state.upcoming.sort;
@@ -2911,7 +3006,9 @@
   }
   function igStatusBarHTML(filteredCount, totalCount, stats) {
     var zoomPct = Math.round((gridState.zoom || 1) * 100);
-    return '<div class="ig-statusbar"><div class="ig-statusbar-info"><span>' + filteredCount + ' of ' + totalCount + ' row' + (totalCount === 1 ? "" : "s") + '</span><span class="ig-statusbar-sep">·</span><span>Outstanding ' + esc(money(stats.outstandingUGX, "UGX", true)) + (stats.outstandingUSD ? " + " + esc(money(stats.outstandingUSD, "USD", true)) : "") + '</span></div>' +
+    // Instalment rows are rows too — say how many are actually on screen.
+    var instalments = (gridState.rows || []).filter(function (r) { return r.part; }).length;
+    return '<div class="ig-statusbar"><div class="ig-statusbar-info"><span>' + filteredCount + ' of ' + totalCount + ' deal' + (totalCount === 1 ? "" : "s") + (instalments ? " · " + instalments + " instalment" + (instalments === 1 ? "" : "s") : "") + '</span><span class="ig-statusbar-sep">·</span><span>Outstanding ' + esc(money(stats.outstandingUGX, "UGX", true)) + (stats.outstandingUSD ? " + " + esc(money(stats.outstandingUSD, "USD", true)) : "") + '</span></div>' +
       '<div class="ig-selstats" id="ig-selstats" hidden></div>' +
       '<div class="ig-zoom" role="group" aria-label="Grid zoom">' +
         '<button class="ig-zbtn" data-x97-action="grid-zoom" data-value="out" title="Zoom out" aria-label="Zoom out">' + icon("minus", 13) + '</button>' +
@@ -3216,6 +3313,38 @@
      and account balances all read from it. Raising the figure records a
      payment for the difference; lowering it reverses the most recent
      payments until the totals agree again. */
+  /* Changing the schedule shape in the cell. The deal's total is what the
+     user already agreed with the client, so it is held constant and the
+     instalments are rebuilt underneath it; anything already received stays
+     recorded and is re-allocated across the new instalments. */
+  var IG_STRUCT_COUNT = { deposit: 2, split: 2, custom: 2, monthly: 3, part: 2 };
+  function igApplyStructure(doc, item, label) {
+    var type = normalizeDealType(label), now = normalizeDealType(item.dealType);
+    if (type === now && (type === "one" || Array.isArray(item.parts))) return true;
+    var gross = grossOf(item);
+    if (type === "one") {
+      item.gross = gross; item.paid = paidOf(item); item.amount = roundMoney(Math.max(0, gross - item.paid));
+      if (Array.isArray(item.parts) && item.parts.length && !item.expectedBy) item.expectedBy = item.parts[0].dueDate || "";
+      ["dealType", "parts", "partLabel", "partCount", "partEvery", "partAmount", "depositAmount"].forEach(function (k) { delete item[k]; });
+      return true;
+    }
+    var count = IG_STRUCT_COUNT[type] || 2;
+    // monthly and per-part price each instalment, so the unit is the share.
+    var unit = type === "monthly" || type === "part" ? roundMoney(gross / count) : gross;
+    var values = { dealType: type, amount: unit, partCount: count, startDate: item.expectedBy || todayISO(), partEvery: item.partEvery || 7 };
+    if (type === "custom") { values.partAmount_0 = roundMoney(gross / 2); values.partAmount_1 = roundMoney(gross - roundMoney(gross / 2)); }
+    var parts = dealPartsFor(Object.assign({}, item, { parts: null }), values);
+    item.dealType = type;
+    item.partLabel = type === "monthly" ? "months" : "parts";
+    item.parts = parts;
+    item.partCount = parts.length;
+    item.partEvery = values.partEvery;
+    item.partAmount = parts[0] ? num(parts[0].amount) : 0;
+    item.depositAmount = type === "deposit" ? num(parts[0] && parts[0].amount) : 0;
+    rebuildDealParts(doc, item);
+    return true;
+  }
+
   function igSetPaidTotal(doc, item, target) {
     var gross = grossOf(item);
     target = Math.max(0, Math.min(roundMoney(target), gross));
@@ -3243,24 +3372,89 @@
     if (colKey === "category") { item.category = String(value || "").trim() || "One Time"; return true; }
     if (colKey === "phone") { item.phone = String(value || "").trim(); return true; }
     if (colKey === "note") { item.note = String(value || "").trim(); return true; }
-    if (colKey === "currency") { if (dealHasRecordedMoney(item)) return false; item.currency = String(value || "UGX").toUpperCase(); return true; }
+    // Switching currency on a deal that has money against it converts the
+    // figures at the live rate instead of silently re-labelling them; the
+    // receipts in the ledger keep the currency they were taken in.
+    if (colKey === "currency") {
+      var nextCur = String(value || "UGX").toUpperCase(), curNow = String(item.currency || "UGX").toUpperCase();
+      if (nextCur !== "UGX" && nextCur !== "USD") return igFail("Currency is UGX or USD");
+      if (nextCur === curNow) return true;
+      if (dealHasRecordedMoney(item)) {
+        var rate = fxConvert(1, curNow, nextCur);
+        if (!rate) {
+          // No rate to convert with. Never re-label money silently — say what
+          // is about to happen and let the user decide.
+          if (!confirm("There is no live " + curNow + "→" + nextCur + " rate right now.\n\nSwitch this deal to " + nextCur + " and leave the figures exactly as they are?")) {
+            return igFail("Kept in " + curNow + " — no live rate to convert with");
+          }
+          item.currency = nextCur;
+          return true;
+        }
+        if (Array.isArray(item.parts)) item.parts.forEach(function (p) {
+          p.amount = roundMoney(num(p.amount) * rate);
+          p.paid = roundMoney(num(p.paid) * rate);
+        });
+        item.gross = roundMoney(grossOf(item) * (Array.isArray(item.parts) && item.parts.length ? 1 : rate));
+        item.paid = roundMoney(paidOf(item) * rate);
+        item.amount = roundMoney(Math.max(0, grossOf(item) - item.paid));
+      }
+      item.currency = nextCur;
+      return true;
+    }
+    // A new total on a schedule rescales its parts in proportion, never
+    // below what a part has already taken in.
     if (colKey === "gross") {
-      if (isDeal(item) || dealHasRecordedMoney(item)) return false;
       var g = roundMoney(value);
-      if (g <= 0) return false;
-      item.gross = g; item.paid = paidOf(item); item.amount = roundMoney(Math.max(0, g - item.paid));
+      if (g <= 0) return igFail("Enter the deal total");
+      var paidNow = paidOf(item);
+      if (g < paidNow - 0.5) return igFail("That total is below the " + money(paidNow, String(item.currency || "UGX").toUpperCase()) + " already received");
+      if (Array.isArray(item.parts) && item.parts.length) {
+        var oldGross = grossOf(item) || g, scale = g / oldGross;
+        item.parts.forEach(function (p) { p.amount = roundMoney(Math.max(num(p.paid), num(p.amount) * scale)); });
+        rebuildDealParts(doc, item);
+        return true;
+      }
+      item.gross = g; item.paid = paidNow; item.amount = roundMoney(Math.max(0, g - paidNow));
+      if (!isCancelled(item.status)) item.status = paidNow <= 0 ? "Pending" : paidNow >= g - 0.5 ? "Paid" : "Part Paid";
       return true;
     }
+    // The date on the row is the next unpaid instalment's date, so that is
+    // the one a new date lands on.
     if (colKey === "due") {
-      if (dealHasRecordedMoney(item)) return false;
-      if (Array.isArray(item.parts) && item.parts.length) { item.parts[0].dueDate = value; rebuildDealParts(doc, item); }
-      else item.expectedBy = value;
+      if (Array.isArray(item.parts) && item.parts.length) {
+        var target = item.parts.filter(function (p) { return num(p.paid) < num(p.amount) - 0.5; })[0] || item.parts[0];
+        target.dueDate = value;
+        rebuildDealParts(doc, item);
+      } else item.expectedBy = value;
       return true;
     }
-    if (colKey === "paid") { if (isCancelled(item.status)) return false; return igSetPaidTotal(doc, item, value); }
+    // Re-dating the last receipt in the cell, rather than in a form behind it.
+    if (colKey === "lastPaid") {
+      var log = paymentsFor(doc, item.id);
+      if (!log.length) { item.paidOn = value || ""; return true; }
+      var newestPay = log.slice().sort(function (a, b) {
+        return String(b.createdAt || b.date || "").localeCompare(String(a.createdAt || a.date || ""));
+      })[0];
+      if (newestPay) newestPay.date = value || newestPay.date;
+      item.paidOn = value || item.paidOn;
+      return true;
+    }
+    // Money on a cancelled deal reopens it — recording a receipt against
+    // something cancelled is the clearest possible statement that it isn't.
+    if (colKey === "paid") {
+      if (isCancelled(item.status) && roundMoney(value) > 0) item.status = "Pending";
+      return igSetPaidTotal(doc, item, value);
+    }
     // Balance is Paid seen from the other side: say what is still owed and
     // the received figure follows.
-    if (colKey === "balance") { if (isCancelled(item.status)) return false; return igSetPaidTotal(doc, item, grossOf(item) - roundMoney(value)); }
+    if (colKey === "balance") {
+      var wantPaid = grossOf(item) - roundMoney(value);
+      if (isCancelled(item.status) && wantPaid > 0) item.status = "Pending";
+      return igSetPaidTotal(doc, item, wantPaid);
+    }
+    // The shape of the schedule is a cell like any other: pick a different
+    // one and the instalments are rebuilt around the same total.
+    if (colKey === "structure") return igApplyStructure(doc, item, value);
     if (colKey === "status") {
       if (/cancel/i.test(String(value))) { item.status = "Cancelled"; return true; }
       // Reopening hands the status back to whatever the money says it is.
@@ -3269,20 +3463,85 @@
     }
     return false;
   }
+  // Any row id resolves to the deal that owns it; an instalment row also
+  // resolves to its part.
+  function igOwnerId(rowId) {
+    var row = gridState.byId[rowId];
+    return row && row.parentId ? row.parentId : rowId;
+  }
+  function igPartOf(item, partId) {
+    return (Array.isArray(item.parts) ? item.parts : []).filter(function (p) { return String(p.id) === String(partId); })[0] || null;
+  }
+  /* Money against an instalment. Receipts are allocated in order — part 1
+     first — so "part 3 has taken X" means everything before it is settled
+     and X has landed on it. Saying so in the cell sets the deal's received
+     total to exactly that, which the ledger then re-allocates. */
+  function igSetPartPaid(doc, item, part, value) {
+    var parts = Array.isArray(item.parts) ? item.parts : [];
+    var idx = parts.map(function (p) { return String(p.id); }).indexOf(String(part.id));
+    if (idx < 0) return igFail("That instalment is no longer there");
+    var before = 0;
+    for (var i = 0; i < idx; i++) before += num(parts[i].amount);
+    var want = Math.max(0, Math.min(roundMoney(value), num(part.amount)));
+    return igSetPaidTotal(doc, item, roundMoney(before + want));
+  }
+  function igMutatePart(doc, item, partId, colKey, value) {
+    var part = igPartOf(item, partId);
+    if (!part) return igFail("That instalment is no longer there");
+    if (colKey === "client") { part.label = String(value || "").trim() || part.label; return true; }
+    if (colKey === "gross") {
+      var amount = roundMoney(value);
+      if (amount <= 0) return igFail("Enter the instalment amount");
+      if (amount < num(part.paid) - 0.5) return igFail("That is below the " + money(num(part.paid), String(item.currency || "UGX").toUpperCase()) + " already taken on this instalment");
+      part.amount = amount;
+      rebuildDealParts(doc, item);
+      return true;
+    }
+    if (colKey === "due") { part.dueDate = value || ""; rebuildDealParts(doc, item); return true; }
+    if (colKey === "paid") return igSetPartPaid(doc, item, part, value);
+    if (colKey === "balance") return igSetPartPaid(doc, item, part, num(part.amount) - roundMoney(value));
+    if (colKey === "status") {
+      if (/paid/i.test(String(value)) && !/part/i.test(String(value))) return igSetPartPaid(doc, item, part, num(part.amount));
+      if (/pending/i.test(String(value))) return igSetPartPaid(doc, item, part, 0);
+      return igFail("An instalment is Pending or Paid");
+    }
+    if (colKey === "lastPaid") { part.paidOn = value || ""; return true; }
+    // Everything else on an instalment row belongs to the deal it sits under.
+    return igMutateField(doc, item, colKey, value);
+  }
+
+  // Every batched write — fill, clear, paste — goes through the same door as
+  // a typed edit, so an instalment row is written as an instalment.
+  function igWriteRow(doc, byId, rowId, key, value) {
+    var gridRow = gridState.byId[rowId], item = byId[igOwnerId(rowId)];
+    if (!item) return false;
+    return gridRow && gridRow.partId ? igMutatePart(doc, item, gridRow.partId, key, value) : igMutateField(doc, item, key, value);
+  }
+
+  // A refusal should say what it wants, not just "locked". Mutators leave
+  // their reason here and the caller shows it.
+  function igFail(message) { gridState.editError = message || ""; return false; }
+  function igEditErrorFor(colKey) {
+    var msg = gridState.editError;
+    gridState.editError = "";
+    return msg || (colKey === "gross" ? "Enter the deal total" : "That value was not accepted");
+  }
   function igApplyCellValue(rowId, colKey, value) {
     var applied = true;
+    gridState.editError = "";
+    var row = gridState.byId[rowId], ownerId = igOwnerId(rowId), partId = row && row.partId;
     updateDoc(function (doc) {
-      var item = (doc.followups || []).find(function (x) { return String(x.id) === String(rowId); });
+      var item = (doc.followups || []).find(function (x) { return String(x.id) === String(ownerId); });
       if (!item) { applied = false; return; }
-      applied = igMutateField(doc, item, colKey, value);
+      applied = partId ? igMutatePart(doc, item, partId, colKey, value) : igMutateField(doc, item, colKey, value);
     }, "grid-edit", true);
     return applied;
   }
 
   function igPushUndo(rowId) {
-    var doc = readDoc();
-    var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(rowId); });
-    gridState.undoStack.push({ rowId: rowId, snapshot: item ? clone(item) : null, existed: !!item });
+    var doc = readDoc(), ownerId = igOwnerId(rowId);
+    var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(ownerId); });
+    gridState.undoStack.push({ rowId: ownerId, snapshot: item ? clone(item) : null, existed: !!item });
     if (gridState.undoStack.length > 50) gridState.undoStack.shift();
     gridState.redoStack = [];
   }
@@ -3329,7 +3588,15 @@
       return;
     }
     var value = igRawValue(row, colKey), inputHTML;
-    if (colKey === "status") {
+    if (colKey === "status" && row.part) {
+      // An instalment is settled or it is not; there is no cancelling one
+      // half of a deal.
+      inputHTML = '<select class="ig-edit-input">' +
+        option("Pending", "Pending", row.status === "Pending" ? "Pending" : "") +
+        option("Paid", "Paid", row.status === "Paid" ? "Paid" : "") +
+      '</select>';
+    }
+    else if (colKey === "status") {
       // Paid and Part Paid are what the money says, so they are shown but
       // not choosable; cancelling and reopening are the real decisions.
       inputHTML = '<select class="ig-edit-input">' +
@@ -3338,7 +3605,12 @@
         option("Cancelled", "Cancelled", row.status === "Cancelled" ? "Cancelled" : "") +
       '</select>';
     }
-    else if (colKey === "due") inputHTML = '<input class="ig-edit-input" type="date" value="' + attr(value) + '">';
+    else if (colKey === "structure") {
+      inputHTML = '<select class="ig-edit-input">' + Object.keys(DEAL_TYPES).map(function (key) {
+        return option(DEAL_TYPES[key], DEAL_TYPES[key], value);
+      }).join("") + '</select>';
+    }
+    else if (col.type === "date") inputHTML = '<input class="ig-edit-input" type="date" value="' + attr(value) + '">';
     else if (colKey === "gross" || colKey === "paid" || colKey === "balance") inputHTML = '<input class="ig-edit-input ig-edit-num" type="number" inputmode="decimal" min="0" step="1" value="' + attr(roundMoney(value)) + '">';
     else if (colKey === "phone") inputHTML = '<input class="ig-edit-input" type="text" inputmode="tel" value="' + attr(value) + '">';
     else if (colKey === "client") inputHTML = '<input class="ig-edit-input" type="text" list="ig-client-list" value="' + attr(value) + '">';
@@ -3352,14 +3624,27 @@
     // Picking from a dropdown is the decision — it should not also need an
     // Enter or a tap elsewhere to stick.
     if (input.tagName === "SELECT") input.addEventListener("change", function () { igCommitEdit(); });
-    setTimeout(function () { input.focus(); if (input.select) input.select(); }, 0);
+    setTimeout(function () {
+      input.focus();
+      if (input.select) input.select();
+      // The keyboard animates in after focus; check again once it has.
+      setTimeout(function () { if (gridState.editing) igScrollCellIntoView(gridState.editing.rowId, gridState.editing.col); }, 320);
+    }, 0);
   }
   function igEditKeydown(e) {
-    if (e.key === "Enter") { e.preventDefault(); igCommitEdit(); igMoveAfterCommit(e.shiftKey ? "up" : "auto"); }
-    else if (e.key === "Tab") { e.preventDefault(); igCommitEdit(); igMoveAfterCommit(e.shiftKey ? "left" : "right"); }
-    else if (e.key === "Escape") { e.preventDefault(); igCancelEdit(); }
+    // These keys belong to the editor. Without stopping them here they also
+    // reach the grid's own key handler, which — seeing the edit already
+    // committed — would open a second editor on the cell below and let it
+    // write its stale text back when the re-render tore it down.
+    if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); igCommitEdit(); igMoveAfterCommit(e.shiftKey ? "up" : "auto"); }
+    else if (e.key === "Tab") { e.preventDefault(); e.stopPropagation(); igCommitEdit(); igMoveAfterCommit(e.shiftKey ? "left" : "right"); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); igCancelEdit(); }
   }
-  function igEditBlur() { if (gridState.editing) igCommitEdit(); }
+  function igEditBlur(e) {
+    // An input the render already threw away has nothing to say.
+    if (e && e.target && !e.target.isConnected) { gridState.editing = null; return; }
+    if (gridState.editing) igCommitEdit();
+  }
   function igCancelEdit() {
     if (!gridState.editing) return;
     var e = gridState.editing; gridState.editing = null;
@@ -3375,6 +3660,9 @@
     // buttons that commits on its own. With nothing to read there is nothing
     // to commit, and writing an empty value here would blank the cell.
     if (!input) { gridState.editing = null; igRepaintCell(rowId, colKey); igFlushPendingExternalRender(); return; }
+    // Same rule for a detached editor: it holds a value from before the last
+    // render and must never be written back.
+    if (!input.isConnected) { gridState.editing = null; return; }
     var value = input.value;
     gridState.editing = null;
     var row = gridState.byId[rowId], col = igColDef(colKey);
@@ -3382,7 +3670,7 @@
     if (String(value).trim() === String(igRawValue(row, colKey)).trim()) { igRepaintCell(rowId, colKey); igFlushPendingExternalRender(); return; }
     igPushUndo(rowId);
     var ok = igApplyCellValue(rowId, colKey, value);
-    if (!ok) { gridState.undoStack.pop(); igRepaintCell(rowId, colKey); toast(colKey === "gross" ? "Enter the deal total, or edit structure in Details" : "That field is locked", "error"); }
+    if (!ok) { gridState.undoStack.pop(); igRepaintCell(rowId, colKey); toast(igEditErrorFor(colKey), "error"); }
   }
   function igCommitCurrencyChoice(rowId, value) {
     var row = gridState.byId[rowId];
@@ -3390,7 +3678,7 @@
     if (!row || String(value) === String(row.currency)) { igRepaintCell(rowId, "currency"); igFlushPendingExternalRender(); return; }
     igPushUndo(rowId);
     var ok = igApplyCellValue(rowId, "currency", value);
-    if (!ok) { gridState.undoStack.pop(); igRepaintCell(rowId, "currency"); toast("That field is locked", "error"); }
+    if (!ok) { gridState.undoStack.pop(); igRepaintCell(rowId, "currency"); toast(igEditErrorFor("currency"), "error"); }
   }
 
   function igActivateCell(rowId, colKey, wantsEdit) {
@@ -3419,8 +3707,29 @@
     gridState.pendingFocusRow = id;
   }
   function igDeleteRow(rowId) {
-    var doc = readDoc(), item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(rowId); });
+    var gridRow = gridState.byId[rowId];
+    var doc = readDoc(), item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(igOwnerId(rowId)); });
     if (!item) return;
+    // On an instalment row, "delete row" means drop that instalment — the
+    // deal keeps going with one fewer payment in its schedule.
+    if (gridRow && gridRow.partId) {
+      var part = igPartOf(item, gridRow.partId);
+      if (!part) return;
+      if (num(part.paid) > 0) { toast("That instalment has money on it", "error"); return; }
+      if ((item.parts || []).length <= 1) { toast("A schedule needs at least one instalment", "error"); return; }
+      if (!confirm('Remove "' + (part.label || "this instalment") + '" from the schedule?')) return;
+      igPushUndo(rowId);
+      updateDoc(function (d) {
+        var target = (d.followups || []).find(function (x) { return String(x.id) === String(item.id); });
+        if (!target) return;
+        target.parts = (target.parts || []).filter(function (p) { return String(p.id) !== String(gridRow.partId); });
+        target.partCount = target.parts.length;
+        rebuildDealParts(d, target);
+      }, "grid-delete-part", true);
+      if (gridState.active && gridState.active.rowId === rowId) gridState.active = null;
+      toast("Instalment removed", "success");
+      return;
+    }
     if (dealHasRecordedMoney(item)) { toast("A deal with recorded money cannot be deleted", "error"); return; }
     if (!confirm('Delete this row? "' + (item.client || "Untitled") + '"')) return;
     igPushUndo(rowId);
@@ -3459,7 +3768,7 @@
     touched.forEach(function (rid) { igPushUndo(rid); });
     updateDoc(function (doc) {
       var byId = {}; (doc.followups || []).forEach(function (it) { byId[it.id] = it; });
-      touched.forEach(function (rid) { var item = byId[rid]; if (item) igMutateField(doc, item, colKey, sourceValue); });
+      touched.forEach(function (rid) { igWriteRow(doc, byId, rid, colKey, sourceValue); });
     }, "grid-fill", true);
     toast("Filled " + touched.length + " cell" + (touched.length === 1 ? "" : "s"), "success");
   }
@@ -3511,7 +3820,7 @@
     Object.keys(seen).forEach(function (rid) { igPushUndo(rid); });
     updateDoc(function (doc) {
       var byId = {}; (doc.followups || []).forEach(function (it) { byId[it.id] = it; });
-      plan.forEach(function (p) { var item = byId[p.rowId]; if (item) igMutateField(doc, item, p.key, ""); });
+      plan.forEach(function (p) { igWriteRow(doc, byId, p.rowId, p.key, ""); });
     }, "grid-clear", true);
   }
 
@@ -3559,7 +3868,7 @@
       Object.keys(touched).forEach(function (rid) { igPushUndo(rid); });
       updateDoc(function (doc) {
         var byId = {}; (doc.followups || []).forEach(function (it) { byId[it.id] = it; });
-        plan.forEach(function (p) { var item = byId[p.rowId]; if (item) igMutateField(doc, item, p.key, p.value); });
+        plan.forEach(function (p) { igWriteRow(doc, byId, p.rowId, p.key, p.value); });
       }, "grid-paste", true);
       toast("Pasted " + plan.length + " cell" + (plan.length === 1 ? "" : "s"), "success");
     }, function () { toast("Clipboard permission was blocked", "error"); });
@@ -3584,10 +3893,11 @@
     if (!row) return;
     var menu = document.createElement("div");
     menu.className = "ig-menu";
+    // Nothing here opens a detail sheet: every figure this menu used to hide
+    // behind a form is a cell on the row itself.
     var items = [
-      { label: "Copy", action: "copy" }, { label: "Paste", action: "paste" }, { label: "Clear", action: "clear" },
-      { label: row.open ? "Record payment" : "View payment history", action: "pay" },
-      { label: "Open deal details", action: "open" },
+      { label: "Copy", action: "copy" }, { label: "Cut", action: "cut" }, { label: "Paste", action: "paste" },
+      { label: "Clear", action: "clear" },
       { label: "Delete row", action: "delete", danger: !row.locked, disabled: row.locked }
     ];
     menu.innerHTML = items.map(function (it) { return '<button class="ig-menu-item' + (it.danger ? " danger" : "") + '" data-menu="' + it.action + '"' + (it.disabled ? " disabled" : "") + '>' + esc(it.label) + '</button>'; }).join("");
@@ -3596,10 +3906,9 @@
       if (!btn) return;
       var act = btn.getAttribute("data-menu"); igCloseMenu();
       if (act === "copy") igCopySelection();
+      else if (act === "cut") { igCopySelection(); igClearSelectionValues(); }
       else if (act === "paste") igPasteClipboard();
       else if (act === "clear") igClearSelectionValues();
-      else if (act === "pay") { if (row.open) openPaymentForm(row.id); else openUpcomingForm(row.id); }
-      else if (act === "open") openUpcomingForm(row.id);
       else if (act === "delete") igDeleteRow(row.id);
     });
     igPlaceMenu(menu, x, y);
@@ -3684,6 +3993,8 @@
     }
     var corner = e.target.closest && e.target.closest(".ig-rownum.ig-colhead");
     if (corner) { igSelectAll(); return; }
+    var group = e.target.closest && e.target.closest(".ig-group");
+    if (group) { e.preventDefault(); e.stopPropagation(); igToggleCollapse(group.getAttribute("data-group")); return; }
     var rownum = e.target.closest && e.target.closest(".ig-rownum:not(.ig-colhead):not(.ig-filler-cell)");
     if (rownum) {
       var rid = rownum.getAttribute("data-rownum"), cols = igVisibleCols();
@@ -3966,10 +4277,15 @@
       if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); igClearSelectionValues(); return; }
       if (e.key.length === 1 && !mod && !e.altKey) {
         var rrow = gridState.byId[gridState.active.rowId], rcol = igColDef(gridState.active.col);
-        if (rcol && igEditable(rcol, rrow) && rcol.key !== "due" && rcol.key !== "currency") {
+        if (rcol && igEditable(rcol, rrow) && rcol.type !== "date" && rcol.key !== "currency") {
           igBeginEdit(gridState.active.rowId, gridState.active.col);
           var rid = gridState.active.rowId, key = gridState.active.col, ch = e.key;
-          setTimeout(function () { var input = gridState.cellEls[rid] && gridState.cellEls[rid][key] && gridState.cellEls[rid][key].querySelector(".ig-edit-input"); if (input) input.value = ch; }, 0);
+          setTimeout(function () {
+            var input = gridState.cellEls[rid] && gridState.cellEls[rid][key] && gridState.cellEls[rid][key].querySelector(".ig-edit-input");
+            // A dropdown does its own type-ahead; forcing the character in
+            // would just blank it.
+            if (input && input.tagName !== "SELECT") input.value = ch;
+          }, 0);
         }
       }
     });
@@ -4016,6 +4332,7 @@
       window.addEventListener("resize", onViewport);
       window.addEventListener("orientationchange", onViewport);
     }
+    igWireKeyboardInset();
     igWireCellEvents(scroll);
     igWireHeaderInteractions(inner);
     igWireResize(inner);
