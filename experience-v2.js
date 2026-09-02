@@ -674,7 +674,9 @@
     needsReactRefresh = true;
     try { sessionStorage.setItem(REFRESH_KEY, "1"); } catch (_) {}
     try { window.dispatchEvent(new CustomEvent("s97:v2-data-change", { detail: { reason: reason || "update" } })); } catch (_) {}
-    scheduleRender(0);
+    // The grid patches its own rows after an edit; rebuilding the whole
+    // screen for one cell costs a third of a second on a long sheet.
+    if (!igSuppressRender) scheduleRender(0);
     if (!quiet) toast("Saved · syncing to cloud", "success");
   }
 
@@ -3088,6 +3090,7 @@
     var stats = collectionStats(doc);
     var rows = igBuildRows(doc, filtered);
     gridState.rows = rows;
+    gridState.filteredCount = filtered.length;
     gridState.order = rows.map(function (r) { return r.id; });
     gridState.byId = {};
     rows.forEach(function (r) { gridState.byId[r.id] = r; });
@@ -3510,6 +3513,108 @@
     return igMutateField(doc, item, colKey, value);
   }
 
+  /* Editing a cell used to rebuild the entire screen: at 60 deals with a
+     12-payment schedule each — 420 rows, 4,600 cells — that was a third of a
+     second per keystroke on a laptop and near a second on a phone. An edit
+     now rewrites only the rows of the deal it touched, plus the strips that
+     read from totals, and leaves the row order alone: rows stop jumping
+     around underneath the cursor mid-edit, exactly as they don't in Sheets.
+     The order refreshes on the next filter, sort, or reload. */
+  var igSuppressRender = false;
+  function igIndexRow(rowEl) {
+    var rid = rowEl.getAttribute("data-row-id");
+    if (!rid) return;
+    gridState.rowEls[rid] = rowEl;
+    var map = {};
+    Array.prototype.slice.call(rowEl.children).forEach(function (cellEl) {
+      map[cellEl.getAttribute("data-col") || "__rownum"] = cellEl;
+    });
+    gridState.cellEls[rid] = map;
+  }
+  function igRowsOfDeal(dealId) {
+    var prefix = String(dealId) + "::";
+    return (gridState.order || []).filter(function (id) { return String(id) === String(dealId) || String(id).indexOf(prefix) === 0; });
+  }
+  // Returns false when the sheet has to be rebuilt after all (the deal is
+  // gone, or its rows are not on screen).
+  function igPatchDeal(doc, dealId) {
+    var body = document.getElementById("ig-body");
+    if (!body) return false;
+    var oldIds = igRowsOfDeal(dealId);
+    if (!oldIds.length) return false;
+    var firstEl = gridState.rowEls[oldIds[0]];
+    if (!firstEl || !firstEl.parentNode) return false;
+    var item = (doc.followups || []).find(function (x) { return String(x.id) === String(dealId); });
+    if (!item) return false;
+    var at = gridState.order.indexOf(oldIds[0]);
+    var parent = igBuildRow(item, doc, gridState.byId[dealId] ? gridState.byId[dealId].index : at + 1);
+    var parts = Array.isArray(item.parts) ? item.parts : [];
+    parent.hasParts = parts.length > 0;
+    parent.collapsed = parent.hasParts && igCollapsed(item.id);
+    var fresh = [parent];
+    if (parent.hasParts && !parent.collapsed) {
+      parts.forEach(function (part, pi) { fresh.push(igBuildPartRow(parent, item, part, doc, pi + 1, parts.length)); });
+    }
+    var holder = document.createElement("div");
+    holder.innerHTML = fresh.map(igRowHTML).join("");
+    var newEls = Array.prototype.slice.call(holder.children);
+    newEls.forEach(function (el) { firstEl.parentNode.insertBefore(el, firstEl); });
+    oldIds.forEach(function (id) {
+      var el = gridState.rowEls[id];
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+      delete gridState.rowEls[id];
+      delete gridState.cellEls[id];
+      delete gridState.byId[id];
+    });
+    newEls.forEach(igIndexRow);
+    gridState.order.splice(at, oldIds.length);
+    gridState.rows.splice(at, oldIds.length);
+    fresh.forEach(function (r, i) {
+      gridState.order.splice(at + i, 0, r.id);
+      gridState.rows.splice(at + i, 0, r);
+      gridState.byId[r.id] = r;
+    });
+    // A selection sitting on an instalment that no longer exists moves to
+    // the deal itself rather than vanishing.
+    if (gridState.active && !gridState.byId[gridState.active.rowId]) gridState.active = { rowId: dealId, col: gridState.active.col };
+    if (gridState.anchor && !gridState.byId[gridState.anchor.rowId]) gridState.anchor = gridState.active;
+    return true;
+  }
+  function igPatchChrome(doc) {
+    if (!root) return;
+    var stats = collectionStats(doc);
+    var summary = root.querySelector(".ig-summary");
+    if (summary) summary.outerHTML = igSummaryHTML(stats, igPeriodStats(doc));
+    var quick = root.querySelector(".ig-quickviews");
+    if (quick) quick.outerHTML = igQuickViewsHTML(stats);
+    var status = root.querySelector(".ig-statusbar");
+    if (status) status.outerHTML = igStatusBarHTML(gridState.filteredCount || 0, (doc.followups || []).length, stats);
+  }
+  // One write, then a repaint of just what moved.
+  function igWritePatched(mutator, reason, dealIds) {
+    igSuppressRender = true;
+    var ok;
+    try { ok = updateDoc(mutator, reason, true); } finally { igSuppressRender = false; }
+    if (!ok) return false;
+    var doc = readDoc();
+    var whole = false;
+    dealIds.forEach(function (id) { if (!igPatchDeal(doc, id)) whole = true; });
+    if (whole) { scheduleRender(0); return true; }
+    igPatchChrome(doc);
+    igPaintActive();
+    igFillEmptyRows();
+    return true;
+  }
+
+  function igDealsOf(rowIds) {
+    var seenDeals = {}, out = [];
+    (rowIds || []).forEach(function (rid) {
+      var owner = igOwnerId(rid);
+      if (!seenDeals[owner]) { seenDeals[owner] = true; out.push(owner); }
+    });
+    return out;
+  }
+
   // Every batched write — fill, clear, paste — goes through the same door as
   // a typed edit, so an instalment row is written as an instalment.
   function igWriteRow(doc, byId, rowId, key, value) {
@@ -3530,11 +3635,11 @@
     var applied = true;
     gridState.editError = "";
     var row = gridState.byId[rowId], ownerId = igOwnerId(rowId), partId = row && row.partId;
-    updateDoc(function (doc) {
+    igWritePatched(function (doc) {
       var item = (doc.followups || []).find(function (x) { return String(x.id) === String(ownerId); });
       if (!item) { applied = false; return; }
       applied = partId ? igMutatePart(doc, item, partId, colKey, value) : igMutateField(doc, item, colKey, value);
-    }, "grid-edit", true);
+    }, "grid-edit", [ownerId]);
     return applied;
   }
 
@@ -3766,10 +3871,10 @@
     }
     if (!touched.length) return;
     touched.forEach(function (rid) { igPushUndo(rid); });
-    updateDoc(function (doc) {
+    igWritePatched(function (doc) {
       var byId = {}; (doc.followups || []).forEach(function (it) { byId[it.id] = it; });
       touched.forEach(function (rid) { igWriteRow(doc, byId, rid, colKey, sourceValue); });
-    }, "grid-fill", true);
+    }, "grid-fill", igDealsOf(touched));
     toast("Filled " + touched.length + " cell" + (touched.length === 1 ? "" : "s"), "success");
   }
   function igStartFillDrag(e) {
@@ -3818,10 +3923,10 @@
     }
     if (!plan.length) return;
     Object.keys(seen).forEach(function (rid) { igPushUndo(rid); });
-    updateDoc(function (doc) {
+    igWritePatched(function (doc) {
       var byId = {}; (doc.followups || []).forEach(function (it) { byId[it.id] = it; });
       plan.forEach(function (p) { igWriteRow(doc, byId, p.rowId, p.key, ""); });
-    }, "grid-clear", true);
+    }, "grid-clear", igDealsOf(Object.keys(seen)));
   }
 
   function igCopySelection() {
@@ -3866,10 +3971,10 @@
       });
       if (!plan.length) return;
       Object.keys(touched).forEach(function (rid) { igPushUndo(rid); });
-      updateDoc(function (doc) {
+      igWritePatched(function (doc) {
         var byId = {}; (doc.followups || []).forEach(function (it) { byId[it.id] = it; });
         plan.forEach(function (p) { igWriteRow(doc, byId, p.rowId, p.key, p.value); });
-      }, "grid-paste", true);
+      }, "grid-paste", igDealsOf(Object.keys(touched)));
       toast("Pasted " + plan.length + " cell" + (plan.length === 1 ? "" : "s"), "success");
     }, function () { toast("Clipboard permission was blocked", "error"); });
   }
