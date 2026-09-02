@@ -3410,15 +3410,39 @@
     igUpdateSelectionStats(bounds);
   }
 
+  // How much of the scrollport the frozen run covers. The frozen columns and
+  // the header float *over* the rows rather than beside them, so the browser
+  // counts a cell tucked underneath as perfectly visible.
+  function igFrozenInset() {
+    var run = igRownumWidth(), visible = igVisibleCols(), n = igFreezeCount();
+    for (var i = 0; i < n; i++) run += igColWidth(visible[i].key);
+    return run;
+  }
   function igScrollCellIntoView(rowId, col) {
     var el = gridState.cellEls[rowId] && gridState.cellEls[rowId][col];
-    if (!el || !el.scrollIntoView) return;
+    var scroll = document.getElementById("ig-scroll");
+    if (!el || !scroll || !el.getBoundingClientRect) return;
     // Stamped so the touch handler can tell the sheet moving itself from the
     // sheet still gliding under a flick — only the latter should swallow the
     // next tap. Without this, selecting a cell scrolls it into view and the
     // second half of a double-tap gets thrown away as a fling.
     gridState.progScrollAt = Date.now();
-    el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    var cr = el.getBoundingClientRect(), sr = scroll.getBoundingClientRect();
+    var head = scroll.querySelector(".ig-head-row");
+    var topInset = head ? head.getBoundingClientRect().height : 0;
+    // A frozen cell is never underneath itself, and the row-number gutter is
+    // sticky too — neither needs to be scrolled sideways into view.
+    var sticky = el.classList.contains("ig-frozen") || el.classList.contains("ig-sticky-num");
+    var dx = 0, dy = 0;
+    if (!sticky) {
+      var leftInset = igFrozenInset();
+      if (cr.left < sr.left + leftInset) dx = cr.left - (sr.left + leftInset);
+      else if (cr.right > sr.right) dx = Math.min(cr.right - sr.right, cr.left - (sr.left + leftInset));
+    }
+    if (cr.top < sr.top + topInset) dy = cr.top - (sr.top + topInset);
+    else if (cr.bottom > sr.bottom) dy = Math.min(cr.bottom - sr.bottom, cr.top - (sr.top + topInset));
+    if (dx) scroll.scrollLeft += dx;
+    if (dy) scroll.scrollTop += dy;
   }
 
   function igSetActive(rowId, col, opts) {
@@ -4373,8 +4397,13 @@
       if (Date.now() - (gridState.progScrollAt || 0) < 250) return;
       lastScrollAt = Date.now();
       // The sheet moved under the finger, so the gesture was a scroll. Any
-      // tap or long-press it might have become is off.
-      if (tapPending) { tapPending = false; clearTimeout(lpTimer); }
+      // tap or long-press it might have become is off — the menu especially,
+      // which must never open over a moving sheet.
+      tapPending = false;
+      clearTimeout(lpTimer);
+      // A menu pinned to a spot on a sheet that is moving under it is
+      // pointing at the wrong cell by the time it settles.
+      if (gridState.menuEl) igCloseMenu();
     }, { passive: true });
     function touchIds() { return Object.keys(touches); }
     scroll.addEventListener("pointerdown", function (e) {
@@ -4401,7 +4430,13 @@
         tapPending = Date.now() - lastScrollAt > IG_FLING_GUARD;
         dragging = false;
         clearTimeout(lpTimer);
+        var pressScrollTop = scroll.scrollTop, pressScrollLeft = scroll.scrollLeft;
         lpTimer = setTimeout(function () {
+          // Resting a thumb for a moment before flicking is how people
+          // scroll. If the sheet has moved at all since the finger landed,
+          // this was the start of a scroll and not a press-and-hold — the
+          // menu must not appear over a sheet that is already moving.
+          if (scroll.scrollTop !== pressScrollTop || scroll.scrollLeft !== pressScrollLeft) return;
           lpFired = true; tapPending = false;
           igSelectCellFromEl(cell, false);
           igOpenCellMenu(cell);
@@ -4415,13 +4450,25 @@
       if (e.pointerType === "touch" && touches[e.pointerId]) touches[e.pointerId] = { x: e.clientX, y: e.clientY };
       if (pinching) return;
       if (!startCell) return;
+      // A press-and-hold has to actually hold still. The tap itself forgives
+      // a thumb's wobble; the menu is far less forgiving, because popping one
+      // open over a sheet the user was about to scroll is worse than missing
+      // one they meant.
+      if (Math.abs(e.clientX - startX) > 6 || Math.abs(e.clientY - startY) > 6) clearTimeout(lpTimer);
       var slop = e.pointerType === "touch" ? IG_TAP_SLOP : 8;
       if (Math.abs(e.clientX - startX) > slop || Math.abs(e.clientY - startY) > slop) {
         clearTimeout(lpTimer);
         // A finger that travelled is scrolling, not selecting. It never
         // paints a range on the way past — dragging a thumb down the sheet
         // used to leave a block of cells selected behind it.
-        if (e.pointerType === "touch") { tapPending = false; startCell = null; lastTapKey = null; return; }
+        if (e.pointerType === "touch") {
+          tapPending = false; startCell = null; lastTapKey = null;
+          // A press-and-hold is provisional until the finger lifts. Sliding
+          // away from it takes the menu back and lets the gesture go back to
+          // being the scroll it turned into.
+          if (lpFired) { lpFired = false; igCloseMenu(); }
+          return;
+        }
         if (dragging && !lpFired) {
           var el = document.elementFromPoint(e.clientX, e.clientY);
           var overCell = el && el.closest && el.closest(".ig-cell:not(.ig-rownum):not(.ig-colhead):not(.ig-filler-cell)");

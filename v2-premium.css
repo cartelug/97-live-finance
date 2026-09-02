@@ -2183,8 +2183,20 @@ select.ig-edit-input { padding: 0 calc(6px * var(--ig-zoom, 1)); }
    --ig-zoom control so "zoom out" genuinely fits more of the sheet instead
    of just shrinking type. */
 @media (pointer: coarse) {
-  .ig-cell { height: calc(44px * var(--ig-zoom, 1)); font-size: max(11px, calc(12.5px * var(--ig-zoom, 1))); }
-  .ig-colhead { height: calc(40px * var(--ig-zoom, 1)); font-size: max(9.5px, calc(10.5px * var(--ig-zoom, 1))); }
+  /* A row never shrinks below a thumb. Zoom is there to fit more COLUMNS
+     across a narrow screen — letting it drag row height down to 25px as
+     well is what made a thumb land on the row above or below the one it
+     was aimed at, which reads as the sheet selecting cells at random.
+     44px is Apple's minimum target and roughly a fingertip; the sheet
+     still compresses horizontally as far as it ever did. */
+  .ig-cell { height: max(44px, calc(44px * var(--ig-zoom, 1))); font-size: max(11px, calc(12.5px * var(--ig-zoom, 1))); }
+  .ig-colhead { height: max(38px, calc(40px * var(--ig-zoom, 1))); font-size: max(9.5px, calc(10.5px * var(--ig-zoom, 1))); }
+  /* The fill handle is a 9px square hanging off the corner of the active
+     cell, and it swallows the gesture that lands on it (touch-action:none).
+     On a phone that means a thumb aimed at the next cell can instead drag
+     one value over a column of real money — and the sheet won't even
+     scroll while it does. Sheets has no fill handle on mobile either. */
+  .ig-fill-handle { display: none; }
   .ig-rownum { font-size: max(9.5px, calc(11px * var(--ig-zoom, 1))); }
   .ig-tbtn { height: 38px; min-width: 38px; }
   .ig-quick { height: 30px; }
