@@ -4324,6 +4324,13 @@
     scroll.addEventListener("contextmenu", igOnContextMenu);
     var dragging = false, lpTimer = null, lpFired = false, startX = 0, startY = 0, startCell = null;
     var touches = {}, pinching = false, pinchStartDist = 0, pinchStartZoom = 1;
+    // A real double-tap on iOS/Android does not reliably become a native
+    // dblclick — it depends on gesture-recognition quirks that vary by OS
+    // version and are exactly what touch-action: pan-x/pan-y (deliberately
+    // set here to keep the browser's own pinch/double-tap-zoom out of the
+    // grid's way) tends to disturb. Tapped twice, quickly, in the same spot,
+    // is tracked directly instead of hoping the platform synthesises it.
+    var lastTapCell = null, lastTapTime = 0;
     function touchIds() { return Object.keys(touches); }
     function touchDist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
     scroll.addEventListener("pointerdown", function (e) {
@@ -4381,7 +4388,20 @@
         state.upcoming.gridZoom = gridState.zoom; savePrefs();
       }
     }
-    scroll.addEventListener("pointerup", function (e) { endTouch(e); dragging = false; clearTimeout(lpTimer); startCell = null; });
+    scroll.addEventListener("pointerup", function (e) {
+      endTouch(e);
+      if (e.pointerType === "touch" && startCell && !lpFired && !pinching && !startCell.classList.contains("ig-rownum")) {
+        var now = Date.now();
+        if (lastTapCell === startCell && now - lastTapTime < 350) {
+          lastTapCell = null; lastTapTime = 0;
+          var rowId = startCell.getAttribute("data-row"), colKey = startCell.getAttribute("data-col");
+          if (rowId && colKey) { e.preventDefault(); igActivateCell(rowId, colKey, true); }
+        } else {
+          lastTapCell = startCell; lastTapTime = now;
+        }
+      }
+      dragging = false; clearTimeout(lpTimer); startCell = null;
+    });
     scroll.addEventListener("pointercancel", function (e) { endTouch(e); dragging = false; clearTimeout(lpTimer); startCell = null; });
   }
 
