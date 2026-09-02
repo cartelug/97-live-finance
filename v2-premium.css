@@ -1709,602 +1709,308 @@ body > .x97-fab.x97-fab-viewport,
 }
 
 /* ==========================================================================
-   INCOMING GRID — spreadsheet workspace
+/* ==========================================================================
+   INCOMING — a dense, scannable ledger.
    Every rule below is scoped to #x97-v2-root[data-screen="upcoming"] (the
-   Incoming screen's own root) or to .ig-* classes that exist only inside it,
+   Incoming screen's own root) or to .ic-* classes that exist only inside it,
    so nothing here can ever affect dashboard, credit, or any other screen.
+
+   The whole screen is one idea: as many deals visible at once as a
+   spreadsheet would show, and nothing ever edited in the row itself — a tap
+   opens the same guided sheet Add/Edit has always used. That single choice
+   is what removes every class of touch bug a cell-editing grid invites:
+   there is no cell to select, no drag range to start by accident, no fill
+   handle to catch a thumb, nothing for a scroll to be mistaken for.
    ========================================================================== */
 
-#x97-v2-root[data-screen="upcoming"] {
-  padding: 0 !important;
-  height: 100dvh;
-  height: 100svh;
-  max-height: 100dvh;
-  max-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  box-sizing: border-box;
-  /* The nav is a floating pill, not a docked bar: it sits --v4-nav-gap above
-     the bottom edge and is --v4-nav-height tall. Reserving only the old
-     67px bar height let it sit on top of the status bar and zoom control. */
-  padding-bottom: calc(var(--v4-nav-height, 70px) + var(--v4-nav-gap, 12px) + 8px + env(safe-area-inset-bottom)) !important;
-  width: 100%;
-  max-width: 2200px;
-  margin-inline: auto;
-}
-/* The app centres every screen in a 520/1040px column. A sheet wants the
-   whole window, so the column is released while Incoming is on screen — by
-   widening the container rather than the old 100vw + negative-margin
-   breakout, which overflowed the page by the scrollbar's width. */
-body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
-  max-width: none !important;
-  padding-bottom: 0;
-}
+/* The base #x97-v2-root rule carries a large !important padding meant for a
+   normal scrolling page with a fixed bottom nav floating over it. Incoming
+   is its own full-bleed app shell instead — .ic-shell supplies its own
+   safe-area padding at the top and bottom, so root's padding has to go, not
+   just be worked around, or every percentage/inset sizing inside it is off
+   by exactly that padding. */
+#x97-v2-root[data-screen="upcoming"] { height: 100%; padding: 0 !important; }
 
-.ig-shell {
-  /* One knob controls the horizontal rhythm of every chrome strip, so the
-     whole workspace tightens together as the viewport narrows. */
-  --ig-gut: clamp(8px, 2vw, 18px);
-  display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden;
-  /* Set from visualViewport while a phone keyboard is up. */
-  --ig-kb: 0px;
-  /* Sheets is white, not green: a true-neutral gray for gridlines, header
-     and toolbar surfaces, and "this control is toggled on" states, derived
-     from the theme's own text/background so it holds in dark mode without
-     a second set of rules. Green stays reserved for what it already means
-     elsewhere in this app — money received, UGX, your current selection —
-     not for "this button happens to be active". */
+.ic-shell {
+  --ig-gut: clamp(10px, 2.4vw, 20px);
+  /* #x97-v2-root carries a large !important padding-bottom meant for a
+     normal scrolling page with a fixed nav bar over it — irrelevant here,
+     but it also means height:100% on a plain block child does not reliably
+     resolve to the root's own content height in every engine. Absolute
+     positioning against root's own `position:relative` fills the content
+     box exactly, sidestepping that percentage-height ambiguity entirely. */
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; overflow: hidden;
   --ig-line: color-mix(in srgb, var(--tx) 12%, transparent);
   --ig-line2: color-mix(in srgb, var(--tx) 22%, transparent);
   --ig-surface2: color-mix(in srgb, var(--tx) 5%, var(--card));
   --ig-surface3: color-mix(in srgb, var(--tx) 9%, var(--card));
   --ig-selected: color-mix(in srgb, var(--tx) 9%, var(--card));
   --ig-selected-line: color-mix(in srgb, var(--tx) 24%, transparent);
-  /* USD money, washed across the whole cell in the same blue the USD badge
-     wears. Mixed into the card colour rather than laid over it as an alpha,
-     so the cell stays fully opaque — the same reason the settled/cancelled
-     rows fade their text colour instead of their opacity. */
-  --ig-usd-cell: color-mix(in srgb, var(--usd) 20%, var(--card));
-  --ig-usd-cell-line: color-mix(in srgb, var(--usd) 28%, var(--ig-line));
-  /* A spreadsheet stands on plain paper. Without this the app's tinted,
-     gradient background shows through wherever the grid does not reach. */
+  --ig-usd-cell: color-mix(in srgb, var(--usd) 16%, var(--card));
   background: var(--card);
 }
-/* The keyboard covers the window without resizing it, so the sheet hands
-   back exactly the covered height and keeps the open cell in view. */
-.ig-shell.ig-kb-open { height: calc(100% - var(--ig-kb)); }
-.ig-shell.ig-kb-open .ig-summary,
-.ig-shell.ig-kb-open .ig-quickviews,
-.ig-shell.ig-kb-open .ig-filterchips { display: none; }
-.ig-shell .x97-top { padding: max(6px, env(safe-area-inset-top)) var(--ig-gut) 4px; flex: 0 0 auto; }
-/* The shared header ships a 46px display title and a 56px status pill — right
-   for a dashboard, far too heavy above a spreadsheet. These win with the same
-   !important the injected base styles use, and only inside .ig-shell. */
-.ig-shell .x97-title { font-size: clamp(15px, 2vw, 20px) !important; line-height: 1.15 !important; letter-spacing: -.03em !important; }
-.ig-shell .x97-cloud { min-height: 0 !important; padding: 5px 10px !important; font-size: 9.5px !important; box-shadow: none !important; }
-.ig-shell .x97-add-primary { height: 32px !important; min-height: 0 !important; border-radius: 9px !important; }
-.ig-shell .x97-top-copy { gap: 1px; }
-/* "COLLECTIONS" above a title that already reads "Incoming" costs 31px of
-   every screen to say nothing twice. */
-.ig-shell .x97-eyebrow { display: none; }
-.ig-shell .x97-sub { display: none; }
+.ic-shell .x97-top { padding: max(6px, env(safe-area-inset-top)) var(--ig-gut) 4px; flex: 0 0 auto; }
+.ic-shell .x97-title { font-size: clamp(16px, 2vw, 20px) !important; line-height: 1.15 !important; letter-spacing: -.03em !important; }
+.ic-shell .x97-cloud { min-height: 0 !important; padding: 5px 10px !important; font-size: 9.5px !important; box-shadow: none !important; }
+.ic-shell .x97-add-primary { height: 34px !important; min-height: 0 !important; border-radius: 9px !important; }
+.ic-shell .x97-eyebrow, .ic-shell .x97-sub { display: none; }
 
-.ig-toolbar { display: flex; align-items: center; gap: 6px; padding: 5px var(--ig-gut); flex: 0 0 auto; border-top: 1px solid var(--ig-line); flex-wrap: nowrap; }
-.ig-toolbar-group { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
-.ig-tsep { width: 1px; align-self: stretch; background: var(--ig-line2); margin: 4px 2px; }
-.ig-tbtn { height: 34px; min-width: 34px; padding: 0 9px; border-radius: 9px; border: 1px solid transparent; background: transparent; color: var(--tx2); display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 750; cursor: pointer; }
-.ig-tbtn:hover { background: var(--ig-surface2); border-color: var(--ig-line); }
-.ig-tbtn[disabled] { opacity: .35; pointer-events: none; }
-.ig-tbtn-badge-wrap { position: relative; display: inline-flex; }
-.ig-tbadge { position: absolute; right: -6px; top: -6px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 99px; background: var(--pos); color: #fff; font-size: 9px; display: grid; place-items: center; }
-.ig-toolbar-search { flex: 1 1 220px; min-width: 0; display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 10px; border-radius: 9px; background: var(--ig-surface2); border: 1px solid var(--ig-line); }
-.ig-toolbar-search input { flex: 1; min-width: 0; border: 0; background: transparent; font-size: 12.5px; color: var(--tx); outline: none; }
-.ig-search-ic { color: var(--tx3); display: flex; }
-
-.ig-quickviews { display: flex; gap: 5px; padding: 0 var(--ig-gut) 5px; flex: 0 0 auto; overflow-x: auto; scrollbar-width: none; }
-.ig-quickviews::-webkit-scrollbar { display: none; }
-.ig-quick { white-space: nowrap; height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--ig-line); background: var(--card); color: var(--tx2); font-size: 10.5px; font-weight: 750; display: inline-flex; align-items: center; gap: 5px; }
-.ig-quick b { font-weight: 800; color: var(--tx3); }
-.ig-quick.on { background: var(--ig-selected); border-color: var(--ig-selected-line); color: var(--tx); }
-.ig-quick.on b { color: var(--tx); }
-
-.ig-filterchips { padding: 0 var(--ig-gut) 5px; flex: 0 0 auto; }
-.ig-filterchips .x97-active-filters { margin: 0; }
-
-.ig-formula-bar { display: flex; align-items: center; gap: 8px; padding: 4px var(--ig-gut); flex: 0 0 auto; border-top: 1px solid var(--ig-line); border-bottom: 1px solid var(--ig-line); background: var(--ig-surface2); }
-.ig-cell-ref { flex: 0 0 auto; min-width: 64px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 800; color: var(--tx3); padding: 0 8px; height: 24px; display: flex; align-items: center; border-right: 1px solid var(--ig-line2); }
-.ig-formula-input { flex: 1; min-width: 0; height: 24px; border: 0; background: transparent; font-size: 12.5px; color: var(--tx); outline: none; font-family: var(--fnum); }
-.ig-formula-input:disabled { color: var(--tx3); }
-
-.ig-gridwrap { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; }
-/* manipulation = pan in both directions + the browser's own continuous
-   pinch-zoom, minus double-tap-to-zoom. So two fingers zoom the whole page
-   (not just the sheet) and you can pan the zoomed page anywhere, while a
-   double-tap on a cell opens the editor instead of zooming — iOS ignores
-   `pan-x pan-y` for double-tap zoom, but it honours this. */
-.ig-scroll { position: absolute; inset: 0; overflow: auto; outline: none; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: manipulation; }
-.ig-scroll:focus, .ig-scroll:focus-visible { outline: none; }
-.ig-grid-inner { --ig-rownum-w: 42px; --ig-zoom: 1; width: fit-content; min-width: 100%; position: relative; }
-.ig-row { display: grid; grid-template-columns: var(--ig-tpl, 42px 178px 116px 124px 112px 124px 58px 112px 118px 132px 130px 220px); align-items: stretch; }
-.ig-head-row { position: sticky; top: 0; z-index: 10; background: var(--ig-surface2); }
-.ig-body { position: relative; content-visibility: auto; contain-intrinsic-size: 0 2000px; }
-
-.ig-cell {
-  min-width: 0; box-sizing: border-box; display: flex; align-items: center;
-  padding: 0 calc(10px * var(--ig-zoom, 1)); height: calc(36px * var(--ig-zoom, 1)); font-size: max(10.5px, calc(12px * var(--ig-zoom, 1))); color: var(--tx);
-  border-bottom: 1px solid var(--ig-line); border-right: 1px solid var(--ig-line);
-  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  background: var(--card); position: relative;
-  user-select: none; -webkit-user-select: none; touch-action: manipulation;
+/* ── The hero: what you are owed, stated once and large ─────────────────── */
+.ic-hero {
+  flex: 0 0 auto; padding: 10px var(--ig-gut) 12px; border-bottom: 1px solid var(--ig-line);
+  background: var(--ig-surface2);
+  transition: max-height 160ms ease, opacity 120ms ease, padding 160ms ease;
 }
-.ig-a-right { justify-content: flex-end; text-align: right; }
-.ig-a-center { justify-content: center; text-align: center; }
-.ig-colhead { height: calc(36px * var(--ig-zoom, 1)); background: var(--ig-surface2); font-size: max(9.5px, calc(10.5px * var(--ig-zoom, 1))); font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .03em; cursor: default; }
-.ig-colhead[data-x97-action] { cursor: pointer; }
-.ig-colhead span { overflow: hidden; text-overflow: ellipsis; }
-.ig-sorted { color: var(--tx); }
-.ig-sort-ic { display: inline-flex; margin-left: 3px; transform: rotate(90deg); }
-.ig-rownum { justify-content: center; color: var(--tx3); font-size: max(9.5px, calc(10.5px * var(--ig-zoom, 1))); font-weight: 700; padding: 0; cursor: default; background: var(--ig-surface2); }
-.ig-head-row .ig-rownum { background: var(--ig-surface2); }
-/* The corner cell selects the whole sheet, same as Sheets — give it the
-   same pointer affordance as every other clickable header. */
-.ig-rownum.ig-colhead { cursor: pointer; }
-.ig-sticky { position: sticky; z-index: 2; }
-.ig-sticky-num { position: sticky; left: 0; z-index: 6; }
-/* The frozen run: however many leading columns the user pinned. Each one
-   carries its own left offset as a variable, so resizing or zooming moves
-   the whole run without touching the markup. */
-.ig-frozen { position: sticky; left: var(--ig-fz-0, 0px); z-index: 5; background: var(--card); }
-.ig-head-row .ig-frozen { z-index: 8; background: var(--ig-surface2); }
-.ig-head-row .ig-sticky-num { z-index: 9; }
-/* The client is the row's identity — small, but the boldest thing in it. */
-.ig-c-client { font-weight: 800; font-size: max(9.5px, calc(11px * var(--ig-zoom, 1))) !important; letter-spacing: -.01em; }
-/* A USD deal's Total/Paid/Balance read as one blue band across the row, so
-   a dollar figure is never mistaken for a shilling one. Declared here,
-   above the selection rules, so selecting a cell still paints over it. */
-.ig-cell.ig-money-usd { background: var(--ig-usd-cell); border-bottom-color: var(--ig-usd-cell-line); border-right-color: var(--ig-usd-cell-line); }
-
-/* A slightly heavier line where one cluster of columns ends and the next
-   begins — identity, then money, then status/timing, then everything
-   else — so the header reads as four groups instead of ten flat columns.
-   Keyed to the default columns, so it stays put through a drag reorder even
-   if it no longer marks the same logical seam once things have moved. */
-.ig-cell[data-col="currency"], .ig-cell[data-colhead="currency"],
-.ig-cell[data-col="lastPaid"], .ig-cell[data-colhead="lastPaid"] {
-  border-right-width: 2px; border-right-color: var(--ig-line2);
+.ic-hero-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.ic-hero-label { font-size: 10px; font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .06em; }
+.ic-hero-value { font-size: clamp(21px, 4vw, 27px); font-weight: 800; color: var(--tx); letter-spacing: -.025em; margin-top: 1px; }
+.ic-hero-usd { font-size: 0.62em; font-weight: 700; color: var(--usd); }
+.ic-hero-headline { font-size: 11.5px; font-weight: 650; color: var(--tx2); }
+.ic-hero-chips {
+  display: flex; gap: 6px; margin-top: 10px; overflow-x: auto; scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 22px), transparent 100%);
 }
-/* Sheets drops a faint shadow off the frozen pane once you've actually
-   scrolled the sheet under it — a depth cue that it's floating above the
-   rest of the columns. Stays invisible until there's something to float over. */
-.ig-shell.ig-scrolled-x .ig-frozen-last { box-shadow: 3px 0 6px -2px color-mix(in srgb, var(--tx) 35%, transparent); }
-
-/* Dragging a row to reorder it. Only a deal's own row is draggable — its
-   instalments move with it, not on their own. (.ig-group already sets its
-   own pointer cursor, which wins over this on the toggle itself.) */
-.ig-rownum:not(.ig-colhead):not(.ig-filler-cell) { cursor: grab; }
-.ig-row-part .ig-rownum { cursor: default; }
-body.ig-rowdragging { cursor: grabbing !important; user-select: none !important; }
-.ig-row-dragging { opacity: .4; }
-.ig-row-drop { position: absolute; left: 0; height: 2px; margin-top: -1px; background: var(--pos); pointer-events: none; z-index: 11; }
-.ig-row-ghost {
-  position: fixed; z-index: 90; transform: translate(14px, -50%); pointer-events: none;
-  background: var(--card); border: 1px solid var(--pos); color: var(--tx);
-  border-radius: 7px; padding: 5px 10px; font-size: 11px; font-weight: 700;
-  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  box-shadow: var(--elev-2);
+.ic-hero-chips::-webkit-scrollbar { display: none; }
+.ic-quick {
+  flex: 0 0 auto; white-space: nowrap; height: 30px; padding: 0 12px; border-radius: 999px;
+  border: 1px solid var(--ig-line); background: var(--card); color: var(--tx2); font-size: 11.5px; font-weight: 750;
+  display: inline-flex; align-items: center; gap: 5px;
 }
+.ic-quick b { font-weight: 800; color: var(--tx3); }
+.ic-quick.on { background: var(--ig-selected); border-color: var(--ig-selected-line); color: var(--tx); }
+.ic-quick.on b { color: var(--tx); }
+.ic-quick.danger.on { background: var(--negdim); border-color: color-mix(in srgb, var(--neg) 40%, transparent); color: var(--neg); }
+.ic-quick.danger.on b { color: var(--neg); }
 
-/* Instalment rows. A deal with a schedule shows a row per payment under the
-   row that totals them — same grid, same cells, nothing behind a form. */
-.ig-row-part .ig-c-client { padding-left: calc(20px * var(--ig-zoom, 1)); font-weight: 600; color: var(--tx2); }
-.ig-row-part .ig-c-client::before {
-  content: ""; position: absolute; left: calc(9px * var(--ig-zoom, 1)); top: 0; bottom: 50%;
-  width: calc(7px * var(--ig-zoom, 1)); border-left: 1px solid var(--ig-line2); border-bottom: 1px solid var(--ig-line2);
-  border-bottom-left-radius: 3px; pointer-events: none;
+/* ── Toolbar: search, filter, select, more ───────────────────────────────── */
+.ic-toolbar { display: flex; align-items: center; gap: 6px; padding: 7px var(--ig-gut); flex: 0 0 auto; border-bottom: 1px solid var(--ig-line); }
+.ic-search { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 7px; height: 36px; padding: 0 11px; border-radius: 10px; background: var(--ig-surface2); border: 1px solid var(--ig-line); color: var(--tx3); }
+.ic-search input { flex: 1; min-width: 0; border: 0; background: transparent; font-size: 13px; color: var(--tx); outline: none; }
+.ic-tbtn {
+  position: relative; flex: 0 0 auto; height: 36px; min-width: 36px; padding: 0 9px; border-radius: 10px;
+  border: 1px solid var(--ig-line); background: var(--card); color: var(--tx2); display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
 }
-.ig-row-part .ig-rownum { color: var(--tx3); font-weight: 600; font-size: max(8.5px, calc(9.5px * var(--ig-zoom, 1))); }
-.ig-row-part .ig-c-structure { color: var(--tx3); }
+.ic-tbtn:hover { background: var(--ig-surface2); }
+.ic-tbtn.on { background: var(--ig-selected); border-color: var(--ig-selected-line); color: var(--tx); }
+.ic-tbadge { position: absolute; right: -5px; top: -5px; min-width: 15px; height: 15px; padding: 0 3px; border-radius: 99px; background: var(--pos); color: #fff; font-size: 9.5px; font-weight: 800; display: grid; place-items: center; }
 
-/* The group toggle in the row-number gutter: Sheets' outline control. */
-.ig-rownum.ig-has-parts { gap: 1px; padding: 0 1px; }
-.ig-group {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 13px; height: 13px; padding: 0; margin: 0; flex: 0 0 auto;
-  background: none; border: 0; border-radius: 3px; color: var(--tx2); cursor: pointer;
-  transform: rotate(90deg); transition: transform .12s var(--v2-ease), background .12s var(--v2-ease);
+.ic-bulkbar { background: var(--ig-selected); }
+.ic-bulkbar-count { flex: 1 1 auto; font-size: 12.5px; font-weight: 750; color: var(--tx); }
+
+.ic-filterchips { padding: 0 var(--ig-gut) 8px; flex: 0 0 auto; }
+.ic-filterchips .x97-active-filters { margin: 0; }
+
+/* ── The list ─────────────────────────────────────────────────────────────
+   One CSS Grid template shared by every row (desktop shows every column,
+   mobile remaps the same elements into two lines via grid-template-areas —
+   same markup, no JS branching, no per-device HTML). Nothing here scrolls
+   sideways: a column that does not fit a phone is dropped, never hidden
+   behind a swipe. */
+.ic-gridwrap { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; }
+.ic-listwrap { position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.ic-list { position: relative; }
+
+.ic-row {
+  display: grid;
+  grid-template-columns: 30px minmax(120px,1.6fr) 108px 92px 92px 96px 58px 92px 108px 62px;
+  grid-template-areas: "lead client structure total paid balance cur status due quick";
+  align-items: center; column-gap: 8px;
+  padding: 8px var(--ig-gut); min-height: 52px;
+  border-bottom: 1px solid var(--ig-line);
+  cursor: pointer;
 }
-.ig-collapsed .ig-group { transform: rotate(0deg); }
-.ig-group:hover { background: var(--ig-surface3); color: var(--tx); }
-.ig-rownum-n { font-variant-numeric: tabular-nums; }
-.ig-rownum.ig-has-parts .ig-rownum-n { font-size: max(8.5px, calc(9.5px * var(--ig-zoom, 1))); }
+.ic-row:hover { background: var(--ig-surface2); }
+.ic-row-head { min-height: 30px; padding-top: 4px; padding-bottom: 4px; background: var(--ig-surface2); position: sticky; top: 0; z-index: 3; cursor: default; }
+.ic-row-head span { font-size: 9.5px; font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .04em; }
+.ic-row-head:hover { background: var(--ig-surface2); }
 
-/* Filler rows: gridlines only, no data, no events. They keep the sheet
-   looking like a sheet all the way to the bottom of the window. */
-.ig-filler { position: relative; }
-.ig-filler-cell { pointer-events: none; background: var(--card); }
-.ig-filler-row .ig-rownum { background: var(--ig-surface2); box-shadow: none; }
-
-.ig-cell.ig-editable { cursor: cell; }
-.ig-cell.ig-readonly { color: var(--tx2); }
-.ig-cell .ig-muted { color: var(--tx3); font-style: italic; }
-.ig-placeholder { color: var(--tx3); }
-
-.ig-cell.ig-in-range { background: color-mix(in srgb, var(--pos) 10%, var(--card)); }
-/* Sheets keeps the anchor cell itself clear — only the rest of the range
-   carries the tint — so the crisp border is what reads as "selected here". */
-.ig-cell.ig-active { outline: 2px solid var(--pos); outline-offset: -2px; z-index: 4; background: var(--card); }
-
-/* One crisp rectangle around a multi-cell selection, the way Sheets draws a
-   range — the per-cell tint above still shows which cells are in it, this
-   is what makes the selection read as one shape instead of a smear. */
-.ig-range-frame { position: absolute; display: none; border: 2px solid var(--pos); pointer-events: none; z-index: 3; box-sizing: border-box; }
-
-/* Fill handle: a small square anchored to the active cell's corner, the
-   single most identifiable Sheets affordance. Dragging it down or up a
-   column copies the cell's value onto whatever it passes over. */
-.ig-fill-handle {
-  position: absolute; right: -4px; bottom: -4px; width: 9px; height: 9px;
-  background: var(--pos); border: 2px solid var(--card); border-radius: 2px;
-  cursor: crosshair; z-index: 6; touch-action: none;
+.ic-c-lead, .ic-c-edge { grid-area: lead; display: flex; align-items: center; justify-content: center; }
+.ic-c-client { grid-area: client; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ic-c-client b { font-size: 12.5px; font-weight: 800; color: var(--tx); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ic-c-client small { font-size: 10px; color: var(--tx3); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ic-c-structure { grid-area: structure; font-size: 11px; color: var(--tx2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ic-num { text-align: right; font-size: 12px; }
+.ic-c-total { grid-area: total; color: var(--tx); }
+.ic-c-paid { grid-area: paid; color: var(--tx3); }
+.ic-c-paid.ic-pos { color: var(--pos); font-weight: 650; }
+.ic-c-balance { grid-area: balance; font-weight: 700; color: var(--tx); }
+.ic-c-balance.ic-pos { color: var(--pos); font-weight: 650; }
+.ic-c-cur { grid-area: cur; display: flex; justify-content: center; }
+.ic-c-status { grid-area: status; display: flex; justify-content: flex-start; }
+.ic-c-due { grid-area: due; min-width: 0; display: flex; flex-direction: column; gap: 1px; align-items: flex-end; text-align: right; }
+.ic-c-due b { font-size: 11.5px; font-weight: 700; color: var(--tx); white-space: nowrap; }
+.ic-c-due small { font-size: 9.5px; color: var(--tx3); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
+.ic-quickacts { grid-area: quick; display: flex; gap: 3px; justify-content: flex-end; }
+.ic-quickact {
+  width: 30px; height: 30px; border-radius: 9px; border: 1px solid transparent; background: transparent;
+  color: var(--tx3); display: grid; place-items: center; cursor: pointer;
 }
-.ig-fill-handle:hover { transform: scale(1.15); }
-body.ig-filling { cursor: crosshair !important; user-select: none !important; }
-.ig-cell.ig-fill-preview { outline: 1px dashed var(--pos); outline-offset: -1px; background: color-mix(in srgb, var(--pos) 6%, var(--card)); }
+.ic-quickact:hover { background: var(--ig-surface3); color: var(--tx); border-color: var(--ig-line); }
 
-/* Sum/Count for a numeric range — the live answer to "what does this add
-   up to" without leaving the sheet. */
-.ig-selstats { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; font-size: 10.5px; color: var(--tx2); white-space: nowrap; }
-.ig-selstats b { color: var(--tx); font-weight: 800; margin-left: 3px; }
-.ig-row.ig-row-active .ig-rownum { background: var(--ig-selected); color: var(--tx); }
-.ig-colhead.ig-col-active { color: var(--tx); }
-/* Text-colour fade, not opacity: .ig-c-client is the same element as
-   .ig-frozen (sticky). Giving a sticky element its own alpha < 1 forces it
-   onto a blended compositor layer, and on an instant/programmatic
-   horizontal scroll Chromium can repaint that layer against a stale
-   backdrop, letting whatever used to sit behind it visibly ghost through.
-   Fading the colour toward the surface instead reads the same but keeps
-   the cell fully opaque, so there's no layer to go stale. */
-.ig-row-settled .ig-c-client { color: color-mix(in srgb, var(--tx) 72%, var(--card)); }
-.ig-row-settled .ig-c-gross { color: color-mix(in srgb, var(--tx) 72%, var(--card)); }
+/* Row-edge colour: the same red/amber/green/grey vocabulary used everywhere
+   else in the app, always on the left so a whole list can be scanned for
+   red without reading a word. */
+.ic-row { box-shadow: inset 3px 0 0 transparent; }
+.ic-row.is-overdue { box-shadow: inset 3px 0 0 var(--neg); }
+.ic-row.is-today, .ic-row.is-very-soon, .ic-row.is-soon { box-shadow: inset 3px 0 0 var(--warn); }
+.ic-row.is-paid { box-shadow: inset 3px 0 0 var(--pos); }
+.ic-row.is-cancelled { box-shadow: inset 3px 0 0 var(--ig-line2); }
+.ic-row.is-cancelled .ic-c-client b { color: var(--tx3); text-decoration: line-through; }
+.ic-row.is-paid .ic-c-client b { color: color-mix(in srgb, var(--tx) 75%, var(--card)); }
 
-.ig-badge { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 10.5px; font-weight: 800; }
-.ig-badge-good { background: var(--posdim); color: var(--pos); }
-.ig-badge-warn { background: var(--warndim); color: var(--warn); }
-.ig-badge-neutral { background: var(--ig-surface3); color: var(--tx2); }
-.ig-badge-muted { background: var(--ig-surface3); color: var(--tx3); text-decoration: line-through; }
-.ig-cur-ugx { background: var(--posdim); color: var(--pos); }
-.ig-cur-usd { background: var(--usddim); color: var(--usd); }
+.ic-badge { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.ic-badge-bad { background: var(--negdim); color: var(--neg); }
+.ic-badge-warn { background: var(--warndim); color: var(--warn); }
+.ic-badge-good { background: var(--posdim); color: var(--pos); }
+.ic-badge-neutral { background: var(--ig-surface3); color: var(--tx2); }
+.ic-cur-ugx { background: var(--posdim); color: var(--pos); }
+.ic-cur-usd { background: var(--usddim); color: var(--usd); }
 
-.ig-cur-toggle { display: flex; width: 100%; height: 100%; gap: 2px; padding: 3px; box-sizing: border-box; }
-.ig-cur-opt { flex: 1; border: 1px solid var(--ig-line2); border-radius: 7px; background: var(--card); font-size: 10px; font-weight: 800; cursor: pointer; color: var(--tx3); }
-.ig-cur-opt.ig-cur-ugx { color: var(--pos); }
-.ig-cur-opt.ig-cur-usd { color: var(--usd); }
-.ig-cur-opt.on.ig-cur-ugx { background: var(--posdim); border-color: color-mix(in srgb, var(--pos) 40%, transparent); }
-.ig-cur-opt.on.ig-cur-usd { background: var(--usddim); border-color: color-mix(in srgb, var(--usd) 40%, transparent); }
+/* USD money reads blue without a scan of the currency column — the same
+   tint used on the number itself, so it can never be mistaken for shillings. */
+.ic-row .ic-c-total, .ic-row .ic-c-paid, .ic-row .ic-c-balance { transition: none; }
+.ic-row[data-cur="USD"] .ic-c-total, .ic-row[data-cur="USD"] .ic-c-balance { color: var(--usd); }
 
-/* ── One colour vocabulary, one signal per fact ─────────────────────────────
-   red = late · amber = due now/soon · green = money in or settled ·
-   grey = cancelled or undated — and each fact is only painted ONCE. The
-   row's overall state lives entirely in the edge marker below, which sits
-   in the frozen row-number column, so it's on screen no matter how far
-   right you've scrolled — there's no need to repeat it on the due date or
-   the balance too. Balance still turns green on its own when a deal is
-   settled (a fact about that number, not a repeat of the row's urgency);
-   Paid turns green when money has actually come in. Nothing else recolours
-   with urgency — that would just be the same word said twice. */
-.ig-tone-bad { color: var(--neg); font-weight: 700; }
-.ig-tone-warn { color: var(--warn); font-weight: 700; }
-.ig-tone-good { color: var(--pos); font-weight: 700; }
-.ig-tone-owed { color: var(--tx); font-weight: 700; }
-.ig-tone-paid { color: var(--pos); }
+/* Instalments: one row per payment, indented under the deal that owns it —
+   the schedule the app itself keeps, not a second copy of it. */
+.ic-row-part { min-height: 42px; padding-left: calc(var(--ig-gut) + 22px); background: var(--ig-surface2); }
+.ic-row-part .ic-c-client { padding-left: 4px; border-left: 2px solid var(--ig-line2); }
+.ic-part-label { font-size: 11.5px; font-weight: 700; color: var(--tx2); }
+.ic-row-part .ic-c-client small { font-size: 9.5px; }
+.ic-row-part .ic-c-total, .ic-row-part .ic-c-paid, .ic-row-part .ic-c-balance { font-size: 11px; }
+.ic-muted { color: var(--tx3); }
 
-/* Row edge marker: the row's state, readable without reading a single word. */
-.ig-row .ig-rownum { box-shadow: inset 3px 0 0 transparent; }
-.ig-row-bad .ig-rownum { box-shadow: inset 3px 0 0 var(--neg); color: var(--neg); }
-.ig-row-warn .ig-rownum { box-shadow: inset 3px 0 0 var(--warn); color: var(--warn); }
-.ig-row-good .ig-rownum { box-shadow: inset 3px 0 0 var(--pos); color: var(--pos); }
-.ig-row-undated .ig-rownum { box-shadow: inset 3px 0 0 var(--tx3); }
-.ig-row-muted .ig-rownum { box-shadow: inset 3px 0 0 var(--ig-line2); }
-.ig-row-muted .ig-c-client { text-decoration: line-through; color: color-mix(in srgb, var(--tx) 70%, var(--card)); }
-
-/* Column menu caret. Quiet until the column is the one you're working in
-   (or the pointer is over it), so ten of these never shout at once. */
-.ig-colmenu {
-  position: absolute; right: 11px; top: 50%; transform: translateY(-50%) rotate(90deg);
-  display: flex; align-items: center; justify-content: center;
-  width: 14px; height: 14px; border-radius: 4px; color: var(--tx3);
-  opacity: 0; pointer-events: none;
-  transition: opacity .12s var(--v2-ease), background .12s var(--v2-ease); cursor: pointer;
+.ic-collapse-btn {
+  width: 24px; height: 24px; border-radius: 7px; border: 0; background: transparent; color: var(--tx3);
+  display: grid; place-items: center; cursor: pointer; transform: rotate(90deg); transition: transform 140ms ease, background 140ms ease;
 }
-/* While it is showing, the header makes room for it — otherwise the caret
-   would sit on top of a right-aligned label and swallow clicks meant for
-   the sort. Hidden, it takes no space and no events. */
-.ig-colhead:hover .ig-colmenu, .ig-colhead.ig-col-active .ig-colmenu { opacity: 1; pointer-events: auto; background: var(--ig-surface2); }
-.ig-colhead:hover, .ig-colhead.ig-col-active { padding-right: 28px; }
-.ig-colmenu:hover { background: var(--ig-surface3); color: var(--tx); }
+.ic-collapse-btn:hover { background: var(--ig-surface3); color: var(--tx); }
+.ic-collapse-btn[aria-expanded="false"] { transform: rotate(0deg); }
+
+.ic-check {
+  width: 22px; height: 22px; border-radius: 7px; border: 1.5px solid var(--ig-line2); background: var(--card);
+  display: grid; place-items: center; color: #fff; cursor: pointer;
+}
+.ic-check.on { background: var(--pos); border-color: var(--pos); }
+.ic-row.is-bulked { background: var(--ig-selected); }
+
+/* Section headers when sorted by urgency — the grouping that turns "one long
+   list" back into "overdue, then due soon, then everything else". */
+.ic-group { display: flex; align-items: center; gap: 8px; padding: 9px var(--ig-gut) 5px; font-size: 10.5px; font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .04em; background: var(--card); position: sticky; top: 0; z-index: 2; }
+.ic-group span { font-weight: 700; color: var(--tx3); text-transform: none; letter-spacing: 0; background: var(--ig-surface3); border-radius: 999px; padding: 1px 7px; font-size: 10px; }
+.ic-list > .ic-row-head + .ic-group { top: 30px; }
+
+.ic-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: var(--tx2); text-align: center; padding: 24px; }
+.ic-empty strong { font-size: 14px; color: var(--tx); }
+.ic-empty p { font-size: 12px; color: var(--tx3); max-width: 260px; margin: 0; }
+
+.ic-statusbar { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px var(--ig-gut); font-size: 10.5px; color: var(--tx3); border-top: 1px solid var(--ig-line); background: var(--ig-surface2); padding-bottom: max(5px, env(safe-area-inset-bottom)); }
+
+/* ── Filter sheet ─────────────────────────────────────────────────────────── */
+.ic-filter-sheet { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.ic-filter-section > *, .ic-filter-sheet .x97-field { min-width: 0; }
+.ic-filter-sheet input, .ic-filter-sheet select { max-width: 100%; box-sizing: border-box; }
+.ic-filter-section label { display: block; font-size: 11px; font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 8px; }
+.ic-filter-chiprow { display: flex; flex-wrap: wrap; gap: 7px; }
+.ic-filter-chip { height: 34px; padding: 0 13px; border-radius: 999px; border: 1px solid var(--line2); background: var(--card); color: var(--tx2); font-size: 12px; font-weight: 750; }
+.ic-filter-chip.on { background: var(--ig-selected, var(--card2)); border-color: var(--ig-selected-line, var(--line2)); color: var(--tx); }
+
+/* ── More sheet ───────────────────────────────────────────────────────────── */
+.ic-more-list { display: flex; flex-direction: column; gap: 8px; }
+.ic-theme-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.ic-theme-label { font-size: 12.5px; font-weight: 750; color: var(--tx2); }
+.ic-theme-seg { display: flex; gap: 3px; padding: 3px; border-radius: 999px; background: var(--card2); border: 1px solid var(--line); }
+.ic-theme-opt { display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 12px; border-radius: 999px; border: 0; background: transparent; color: var(--tx2); font-size: 12px; font-weight: 750; cursor: pointer; }
+.ic-theme-opt.on { background: var(--card); border: 1px solid var(--line2); color: var(--tx); box-shadow: var(--elev-1); }
+
+/* ── Coarse pointer (touch): the one number that matters most.
+   A row never shrinks below a thumb — the mistake the previous build made
+   by tying row height to a zoom control meant to fit more columns, not to
+   shrink the target. 44px is Apple's minimum and roughly a fingertip. ─── */
 @media (pointer: coarse) {
-  .ig-colmenu { opacity: 0; }
-  .ig-colhead.ig-col-active .ig-colmenu { opacity: 1; }
+  .ic-row { min-height: 44px; }
+  .ic-row-part { min-height: 46px; }
+  .ic-check, .ic-collapse-btn { width: 30px; height: 30px; }
+  .ic-quickact { width: 34px; height: 34px; }
 }
 
-/* Dragging a column: the header follows the cursor as a chip, and a line
-   marks the boundary it would land on. */
-body.ig-coldragging { cursor: grabbing !important; user-select: none !important; }
-.ig-colhead.ig-col-dragging { opacity: .45; }
-.ig-col-drop { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--pos); pointer-events: none; z-index: 11; }
-.ig-col-ghost {
-  position: fixed; z-index: 90; transform: translate(10px, -50%); pointer-events: none;
-  background: var(--card); border: 1px solid var(--pos); color: var(--tx);
-  border-radius: 7px; padding: 4px 9px; font-size: 10.5px; font-weight: 800;
-  text-transform: uppercase; letter-spacing: .03em; box-shadow: var(--elev-2);
-}
-
-.ig-resize { position: absolute; right: 0; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; }
-.ig-resize:hover, .ig-resize:active { background: var(--ig-selected-line); }
-
-/* The editor has to land exactly where the cell's own text already is —
-   same padding, same alignment, same box. It used to pull itself 10px out
-   of the cell with a negative margin that was cancelling padding the
-   editing cell had already dropped, so text jumped sideways the moment you
-   typed, numbers lost their right alignment to the browser's default, and
-   the overhang on the last column scrolled the whole sheet sideways. */
-.ig-edit-input {
-  width: 100%; height: 100%; border: 0; margin: 0;
-  padding: 0 calc(10px * var(--ig-zoom, 1));
-  background: var(--card);
-  outline: 2px solid var(--pos); outline-offset: -2px;
-  font: inherit; text-align: inherit; color: var(--tx);
-  box-sizing: border-box; user-select: text; -webkit-user-select: text;
-}
-.ig-cell.ig-editing { padding: 0; overflow: hidden; z-index: 5; }
-select.ig-edit-input { padding: 0 calc(6px * var(--ig-zoom, 1)); }
-/* A client cell offers suggestions from a datalist, and Chrome paints its
-   own picker button for one. There is no room for it in a spreadsheet cell,
-   and typing still brings the suggestions up. Date cells keep their
-   calendar button — that one earns its place. */
-.ig-edit-input[list]::-webkit-calendar-picker-indicator { display: none !important; }
-/* Same for the number spinner: it sits on the right edge of a money cell,
-   which is exactly where the figure it is nudging needs to be. */
-.ig-edit-num { appearance: textfield; -moz-appearance: textfield; }
-.ig-edit-num::-webkit-outer-spin-button,
-.ig-edit-num::-webkit-inner-spin-button { -webkit-appearance: none; appearance: none; margin: 0; }
-
-.ig-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--tx2); text-align: center; padding: 24px; background: var(--card); }
-.ig-empty strong { font-size: 14px; color: var(--tx); }
-.ig-empty p { font-size: 12px; color: var(--tx3); max-width: 260px; margin: 0; }
-
-.ig-statusbar { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; padding: 4px var(--ig-gut); font-size: 10.5px; color: var(--tx3); border-top: 1px solid var(--ig-line); background: var(--ig-surface2); padding-bottom: max(4px, env(safe-area-inset-bottom)); }
-.ig-statusbar-info { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.ig-statusbar-info > span { overflow: hidden; text-overflow: ellipsis; }
-.ig-statusbar-sep { opacity: .5; }
-.ig-zoom { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; background: var(--card); border: 1px solid var(--ig-line2); border-radius: 999px; padding: 3px; box-shadow: var(--elev-1); }
-.ig-zbtn { width: 28px; height: 28px; border-radius: 999px; border: 0; background: transparent; color: var(--tx2); display: grid; place-items: center; cursor: pointer; }
-.ig-zbtn:hover, .ig-zbtn:active { background: var(--ig-selected); color: var(--tx); }
-.ig-zpct { min-width: 42px; height: 28px; padding: 0 6px; border: 0; background: transparent; color: var(--tx2); font-size: 10.5px; font-weight: 800; cursor: pointer; }
-.ig-zpct:hover { color: var(--tx); }
-
-/* ── The account summary ───────────────────────────────────────────────────
-   Read like a bank statement header: the balance owed, stated once and
-   large, with the four periods it is spread across underneath. */
-.ig-summary {
-  display: flex; align-items: stretch;
-  background: var(--card); border-top: 1px solid var(--ig-line); border-bottom: 1px solid var(--ig-line);
-  flex: 0 0 auto; overflow: hidden;
-}
-.ig-sum-total {
-  flex: 0 0 auto; min-width: 0; max-width: 300px;
-  padding: clamp(6px, 1.2vw, 10px) var(--ig-gut);
-  background: var(--ig-surface2); border-right: 1px solid var(--ig-line2);
-  display: flex; flex-direction: column; justify-content: center;
-}
-.ig-sum-total-label { font-size: clamp(8.5px, 1.6vw, 9.5px); font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .06em; }
-.ig-sum-total-value {
-  font-size: clamp(17px, 3vw, 22px); font-weight: 800; color: var(--tx); letter-spacing: -.025em;
-  margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.ig-sum-total-sub { font-size: clamp(9px, 1.8vw, 10.5px); color: var(--tx3); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* The periods: one row that stays dense on a 2560px monitor and shrinks to
-   fit rather than wrapping on a tablet. */
-.ig-sum-periods { display: grid; grid-template-columns: repeat(4, minmax(0, 300px)); justify-content: start; min-width: 0; flex: 1 1 auto; }
-.ig-stat { background: var(--card); padding: clamp(5px, 1.2vw, 8px) var(--ig-gut); min-width: 0; border-right: 1px solid var(--ig-line); }
-.ig-stat-label { display: flex; align-items: center; gap: 5px; font-size: clamp(8.5px, 1.6vw, 9.5px); font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ig-stat-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--tx3); opacity: .55; }
-.ig-stat-value { font-size: clamp(13.5px, 2.6vw, 16px); font-weight: 650; color: var(--tx); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -.02em; }
-.ig-stat-sub { font-size: clamp(9px, 1.8vw, 10px); color: var(--tx3); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Tiles carry the same vocabulary as the rows, so "red" means the same
-   thing at the top of the screen as it does in the sheet. */
-.ig-stat-bad .ig-stat-value, .ig-stat-bad .ig-stat-label { color: var(--neg); }
-.ig-stat-bad .ig-stat-dot { background: var(--neg); opacity: 1; }
-.ig-stat-warn .ig-stat-value, .ig-stat-warn .ig-stat-label { color: var(--warn); }
-.ig-stat-warn .ig-stat-dot { background: var(--warn); opacity: 1; }
-.ig-stat-good .ig-stat-dot { background: var(--pos); opacity: 1; }
-.ig-stat-empty { color: var(--tx3); opacity: .6; font-weight: 500; }
-
-.ig-menu { position: fixed; z-index: 70; min-width: 170px; background: var(--card); border: 1px solid var(--ig-line2); border-radius: 12px; box-shadow: var(--elev-2); padding: 6px; display: flex; flex-direction: column; gap: 1px; }
-.ig-legend-pop { padding: 10px 12px; gap: 7px; min-width: 190px; }
-.ig-legend-title { font-size: 10px; font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
-.ig-legend-row { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 650; color: var(--tx); }
-.ig-legend-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; }
-.ig-legend-dot.bad { background: var(--neg); }
-.ig-legend-dot.warn { background: var(--warn); }
-.ig-legend-dot.good { background: var(--pos); }
-.ig-legend-dot.muted { background: var(--tx3); }
-.ig-menu-item { text-align: left; padding: 8px 10px; border-radius: 8px; border: 0; background: transparent; font-size: 12.5px; font-weight: 650; color: var(--tx); cursor: pointer; }
-.ig-menu-item:hover { background: var(--ig-surface2); }
-.ig-menu-item.danger { color: var(--neg); }
-
-/* Bulk row selection — click a row number to pick it, shift-click to run a
-   range, ctrl/cmd-click to add one anywhere, exactly like Sheets' row
-   headers. The checkmark replaces the row number itself, the same way
-   Sheets and most row-select UIs show what's picked. */
-.ig-row-bulk .ig-rownum { background: var(--ig-selected); color: var(--tx); }
-.ig-row-bulk .ig-cell:not(.ig-rownum) { background: color-mix(in srgb, var(--tx) 4%, var(--card)); }
-.ig-rownum-check { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: var(--tx); }
-
-/* The selection bar replaces the normal toolbar while bulk mode is on —
-   same slot, same height, so nothing above or below it shifts. */
-.ig-selbar { gap: 10px; }
-.ig-selbar-count { flex: 1 1 auto; font-size: 12.5px; font-weight: 750; color: var(--tx); }
-.ig-tbtn-danger { color: var(--neg); }
-.ig-tbtn-danger:hover { background: color-mix(in srgb, var(--neg) 12%, transparent); border-color: color-mix(in srgb, var(--neg) 30%, transparent); }
-.ig-tbtn-danger[disabled] { color: var(--tx2); }
-.ig-menu-item[disabled] { opacity: .4; pointer-events: none; }
-
-.ig-filter-sheet { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.ig-filter-sheet > *, .ig-filter-section > *, .ig-filter-section .x97-field { min-width: 0; }
-.ig-filter-sheet input, .ig-filter-sheet select { max-width: 100%; box-sizing: border-box; }
-/* The shared two-up field grid does not fit a 320px sheet; stack it there. */
-@media (max-width: 380px) {
-  .ig-filter-sheet .x97-fields-2 { grid-template-columns: 1fr; }
-}
-.ig-filter-section label { display: block; font-size: 11px; font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 8px; }
-.ig-filter-chiprow { display: flex; flex-wrap: wrap; gap: 7px; }
-.ig-filter-chip { height: 34px; padding: 0 13px; border-radius: 999px; border: 1px solid var(--ig-line2); background: var(--card); color: var(--tx2); font-size: 12px; font-weight: 750; }
-.ig-filter-chip.on { background: var(--ig-selected); border-color: var(--ig-selected-line); color: var(--tx); }
-.ig-more-list { display: flex; flex-direction: column; gap: 8px; }
-
-/* Light / dark switch. Both states are shown rather than hidden behind a
-   toggle, so which one is on is a fact you can read, not infer. */
-/* The switch is rendered inside the sheet, which sits outside .ig-shell —
-   so these fall back to the app-wide tokens where the scoped ones don't
-   resolve. */
-.ig-theme-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--ig-line, var(--line)); }
-.ig-theme-label { font-size: 12.5px; font-weight: 750; color: var(--tx2); }
-.ig-theme-seg { display: flex; gap: 3px; padding: 3px; border-radius: 999px; background: var(--ig-surface2, var(--card2)); border: 1px solid var(--ig-line, var(--line)); }
-.ig-theme-opt {
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 32px; padding: 0 13px; border-radius: 999px; border: 1px solid transparent;
-  background: transparent; color: var(--tx2); font-size: 12px; font-weight: 750; cursor: pointer;
-}
-.ig-theme-opt.on { background: var(--card); border-color: var(--ig-selected-line, var(--line2)); color: var(--tx); box-shadow: var(--elev-1); }
-
-/* Coarse pointer (touch): larger rows and hit targets, scaled by the same
-   --ig-zoom control so "zoom out" genuinely fits more of the sheet instead
-   of just shrinking type. */
-@media (pointer: coarse) {
-  /* A row never shrinks below a thumb. Zoom is there to fit more COLUMNS
-     across a narrow screen — letting it drag row height down to 25px as
-     well is what made a thumb land on the row above or below the one it
-     was aimed at, which reads as the sheet selecting cells at random.
-     44px is Apple's minimum target and roughly a fingertip; the sheet
-     still compresses horizontally as far as it ever did. */
-  .ig-cell { height: max(44px, calc(44px * var(--ig-zoom, 1))); font-size: max(11px, calc(12.5px * var(--ig-zoom, 1))); }
-  .ig-colhead { height: max(38px, calc(40px * var(--ig-zoom, 1))); font-size: max(9.5px, calc(10.5px * var(--ig-zoom, 1))); }
-  /* The fill handle is a 9px square hanging off the corner of the active
-     cell, and it swallows the gesture that lands on it (touch-action:none).
-     On a phone that means a thumb aimed at the next cell can instead drag
-     one value over a column of real money — and the sheet won't even
-     scroll while it does. Sheets has no fill handle on mobile either. */
-  .ig-fill-handle { display: none; }
-  .ig-rownum { font-size: max(9.5px, calc(11px * var(--ig-zoom, 1))); }
-  .ig-tbtn { height: 38px; min-width: 38px; }
-  .ig-quick { height: 30px; }
-  .ig-resize { width: 16px; }
-  .ig-zbtn { width: 32px; height: 32px; }
-  .ig-zpct { height: 32px; }
-}
-
-/* ── Compact title row (any screen that is narrow OR short) ────────────────
-   The title block costs ~72px at rest: a 34px title (its underline padding)
-   plus a 56px save-state pill. Neither earns that on a phone — the bottom
-   nav already says "Incoming" — so the row collapses to a single line and
-   the pill shrinks to a chip. Scoped to .ig-shell, so the same header on
-   Dashboard and Credit is untouched. */
-@media (max-width: 759px), (max-height: 520px) {
-  .ig-shell .x97-top {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    padding: max(4px, env(safe-area-inset-top)) var(--ig-gut) 4px;
+/* ── Tablet: the full row still does not fit ─────────────────────────────
+   The fixed-width columns alone run to roughly 850px before the flexible
+   Client column gets anything — an iPad in portrait (768px) has less than
+   that. Structure and Paid are the two columns a glance needs least (the
+   due/status block already implies both), so they drop first; everything
+   else stays a real, aligned table rather than folding into the phone's
+   two-line stack. */
+@media (min-width: 760px) and (max-width: 959px) {
+  .ic-row {
+    grid-template-columns: 26px minmax(90px,1.4fr) 100px 96px 58px 88px 96px 56px;
+    grid-template-areas: "lead client total balance cur status due quick";
   }
-  .ig-shell .x97-title { font-size: 15px !important; margin: 0 !important; padding: 0 !important; min-height: 0; line-height: 1.2 !important; }
-  .ig-shell .x97-title::after, .ig-shell .x97-title::before { display: none !important; }
-  .ig-shell .x97-top-copy { display: block; min-width: 0; }
-  .ig-shell .x97-top-actions { gap: 6px; flex: 0 0 auto; }
-  .ig-shell .x97-add-primary { display: none; }
-  .ig-shell .x97-cloud {
-    min-height: 0 !important; padding: 3px 8px !important; font-size: 9px !important; gap: 5px;
-    border-radius: 999px !important; box-shadow: none !important;
-  }
-  .ig-shell .x97-cloud i { width: 6px !important; height: 6px !important; box-shadow: none !important; }
+  .ic-c-structure, .ic-c-paid { display: none; }
+  .ic-row-part { grid-template-columns: 26px minmax(80px,1.4fr) 100px 96px 58px 88px 96px 56px; }
 }
 
-/* ── Phones ────────────────────────────────────────────────────────────────
-   A phone screen is a vertical budget, not a canvas. Every strip above the
-   grid is money spent, so on narrow screens the title row collapses to one
-   line, the four summary tiles become one scrolling row of pills, the
-   toolbar stays on a single row (undo/redo and columns live in More), and
-   the value bar steps aside — tapping a cell edits it in place anyway.
-   This is what takes chrome from ~400px to ~170px on a 375px phone. */
+/* ── Phone layout ─────────────────────────────────────────────────────────
+   The same elements, remapped into two lines. Structure, Total, Paid and
+   Currency drop — Balance and the due/status block already say what they
+   said, and every deal is one tap from the full detail sheet anyway. */
 @media (max-width: 759px) {
-  .ig-tlabel { display: none; }
-  .ig-cell-ref { min-width: 48px; max-width: 120px; }
-  .ig-statusbar { font-size: 10px; }
-  .ig-selstats { gap: 8px; font-size: 9.5px; }
+  /* The fixed bottom tab bar covers this much of the viewport — root's own
+     safe-area padding used to reserve it, and that padding is gone now that
+     .ic-shell fills root exactly, so the last row of the list has to. */
+  .ic-statusbar { padding-bottom: calc(var(--x97-nav-h, 67px) + max(5px, env(safe-area-inset-bottom))); }
 
-  /* Summary: the balance across the top, then the four periods as a 2x2
-     panel under it — everything readable at a glance, standing still. It
-     used to be one sideways-scrolling line of pills, which meant swiping
-     to read your own figures and left the last one clipped at the edge.
-     The whole block folds away the moment the sheet is scrolled (below),
-     so the rows lose nothing to it. */
-  .ig-summary { display: block; }
-  .ig-sum-total {
-    max-width: none; border-right: 0; border-bottom: 1px solid var(--ig-line);
-    padding: 6px var(--ig-gut) 7px;
+  .ic-hero { padding: 8px var(--ig-gut) 10px; }
+  .ic-hero-value { font-size: 22px; }
+  .ic-hero-headline { display: none; }
+
+  .ic-toolbar { padding: 6px var(--ig-gut); }
+  .ic-search { height: 38px; }
+  .ic-tbtn { height: 38px; min-width: 38px; }
+
+  .ic-row-head { display: none; }
+  .ic-list > .ic-group { top: 0; }
+
+  .ic-row {
+    grid-template-columns: 26px 1fr auto;
+    grid-template-areas: "lead client balance" "lead status due";
+    row-gap: 3px; min-height: 0; padding: 10px var(--ig-gut);
   }
-  .ig-sum-total-label { font-size: 9px; letter-spacing: .07em; }
-  .ig-sum-total-value { font-size: 20px; margin-top: 0; }
-  .ig-sum-total-sub { font-size: 9.5px; }
-  .ig-sum-periods { grid-template-columns: 1fr 1fr; }
-  .ig-stat { padding: 5px var(--ig-gut); }
-  .ig-stat:nth-child(2n) { border-right: 0; }
-  .ig-stat:nth-child(-n + 2) { border-bottom: 1px solid var(--ig-line); }
-  .ig-stat-label { font-size: 9px; }
-  .ig-stat-value { font-size: 13px; margin-top: 0; }
-  .ig-stat-sub { font-size: 9.5px; margin-top: 0; }
+  .ic-c-structure, .ic-c-total, .ic-c-paid, .ic-c-cur, .ic-quickacts { display: none; }
+  .ic-c-balance { align-self: start; font-size: 13.5px; }
+  .ic-c-status { align-self: end; }
+  .ic-c-due { align-self: end; }
+  .ic-c-due small { max-width: 44vw; }
 
-  /* Value bar duplicates in-cell editing on touch; give the rows its 38px. */
-  .ig-formula-bar { display: none; }
+  .ic-row-part {
+    padding-left: calc(var(--ig-gut) + 18px);
+    grid-template-columns: 1fr auto;
+    grid-template-areas: "client balance" "client due";
+  }
+  .ic-row-part .ic-c-cur, .ic-row-part .ic-c-structure { display: none; }
+  .ic-row-part .ic-c-status { display: none; }
 
-  /* Secondary controls move to the More sheet so the toolbar never wraps. */
-  .ig-toolbar { padding: 4px var(--ig-gut); gap: 4px; }
-  .ig-tbtn-redo, .ig-tbtn-columns, .ig-tbtn-collapse, .ig-tbtn-selrows { display: none; }
-  .ig-tsep { display: none; }
-  .ig-toolbar-search { flex: 1 1 90px; }
+  /* Scroll-away hero: the moment the list moves, the balance folds away and
+     hands its height straight back to the rows — it comes back at the top. */
+  .ic-hero, .ic-toolbar { transition: max-height 160ms ease, opacity 120ms ease, padding 160ms ease, border-color 160ms ease; overflow: hidden; }
+  .ic-shell.ic-scrolled .ic-hero { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; border-bottom-width: 0; }
 }
 
-/* ── Short viewports (landscape phones) ────────────────────────────────────
-   844x390 previously rendered zero grid rows. Below ~520px tall, everything
-   optional is cut so the sheet itself survives rotation. */
+@media (max-width: 420px) {
+  .ic-hero-chips { margin-top: 8px; }
+  .ic-quick { height: 28px; padding: 0 10px; font-size: 11px; }
+}
+
+/* ── Short viewports (landscape phones) ──────────────────────────────────── */
 @media (max-height: 520px) {
-  .ig-summary, .ig-quickviews, .ig-formula-bar, .ig-filterchips { display: none; }
-  .ig-shell .x97-top { padding: 2px var(--ig-gut); }
-  .ig-shell .x97-title { font-size: 13px !important; }
-  .ig-toolbar { padding: 3px var(--ig-gut); }
-  .ig-statusbar { padding: 2px var(--ig-gut); padding-bottom: max(2px, env(safe-area-inset-bottom)); font-size: 9.5px; }
-  .ig-tbtn { height: 30px; min-width: 30px; }
-  .ig-zbtn { width: 26px; height: 26px; }
-  .ig-zpct { height: 26px; }
-}
-
-/* On a short phone the panel has to earn its height against the rows. The
-   figures stay; the sentences under them go, since the status bar and the
-   sheet itself already say how many payments are involved. */
-@media (max-width: 759px) and (max-height: 720px) {
-  .ig-sum-total { padding: 4px var(--ig-gut) 5px; }
-  .ig-sum-total-value { font-size: 17px; }
-  .ig-sum-total-sub, .ig-stat-sub { display: none; }
-  .ig-stat { padding: 4px var(--ig-gut); }
-}
-
-/* ── Scroll-away chrome ────────────────────────────────────────────────────
-   Once the user starts working down the sheet, the summary row folds away
-   and hands its height to the rows. It comes straight back at the top. */
-@media (max-width: 759px) {
-  .ig-summary { transition: max-height 160ms ease, opacity 120ms ease; max-height: 170px; }
-  .ig-shell.ig-scrolled .ig-summary { max-height: 0; opacity: 0; border-bottom-width: 0; }
+  .ic-hero, .ic-filterchips { display: none; }
+  .ic-shell .x97-top { padding: 2px var(--ig-gut); }
+  .ic-toolbar { padding: 3px var(--ig-gut); }
+  .ic-statusbar { padding: 2px var(--ig-gut); padding-bottom: max(2px, env(safe-area-inset-bottom)); font-size: 9.5px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ig-cell, .ig-menu, .ig-summary { transition: none !important; }
+  .ic-hero, .ic-toolbar, .ic-collapse-btn { transition: none !important; }
 }

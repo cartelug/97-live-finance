@@ -91,13 +91,7 @@
       minAmount: "",
       maxAmount: "",
       sort: "urgency",
-      gridWidths: {},
-      gridHidden: [],
-      gridZoom: null,
-      gridOrder: null,
-      gridFreeze: 1,
-      gridCollapsed: [],
-      gridRowOrder: []
+      collapsed: []
     },
     creditView: "available"
   };
@@ -679,9 +673,7 @@
     needsReactRefresh = true;
     try { sessionStorage.setItem(REFRESH_KEY, "1"); } catch (_) {}
     try { window.dispatchEvent(new CustomEvent("s97:v2-data-change", { detail: { reason: reason || "update" } })); } catch (_) {}
-    // The grid patches its own rows after an edit; rebuilding the whole
-    // screen for one cell costs a third of a second on a long sheet.
-    if (!igSuppressRender) scheduleRender(0);
+    scheduleRender(0);
     if (!quiet) toast("Saved · syncing to cloud", "success");
   }
 
@@ -729,7 +721,7 @@
     if (loadTheme() === (mode === "dark" ? "dark" : "light")) return;
     applyTheme(mode);
     // Reopen the sheet so its own switch shows the choice that was just made.
-    if (document.getElementById("x97-sheet")) openGridMore();
+    if (document.getElementById("x97-sheet")) openIncomingMore();
     scheduleRender(0);
   }
 
@@ -2547,13 +2539,9 @@
     if (f.categories.length) tags.push({ label: f.categories.length + " categories", key: "categories" });
     if (f.from || f.to) tags.push({ label: (f.from ? formatDate(f.from, true) : "Any") + " – " + (f.to ? formatDate(f.to, true) : "Any"), key: "dates" });
     if (f.minAmount || f.maxAmount) tags.push({ label: "Amount " + (f.minAmount || "0") + "–" + (f.maxAmount || "∞"), key: "amount" });
-    if (f.sort !== "urgency") tags.push({ label: "Sorted: " + igSortLabel(f.sort), key: "sort" });
+    if (f.sort !== "urgency") tags.push({ label: "Sorted: " + sortLabel(f.sort), key: "sort" });
     if (!tags.length) return "";
     return '<div class="x97-active-filters">' + tags.map(function (t) { return '<button class="x97-filter-tag" data-x97-action="clear-filter" data-filter="' + attr(t.key) + '">' + esc(t.label) + ' ' + icon("close", 11) + '</button>'; }).join("") + '<button class="x97-filter-tag" data-x97-action="clear-all-filters" style="color:var(--neg)">Clear all</button></div>';
-  }
-
-  function igSortLabel(mode) {
-    return { urgency: "Most urgent", client: "Client A–Z", amountDesc: "Largest first", amountAsc: "Smallest first", dateAsc: "Earliest due", dateDesc: "Latest due", custom: "Custom order" }[mode] || mode;
   }
 
   function collectionStats(doc) {
@@ -2597,2459 +2585,302 @@
   }
 
   /* ══════════════════════════════════════════════════════════════════════
-     INCOMING — spreadsheet grid engine.
-     Real rows/columns (no cards), frozen row-number + Client columns via
-     native CSS sticky, keyboard + mouse + touch cell editing, resize/hide,
-     range copy/paste, undo, and a mobile-first filter sheet. Scope-locked
-     to #x97-v2-root[data-screen="upcoming"] — see v2-premium.css.
+     INCOMING — a dense, scannable ledger.
+     Every deal is one row, as many rows on screen as will fit — the thing a
+     spreadsheet is loved for. Nothing is edited in the row itself: a tap
+     opens the same guided deal sheet that has always driven Add/Edit, so
+     there is no cell to select, no drag range, no fill handle, and nothing
+     for a thumb to get wrong. Desktop shows every column at once; a phone
+     collapses to two lines per row and never scrolls sideways.
      ══════════════════════════════════════════════════════════════════════ */
 
-  var IG_ROWNUM_W = 42;
-  var IG_COLS = [
-    { key: "client", label: "Client", width: 148, min: 96, type: "text", align: "left", sticky: true },
-    { key: "gross", label: "Total", width: 106, min: 84, type: "money", align: "right" },
-    { key: "paid", label: "Paid", width: 96, min: 78, type: "money", align: "right" },
-    { key: "balance", label: "Balance", width: 106, min: 84, type: "money", align: "right" },
-    { key: "currency", label: "Cur", width: 60, min: 54, type: "currency", align: "center" },
-    { key: "status", label: "Status", width: 98, min: 84, type: "status", align: "left" },
-    { key: "due", label: "Due date", width: 100, min: 88, type: "date", align: "left" },
-    { key: "lastPaid", label: "Last paid", width: 96, min: 84, type: "date", align: "left" },
-    { key: "structure", label: "Structure", width: 116, min: 96, type: "structure", align: "left" },
-    { key: "phone", label: "WhatsApp", width: 118, min: 96, type: "phone", align: "left" },
-    { key: "note", label: "Notes", width: 190, min: 130, type: "text", align: "left" }
-  ];
-  // The columns a collections screen is actually read for. The default zoom
-  // on a phone is chosen to fit exactly these, so Balance never hides behind
-  // a horizontal scroll on the device most of this work happens on.
-  var IG_KEY_COLS = ["client", "gross", "paid", "balance"];
-
-  var gridState = {
-    active: null, anchor: null, editing: null,
-    rows: [], byId: {}, order: [], rowEls: {}, cellEls: {},
-    widths: {}, hidden: {}, zoom: 1,
-    scrollTop: 0, scrollLeft: 0,
-    quickEntry: null, pendingFocusRow: null, chromeAway: false,
-    undoStack: [], redoStack: [],
-    pendingExternalRender: false,
-    menuEl: null, selEls: [], activeEl: null, activeRowEl: null, activeHeadEl: null, fillPreviewEls: [],
-    bulkMode: false, bulkRows: {}, bulkAnchor: null
-  };
-  var IG_ZOOM_MIN = 0.6, IG_ZOOM_MAX = 1.6, IG_ZOOM_STEP = 0.1;
-
-  // Columns sit in whatever order the user dragged them into. Anything the
-  // saved order doesn't mention (a column added in a later build) keeps its
-  // place from IG_COLS at the end, so an old preference never hides a column.
-  function igOrderedCols() {
-    var saved = state.upcoming.gridOrder;
-    if (!Array.isArray(saved) || !saved.length) return IG_COLS.slice();
-    var out = [], seen = {};
-    saved.forEach(function (key) {
-      var c = igColDef(key);
-      if (c && !seen[key]) { seen[key] = true; out.push(c); }
-    });
-    IG_COLS.forEach(function (c) { if (!seen[c.key]) out.push(c); });
-    return out;
-  }
-  function igVisibleCols() { return igOrderedCols().filter(function (c) { return !gridState.hidden[c.key]; }); }
-  function igColDef(key) { return IG_COLS.filter(function (c) { return c.key === key; })[0]; }
-  function igSaveColOrder(cols) { state.upcoming.gridOrder = cols.map(function (c) { return c.key; }); savePrefs(); }
-  // Move a column to where it was dropped. The order is stored over every
-  // column, hidden ones included, so hiding and re-showing keeps the place.
-  function igMoveColumn(key, toVisibleIndex) {
-    var visible = igVisibleCols(), from = visible.map(function (c) { return c.key; }).indexOf(key);
-    if (from < 0) return false;
-    toVisibleIndex = Math.max(0, Math.min(visible.length - 1, toVisibleIndex));
-    if (toVisibleIndex === from) return false;
-    var moved = visible.splice(from, 1)[0];
-    visible.splice(toVisibleIndex, 0, moved);
-    var order = [], placed = {};
-    visible.forEach(function (c) { order.push(c); placed[c.key] = true; });
-    igOrderedCols().forEach(function (c) { if (!placed[c.key]) order.push(c); });
-    igSaveColOrder(order);
-    return true;
+  function sortLabel(mode) {
+    return { urgency: "Most urgent", client: "Client A–Z", amountDesc: "Largest first", amountAsc: "Smallest first", dateAsc: "Earliest due", dateDesc: "Latest due" }[mode] || mode;
   }
 
-  /* Frozen columns. Sheets freezes a run of leading columns; here that run is
-     whatever the user picked, defaulting to the client name. On a narrow phone
-     a deep freeze would swallow the window, so the run is clamped to what
-     still leaves room to read the rest of the sheet. */
-  function igFreezeCount() {
-    var visible = igVisibleCols();
-    var n = state.upcoming.gridFreeze;
-    n = n === undefined || n === null ? 1 : Math.max(0, Math.min(visible.length, n | 0));
-    var room = (window.innerWidth || 900) * 0.62 - igRownumWidth(), used = 0, fit = 0;
-    for (var i = 0; i < n; i++) {
-      used += igColWidth(visible[i].key);
-      if (used > room && fit > 0) break;
-      fit++;
-    }
-    return fit;
-  }
-  function igFreezeOffsets() {
-    var offs = [], run = igRownumWidth(), visible = igVisibleCols(), n = igFreezeCount();
-    for (var i = 0; i < n; i++) { offs.push(run); run += igColWidth(visible[i].key); }
-    return offs;
-  }
-  // Rebuilt once per render so every cell string can ask "am I frozen?"
-  // without recomputing the run for all ten columns, ten times a row.
-  function igRefreshFrozenMap() {
-    var map = {}, visible = igVisibleCols(), n = igFreezeCount();
-    for (var i = 0; i < n; i++) map[visible[i].key] = i;
-    gridState.frozen = map;
-    gridState.frozenLast = n > 0 ? visible[n - 1].key : null;
-    return map;
-  }
-  function igColWidth(key) {
-    var c = igColDef(key), w = gridState.widths[key] || (c ? c.width : 100), z = gridState.zoom || 1;
-    return Math.max(36, Math.round((c ? c.min : 60) * Math.min(1, z)), Math.round(w * z));
-  }
-  function igRownumWidth() { return Math.max(28, Math.round(IG_ROWNUM_W * (gridState.zoom || 1))); }
-  function igTemplate() {
-    var parts = [igRownumWidth() + "px"];
-    igVisibleCols().forEach(function (c) { parts.push(igColWidth(c.key) + "px"); });
-    return parts.join(" ");
-  }
-  // Default zoom is derived from the device, not guessed: shrink just enough
-  // that the row number, Client and the three money columns fit the window.
-  // A 320px phone lands near 0.63, a 412px phone near 0.82, anything with
-  // real width stays at 1.
-  function igAutoZoom() {
-    try {
-      var vw = window.innerWidth || 0;
-      if (!vw || vw >= 900) return 1;
-      var need = IG_ROWNUM_W;
-      IG_KEY_COLS.forEach(function (key) {
-        if (gridState.hidden[key]) return;
-        var c = igColDef(key);
-        if (c) need += (gridState.widths[key] || c.width);
-      });
-      if (need <= 0) return 1;
-      return Math.max(IG_ZOOM_MIN, Math.min(1, Math.round(((vw - 4) / need) * 100) / 100));
-    } catch (_) { return 1; }
-  }
-  function igSyncPersisted() {
-    gridState.widths = Object.assign({}, state.upcoming.gridWidths || {});
-    gridState.hidden = {};
-    (state.upcoming.gridHidden || []).forEach(function (k) { gridState.hidden[k] = true; });
-    gridState.zoom = state.upcoming.gridZoom || igAutoZoom();
-  }
-  function igSavePersistedWidths() { state.upcoming.gridWidths = Object.assign({}, gridState.widths); savePrefs(); }
-  function igSavePersistedHidden() { state.upcoming.gridHidden = Object.keys(gridState.hidden).filter(function (k) { return gridState.hidden[k]; }); savePrefs(); }
-  // Every measurement the grid layout depends on, in one place: the column
-  // template, the row-number gutter and the left offset of each frozen
-  // column. Zoom, a resize drag and an autofit all go through here so the
-  // frozen run can never drift out of step with the columns it sits on.
-  function igLayoutVars() {
-    var vars = { "--ig-zoom": String(gridState.zoom || 1), "--ig-rownum-w": igRownumWidth() + "px", "--ig-tpl": igTemplate() };
-    igFreezeOffsets().forEach(function (px, i) { vars["--ig-fz-" + i] = px + "px"; });
-    return vars;
-  }
-  function igLayoutStyle() {
-    var vars = igLayoutVars();
-    return Object.keys(vars).map(function (k) { return k + ":" + vars[k]; }).join(";");
-  }
-  function igApplyLayout(inner) {
-    inner = inner || document.getElementById("ig-grid-inner");
-    if (!inner) return;
-    var vars = igLayoutVars();
-    Object.keys(vars).forEach(function (k) { inner.style.setProperty(k, vars[k]); });
-  }
-  function igApplyZoomLive() {
-    igApplyLayout();
-    igFillEmptyRows();
-    var pct = document.querySelector(".ig-zpct"); if (pct) pct.textContent = Math.round((gridState.zoom || 1) * 100) + "%";
-  }
+  // One flag, held on the module rather than in `state`, so a bulk selection
+  // never survives a reload — it is a mode you enter and leave, not a
+  // preference. Collapsed instalment parents persist (state.upcoming), since
+  // that is a layout choice worth remembering.
+  var icBulk = { on: false, rows: {} };
+  function icClearBulk() { icBulk.on = false; icBulk.rows = {}; }
+  function icBulkCount() { return Object.keys(icBulk.rows).length; }
 
-  /* An empty sheet in Sheets is still a sheet: the gridlines run to the
-     bottom of the window whether there are three rows or three hundred.
-     These filler rows carry no data and take no events — they exist so the
-     grid fills whatever space the device gives it. */
-  var IG_FILLER_MAX = 40;
-  function igFillerRowHTML(cols) {
-    var cells = '<div class="ig-cell ig-rownum ig-sticky-num ig-filler-cell"></div>';
-    cells += cols.map(function (c) {
-      return '<div class="ig-cell ig-filler-cell' + igFrozenClasses(c.key).map(function (k) { return " " + k; }).join("") + '"' + igFrozenAttrs(c.key) + '></div>';
-    }).join("");
-    return '<div class="ig-row ig-filler-row">' + cells + '</div>';
-  }
-  function igFillEmptyRows() {
-    var scroll = document.getElementById("ig-scroll"), filler = document.getElementById("ig-filler"), body = document.getElementById("ig-body");
-    if (!scroll || !filler || !body) return;
-    var first = body.firstElementChild;
-    var rowH = first ? first.offsetHeight : 0;
-    if (rowH < 8) rowH = Math.max(8, Math.round(36 * (gridState.zoom || 1)));
-    var head = document.querySelector(".ig-head-row");
-    var space = scroll.clientHeight - (head ? head.offsetHeight : 0) - body.offsetHeight;
-    // Floor, never ceil: a filler row that overshoots would invent a
-    // scrollbar on a sheet that actually fits.
-    var want = space > rowH ? Math.min(IG_FILLER_MAX, Math.floor(space / rowH)) : 0;
-    var cols = igVisibleCols();
-    var sig = want + ":" + cols.map(function (c) { return c.key; }).join(",");
-    if (filler.getAttribute("data-fill") === sig) return;
-    var html = "";
-    for (var i = 0; i < want; i++) html += igFillerRowHTML(cols);
-    filler.innerHTML = html;
-    filler.setAttribute("data-fill", sig);
-  }
-
-  /* The on-screen keyboard. A phone keyboard covers the bottom half of the
-     window without changing the layout viewport, so the cell being typed
-     into can sit underneath it. visualViewport says how much is covered;
-     the sheet gives up exactly that much height and scrolls the open cell
-     back into what is left. */
-  function igWireKeyboardInset() {
-    var vv = window.visualViewport;
-    if (!vv || gridState.kbWired) return;
-    gridState.kbWired = true;
-    var apply = function () {
-      var shell = root && root.querySelector(".ig-shell");
-      if (!shell) return;
-      var covered = Math.max(0, (window.innerHeight || 0) - (vv.height + vv.offsetTop));
-      var open = covered > 90;
-      shell.style.setProperty("--ig-kb", (open ? Math.round(covered) : 0) + "px");
-      shell.classList.toggle("ig-kb-open", open);
-      if (open && gridState.editing) {
-        igFillEmptyRows();
-        igScrollCellIntoView(gridState.editing.rowId, gridState.editing.col);
-      }
-    };
-    vv.addEventListener("resize", apply);
-    vv.addEventListener("scroll", apply);
-  }
-
-  // Rotating a phone changes the auto zoom and how many columns can stay
-  // frozen; without this the sheet kept its portrait shape until something
-  // else happened to trigger a render.
-  function igOnViewportChange() {
-    var inner = document.getElementById("ig-grid-inner");
-    if (!inner) return;
-    if (!state.upcoming.gridZoom) gridState.zoom = igAutoZoom();
-    var before = Object.keys(gridState.frozen || {}).join(",");
-    igRefreshFrozenMap();
-    if (Object.keys(gridState.frozen || {}).join(",") !== before) { scheduleRender(0); return; }
-    igApplyLayout(inner);
-    igFillEmptyRows();
-    igPaintActive();
-  }
-  function igSetZoom(action) {
-    var z = gridState.zoom || 1;
-    if (action === "in") z = Math.min(IG_ZOOM_MAX, Math.round((z + IG_ZOOM_STEP) * 100) / 100);
-    else if (action === "out") z = Math.max(IG_ZOOM_MIN, Math.round((z - IG_ZOOM_STEP) * 100) / 100);
-    else { state.upcoming.gridZoom = null; z = igAutoZoom(); savePrefs(); gridState.zoom = z; igApplyZoomLive(); return; }
-    gridState.zoom = z;
-    state.upcoming.gridZoom = z;
-    savePrefs();
-    igApplyZoomLive();
-  }
-
-  function igStatusInfo(item) {
-    var label = isCancelled(item.status) ? "Cancelled" : isPaid(item.status) ? "Paid" : isPartPaid(item) ? "Part Paid" : "Pending";
-    var tone = isCancelled(item.status) ? "muted" : isPaid(item.status) ? "good" : isPartPaid(item) ? "warn" : "neutral";
-    return { label: label, tone: tone };
-  }
-
-  // The date of the most recent receipt. It used to live only inside the
-  // payment form; it is a column now, so the row says when money last moved.
-  function igLastPaidDate(doc, item) {
-    var log = paymentsFor(doc, item.id);
-    if (!log.length) return item.paidOn || "";
-    var newest = log.slice().sort(function (a, b) {
-      return String(b.createdAt || b.date || "").localeCompare(String(a.createdAt || a.date || ""));
-    })[0];
-    return (newest && newest.date) || item.paidOn || "";
-  }
-
-  function igBuildRow(item, doc, index) {
-    var t = timing(item, doc), next = t.next, due = next ? next.dueDate : item.expectedBy;
-    var locked = dealHasRecordedMoney(item), structured = isDeal(item), status = igStatusInfo(item);
-    // One tone drives the row: the edge marker in the frozen row-number
-    // gutter, always on screen regardless of horizontal scroll. Nothing
-    // else repeats it — the due date and the balance used to be recoloured
-    // to say the same thing a second and third time, which is what read as
-    // "confusing" rather than as one clear signal.
-    var rowTone = isCancelled(item.status) ? "muted"
-      : outstandingOf(item) <= 0 ? "good"
-      : t.key === "overdue" ? "bad"
-      : (t.key === "today" || t.key === "very-soon" || t.key === "soon") ? "warn"
-      : !due ? "undated" : "";
-    return {
-      tone: rowTone,
-      id: item.id, index: index,
-      client: item.client || "", category: item.category || "",
-      gross: grossOf(item), paid: paidOf(item), balance: outstandingOf(item),
-      currency: String(item.currency || "UGX").toUpperCase(),
-      status: status.label, statusTone: status.tone,
-      due: due || "",
-      lastPaid: igLastPaidDate(doc, item),
-      structure: structured ? (DEAL_TYPES[normalizeDealType(item.dealType)] || "Payment schedule") : "One payment",
-      phone: item.phone || "", note: item.note || "",
-      locked: locked, structured: structured, open: isOpenFollowup(item), raw: item
-    };
-  }
-  /* A deal with a payment schedule is not one row: it is a row per
-     instalment, under a row that totals them. The instalment's amount, date,
-     money in and state are cells like any other — none of it lives behind a
-     form any more. Collapsing a deal is Sheets' row grouping, not a hiding
-     place: the toggle sits in the row-number gutter. */
-  function igCollapsed(id) { return (state.upcoming.gridCollapsed || []).indexOf(String(id)) >= 0; }
-  function igToggleCollapse(id) {
-    var list = (state.upcoming.gridCollapsed || []).slice(), i = list.indexOf(String(id));
+  function icCollapsed(id) { return (state.upcoming.collapsed || []).indexOf(String(id)) >= 0; }
+  function icToggleCollapse(id) {
+    var list = state.upcoming.collapsed || (state.upcoming.collapsed = []);
+    var i = list.indexOf(String(id));
     if (i >= 0) list.splice(i, 1); else list.push(String(id));
-    state.upcoming.gridCollapsed = list;
-    savePrefs();
-    scheduleRender(0);
+    savePrefs(); scheduleRender(0);
   }
-  /* One button for every schedule on the sheet. The direction is decided by
-     what is on screen — if anything is open, the button closes things — but
-     the action covers every deal in the document, so a schedule that is
-     filtered out of view now does not spring open when it comes back. */
-  function igVisibleCollapsibles() { return (gridState.rows || []).filter(function (r) { return r.hasParts; }); }
-  function igCollapseAll(collapse) {
-    var doc = readDoc();
-    var ids = ((doc && doc.followups) || [])
-      .filter(function (it) { return Array.isArray(it.parts) && it.parts.length; })
-      .map(function (it) { return String(it.id); });
-    if (!ids.length) return;
-    state.upcoming.gridCollapsed = collapse ? ids : [];
-    savePrefs();
-    scheduleRender(0);
+  function icCollapseAll(collapse) {
+    var doc = readDoc(), ids = (doc.followups || []).filter(function (x) { return isDeal(x); }).map(function (x) { return String(x.id); });
+    state.upcoming.collapsed = collapse ? ids : [];
+    savePrefs(); scheduleRender(0);
   }
 
-  /* Adding an instalment. A new one arrives at zero, so the deal's total and
-     everything already received are untouched — the sheet then puts the
-     cursor on its amount so the figure can just be typed. */
-  function igAddPart(rowId) {
-    var gridRow = gridState.byId[rowId], ownerId = igOwnerId(rowId), newPartId = uid("part");
-    if (!ownerId) return;
-    // A collapsed deal has to open, or the row that was just added is added
-    // somewhere the user cannot see.
-    if (igCollapsed(ownerId)) {
-      state.upcoming.gridCollapsed = (state.upcoming.gridCollapsed || []).filter(function (id) { return String(id) !== String(ownerId); });
-      savePrefs();
-    }
-    igPushUndo(ownerId);
-    igWritePatched(function (doc) {
-      var item = (doc.followups || []).find(function (x) { return String(x.id) === String(ownerId); });
-      if (!item) return;
-      var every = Math.max(1, Math.round(num(item.partEvery || 7)));
-      var singular = dealLabelSingular(item);
-      var word = singular.charAt(0).toUpperCase() + singular.slice(1);
-      if (!Array.isArray(item.parts) || !item.parts.length) {
-        // A one-payment deal becomes a schedule: what was already agreed
-        // stays as the first payment, the new one lands after it.
-        item.dealType = "custom";
-        item.partLabel = item.partLabel || "parts";
-        item.partEvery = every;
-        item.parts = [{
-          id: uid("part"), index: 1, label: word + " 1",
-          amount: roundMoney(grossOf(item)), dueDate: item.expectedBy || todayISO(),
-          paid: paidOf(item), status: item.status || "Pending", paidOn: item.paidOn || ""
-        }];
-      }
-      var parts = item.parts;
-      var at = gridRow && gridRow.partId ? parts.map(function (p) { return String(p.id); }).indexOf(String(gridRow.partId)) : parts.length - 1;
-      if (at < 0) at = parts.length - 1;
-      var prev = parts[at];
-      var due = prev && prev.dueDate ? dateISO(addDays(prev.dueDate, every)) : (item.expectedBy || todayISO());
-      parts.splice(at + 1, 0, {
-        id: newPartId, index: at + 2, label: word + " " + (at + 2),
-        amount: 0, dueDate: due, paid: 0, status: "Pending", paidOn: ""
-      });
-      parts.forEach(function (p, i) { p.index = i + 1; });
-      // Renumber only the labels still in the default "<thing> <n>" shape;
-      // anything renamed by hand ("Deposit", "Kickoff") keeps its name.
-      var auto = new RegExp("^\\s*" + word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s+\\d+\\s*$", "i");
-      parts.forEach(function (p, i) { if (auto.test(String(p.label || ""))) p.label = word + " " + (i + 1); });
-      item.partCount = parts.length;
-      rebuildDealParts(doc, item);
-    }, "grid-add-part", [ownerId]);
-    var newRowId = ownerId + "::" + newPartId;
-    if (gridState.byId[newRowId]) igSetActive(newRowId, "gross");
-    toast("Instalment added — type its amount", "success");
+  // Buckets exactly the way the summary tiles count: one deal, one bucket,
+  // by the timing of whichever payment on it is next due.
+  function icGroupFollowups(list, doc) {
+    var groups = { overdue: [], today: [], soon: [], unscheduled: [], later: [], paid: [], cancelled: [] };
+    list.forEach(function (item) {
+      var t = timing(item, doc);
+      if (t.key === "cancelled") groups.cancelled.push(item);
+      else if (t.key === "paid") groups.paid.push(item);
+      else if (t.key === "unscheduled") groups.unscheduled.push(item);
+      else if (t.key === "overdue") groups.overdue.push(item);
+      else if (t.key === "today") groups.today.push(item);
+      else if (t.key === "very-soon" || t.key === "soon") groups.soon.push(item);
+      else groups.later.push(item);
+    });
+    return groups;
   }
 
-  function igBuildPartRow(parent, item, part, doc, index, count) {
+  function icQuickChip(value, label, count, danger) {
+    var on = state.upcoming.quick === value;
+    return '<button class="ic-quick' + (on ? " on" : "") + (danger ? " danger" : "") + '" data-x97-action="quick-filter" data-value="' + attr(value) + '">' + esc(label) + (count != null ? ' <b>' + count + '</b>' : '') + '</button>';
+  }
+
+  function icHeroHTML(stats) {
+    var headline = stats.overdue.length
+      ? stats.overdue.length + " payment" + (stats.overdue.length === 1 ? "" : "s") + " overdue"
+      : stats.due7.length
+        ? stats.due7.length + " due in the next 7 days"
+        : stats.unscheduled.length
+          ? stats.unscheduled.length + " open deal" + (stats.unscheduled.length === 1 ? "" : "s") + " need" + (stats.unscheduled.length === 1 ? "s" : "") + " a date"
+          : "Nothing needs chasing right now";
+    return '<section class="ic-hero">' +
+      '<div class="ic-hero-top"><div><div class="ic-hero-label">Outstanding</div><div class="ic-hero-value tabnum">' + money(stats.outstandingUGX, "UGX", true) + (stats.outstandingUSD ? ' <span class="ic-hero-usd">+ ' + money(stats.outstandingUSD, "USD", true) + '</span>' : '') + '</div></div><div class="ic-hero-headline">' + esc(headline) + '</div></div>' +
+      '<div class="ic-hero-chips">' +
+        icQuickChip("overdue", "Overdue", stats.overdue.length, true) +
+        icQuickChip("next7", "Next 7 days", stats.due7.length) +
+        icQuickChip("unscheduled", "No date", stats.unscheduled.length) +
+        icQuickChip("paid", "Paid") +
+        icQuickChip("all", "Everything") +
+      '</div></section>';
+  }
+
+  function icToolbarHTML() {
+    var f = state.upcoming, count = activeFilterCount();
+    return '<div class="ic-toolbar">' +
+      '<div class="ic-search">' + icon("search", 16) + '<input id="ic-search" autocomplete="off" placeholder="Search client, category, note…" value="' + attr(f.search) + '"></div>' +
+      '<button class="ic-tbtn" data-x97-action="open-incoming-filters" title="Filter">' + icon("filter", 16) + (count ? '<b class="ic-tbadge">' + count + '</b>' : '') + '</button>' +
+      '<button class="ic-tbtn' + (icBulk.on ? " on" : "") + '" data-x97-action="incoming-bulk-toggle" title="Select rows">' + icon("rows", 16) + '</button>' +
+      '<button class="ic-tbtn" data-x97-action="open-incoming-more" title="More">' + icon("dots", 16) + '</button>' +
+    '</div>';
+  }
+
+  function icBulkBarHTML() {
+    var n = icBulkCount();
+    return '<div class="ic-toolbar ic-bulkbar">' +
+      '<span class="ic-bulkbar-count">' + n + ' selected</span>' +
+      '<button class="x97-btn" data-x97-action="incoming-bulk-cancel">Cancel</button>' +
+      '<button class="x97-btn danger" data-x97-action="incoming-bulk-delete"' + (n ? "" : " disabled") + '>' + icon("trash", 14) + ' Delete</button>' +
+    '</div>';
+  }
+
+  // The header row desktop shows above the list — mobile drops it, since a
+  // two-line stacked row already labels itself.
+  function icHeadHTML() {
+    return '<div class="ic-row ic-row-head" role="row">' +
+      '<span class="ic-c-edge" aria-hidden="true"></span>' +
+      '<span class="ic-c-client">Client</span>' +
+      '<span class="ic-c-structure">Structure</span>' +
+      '<span class="ic-c-total ic-num">Total</span>' +
+      '<span class="ic-c-paid ic-num">Paid</span>' +
+      '<span class="ic-c-balance ic-num">Balance</span>' +
+      '<span class="ic-c-cur">Cur</span>' +
+      '<span class="ic-c-status">Status</span>' +
+      '<span class="ic-c-due">Due</span>' +
+    '</div>';
+  }
+
+  function icPartRowHTML(parent, part, index, count, doc) {
     var due = part.dueDate || "";
-    var t = due ? timingForDate(due) : null;
-    var paid = num(part.paid), amount = roundMoney(part.amount), balance = Math.max(0, amount - paid);
-    // A brand-new instalment has no amount yet. Arithmetically nothing is
-    // owed on it, but calling that "Paid" reads as done rather than empty.
-    var status = amount <= 0 ? "Pending" : paid >= amount - 0.5 ? "Paid" : paid > 0 ? "Part Paid" : "Pending";
-    var tone = isCancelled(item.status) ? "muted"
-      : balance <= 0 ? "good"
-      : t === "overdue" ? "bad"
-      : t === "soon" ? "warn"
-      : !due ? "undated" : "";
-    return {
-      tone: tone, part: true, parentId: parent.id, partId: String(part.id), partIndex: index, partCount: count,
-      id: parent.id + "::" + part.id, index: parent.index + "." + index,
-      client: part.label || ("Payment " + index), category: parent.category,
-      gross: amount, paid: paid, balance: balance,
-      currency: parent.currency,
-      status: status, statusTone: balance <= 0 ? "good" : paid > 0 ? "warn" : "",
-      due: due,
-      lastPaid: part.paidOn || "",
-      structure: "Part " + index + " of " + count,
-      phone: parent.phone, note: parent.note,
-      locked: paid > 0, structured: true, open: balance > 0 && !isCancelled(item.status), raw: item
-    };
-  }
-  // A part's date only needs the coarse buckets the row tone uses.
-  function timingForDate(iso) {
-    var days = daysBetween(todayISO(), iso);
-    if (days == null) return null;
-    return days < 0 ? "overdue" : days <= 7 ? "soon" : "";
-  }
-  function igBuildRows(doc, list) {
-    var out = [];
-    list.forEach(function (item, i) {
-      var parent = igBuildRow(item, doc, i + 1);
-      var parts = Array.isArray(item.parts) ? item.parts : [];
-      parent.hasParts = parts.length > 0;
-      parent.collapsed = parent.hasParts && igCollapsed(item.id);
-      out.push(parent);
-      if (parent.hasParts && !parent.collapsed) {
-        parts.forEach(function (part, pi) { out.push(igBuildPartRow(parent, item, part, doc, pi + 1, parts.length)); });
-      }
-    });
-    return out;
+    var paid = num(part.paid), amount = num(part.amount), left = Math.max(0, amount - paid);
+    var settled = left <= 0 && amount > 0;
+    var cur = String(parent.currency || "UGX").toUpperCase();
+    var cls = settled ? "good" : due && parseLocalDate(due) < todayDate() ? "bad" : due && monthKey(due) === monthKey(todayDate()) ? "warn" : "";
+    var statusText = settled ? "Paid" : paid > 0 ? "Part paid" : "Pending";
+    return '<article class="ic-row ic-row-part is-' + cls + '" role="row" data-cur="' + attr(cur) + '" data-x97-action="edit-upcoming" data-id="' + attr(parent.id) + '">' +
+      '<span class="ic-c-edge"></span>' +
+      '<span class="ic-c-client"><span class="ic-part-label">' + esc(part.label || ("Payment " + (index + 1))) + '</span><small>' + esc(index + 1) + ' of ' + count + '</small></span>' +
+      '<span class="ic-c-structure ic-muted">—</span>' +
+      '<span class="ic-c-total ic-num tabnum">' + esc(money(amount, cur)) + '</span>' +
+      '<span class="ic-c-paid ic-num tabnum ' + (paid > 0 ? "ic-pos" : "") + '">' + esc(paid > 0 ? money(paid, cur) : "—") + '</span>' +
+      '<span class="ic-c-balance ic-num tabnum">' + esc(left > 0 ? money(left, cur) : "—") + '</span>' +
+      '<span class="ic-c-cur"><span class="ic-badge ic-cur-' + cur.toLowerCase() + '">' + cur + '</span></span>' +
+      '<span class="ic-c-status"><span class="ic-badge ic-badge-' + cls + '">' + esc(statusText) + '</span></span>' +
+      '<span class="ic-c-due">' + esc(due ? formatDate(due, true) : "No date") + '</span>' +
+    '</article>';
   }
 
-  // There are no read-only cells. Where money is already recorded the edit
-  // does the ledger-safe thing — rescale the schedule, convert at the live
-  // rate, reverse the newest receipts — rather than refusing the keystroke.
-  function igEditable() { return true; }
-
-  function igCellText(col, row) {
-    if (col.type === "money") return money(row[col.key] || 0, "");
-    if (col.type === "currency") return row.currency;
-    if (col.type === "status") return row.status;
-    if (col.type === "date") {
-      var d = row[col.key];
-      if (d) return formatDate(d, true);
-      return col.key === "due" ? (row.open ? "No date" : "—") : "—";
-    }
-    if (col.type === "structure") return row.structure;
-    return row[col.key] || "";
-  }
-  function igRawValue(row, key) { return row[key] == null ? "" : row[key]; }
-
-  // Frozen columns carry their left offset as a CSS variable rather than a
-  // baked pixel value, so a resize drag or a zoom moves the whole run without
-  // rebuilding a single cell.
-  function igFrozenAttrs(key) {
-    var idx = gridState.frozen ? gridState.frozen[key] : undefined;
-    if (idx === undefined) return "";
-    return ' style="left:var(--ig-fz-' + idx + ',0px)"';
-  }
-  function igFrozenClasses(key) {
-    var idx = gridState.frozen ? gridState.frozen[key] : undefined;
-    if (idx === undefined) return [];
-    return gridState.frozenLast === key ? ["ig-frozen", "ig-frozen-last"] : ["ig-frozen"];
-  }
-  function igCellClass(col, row) {
-    var cls = ["ig-cell", "ig-c-" + col.key, "ig-a-" + col.align].concat(igFrozenClasses(col.key));
-    if (igEditable(col, row)) cls.push("ig-editable");
-    else cls.push("ig-readonly");
-    if (col.key === "status") cls.push("ig-tone-badge");
-    if (col.key === "client" && !row.client) cls.push("ig-placeholder");
-    // One meaning per colour: green on Balance says the deal is settled —
-    // nothing recolours it for urgency a second time, since the frozen
-    // row-edge marker already says that, always in view. What's still owed
-    // reads as plain, bold text; the due date is plain text too.
-    if (col.key === "balance") cls.push(row.balance <= 0 ? "ig-tone-good" : "ig-tone-owed");
-    if (col.key === "paid" && row.paid > 0) cls.push("ig-tone-paid");
-    // Money that isn't in shillings says so without being read: the whole
-    // money block of a USD row is washed in the same blue the USD badge
-    // uses, so a foreign-currency figure can never be mistaken for a UGX
-    // one at a glance.
-    if (col.type === "money" && row.currency === "USD") cls.push("ig-money-usd");
-    return cls.join(" ");
-  }
-  function igCellInner(col, row) {
-    var text = igCellText(col, row);
-    if (col.key === "client" && !row.client) return '<span class="ig-muted">Untitled — click to name</span>';
-    if (col.type === "money" || col.type === "date") return '<span class="tabnum">' + esc(text) + '</span>';
-    if (col.key === "status") return '<span class="ig-badge ig-badge-' + esc(row.statusTone) + '">' + esc(text) + '</span>';
-    if (col.key === "currency") return '<span class="ig-badge ig-cur-' + esc(row.currency.toLowerCase()) + '">' + esc(text) + '</span>';
-    if (col.key === "structure" && row.locked) return esc(text) + ' ' + icon("lock", 11);
-    return esc(text);
-  }
-  function igCellHTML(col, row) {
-    var text = igCellText(col, row);
-    return '<div class="' + igCellClass(col, row) + '" role="gridcell" data-col="' + attr(col.key) + '" data-row="' + attr(row.id) + '" tabindex="-1" title="' + attr(text) + '"' + igFrozenAttrs(col.key) + '>' + igCellInner(col, row) + '</div>';
-  }
-  function igRowHTML(row) {
-    var bulked = !row.part && !!gridState.bulkRows[row.id];
-    var num0 = bulked
-      ? '<span class="ig-rownum-check">' + icon("check", 11) + '</span>'
-      : (row.hasParts
-        ? '<button type="button" class="ig-group" data-group="' + attr(row.raw && row.raw.id || row.id) + '" aria-expanded="' + (row.collapsed ? "false" : "true") + '" title="' + (row.collapsed ? "Show instalments" : "Hide instalments") + '">' + icon("chevron", 9) + '</button><span class="ig-rownum-n">' + row.index + '</span>'
-        : '<span class="ig-rownum-n">' + row.index + '</span>');
-    var cells = '<div class="ig-cell ig-rownum ig-sticky ig-sticky-num' + (row.hasParts ? " ig-has-parts" : "") + (row.collapsed ? " ig-collapsed" : "") + (bulked ? " ig-row-bulk" : "") + '" role="rowheader" data-rownum="' + attr(row.id) + '">' + num0 + '</div>';
-    cells += igVisibleCols().map(function (c) { return igCellHTML(c, row); }).join("");
-    return '<div class="ig-row' + (row.open ? "" : " ig-row-settled") + (row.tone ? " ig-row-" + row.tone : "") + (row.part ? " ig-row-part" : "") + (bulked ? " ig-row-bulk" : "") + '" role="row" data-row-id="' + attr(row.id) + '">' + cells + '</div>';
-  }
-  function igSortMatches(key) {
-    var s = state.upcoming.sort;
-    if (key === "client") return s === "client" ? "on" : "";
-    if (key === "gross" || key === "balance") return s === "amountDesc" ? "desc" : s === "amountAsc" ? "asc" : "";
-    if (key === "due") return s === "dateAsc" ? "asc" : s === "dateDesc" ? "desc" : "";
-    return "";
-  }
-  function igHeaderHTML() {
-    var head = '<div class="ig-cell ig-rownum ig-colhead ig-sticky-num" role="columnheader" title="Select the whole sheet">#</div>';
-    head += igVisibleCols().map(function (c) {
-      var sortable = c.key === "client" || c.key === "gross" || c.key === "balance" || c.key === "due";
-      var active = igSortMatches(c.key);
-      return '<div class="ig-cell ig-colhead ig-a-' + c.align + igFrozenClasses(c.key).map(function (k) { return " " + k; }).join("") + (active ? " ig-sorted" : "") + '" role="columnheader" data-colhead="' + attr(c.key) + '"' + (sortable ? ' data-x97-action="grid-sort" data-col="' + attr(c.key) + '"' : "") + igFrozenAttrs(c.key) + '><span>' + esc(c.label) + '</span>' + (active ? '<i class="ig-sort-ic">' + icon("chevron", 10) + '</i>' : "") + '<b class="ig-colmenu" data-colmenu="' + attr(c.key) + '" title="Column options" aria-label="Column options">' + icon("chevron", 9) + '</b><b class="ig-resize" data-resize="' + attr(c.key) + '"></b></div>';
-    }).join("");
-    return '<div class="ig-row ig-head-row" role="row">' + head + '</div>';
+  function icRowHTML(item, doc) {
+    var t = timing(item, doc), cur = String(item.currency || "UGX").toUpperCase();
+    var gross = grossOf(item), paid = paidOf(item), left = outstandingOf(item);
+    var open = isOpenFollowup(item);
+    var deal = isDeal(item), parts = deal ? (item.parts || []) : [];
+    var collapsed = deal && icCollapsed(item.id);
+    var structure = deal ? (DEAL_TYPES[normalizeDealType(item.dealType)] || "Per part") : "One payment";
+    var next = t.next;
+    var dueText = t.key === "cancelled" ? "—" : t.key === "paid" ? (item.paidOn ? formatDate(item.paidOn, true) : "Settled") : t.key === "unscheduled" ? "No date" : (next && next.dueDate ? formatDate(next.dueDate, true) : "No date");
+    var subLine = t.key === "cancelled" ? "Cancelled" : t.key === "paid" ? "Fully received" : deal ? dealPaidPartCount(item) + " of " + parts.length + " " + dealLabel(item) + " paid" : t.label;
+    var bulked = icBulk.on && !!icBulk.rows[item.id];
+    var leading = icBulk.on
+      ? '<button type="button" class="ic-check' + (bulked ? " on" : "") + '" data-x97-action="incoming-bulk-row" data-id="' + attr(item.id) + '" aria-label="Select">' + (bulked ? icon("check", 13) : "") + '</button>'
+      : (deal ? '<button type="button" class="ic-collapse-btn" data-x97-action="incoming-collapse" data-id="' + attr(item.id) + '" aria-expanded="' + (collapsed ? "false" : "true") + '" title="' + (collapsed ? "Show" : "Hide") + ' the schedule">' + icon("chevron", 13) + '</button>' : '<span class="ic-c-edge"></span>');
+    var quick = open
+      ? '<button type="button" class="ic-quickact" data-x97-action="mark-paid" data-id="' + attr(item.id) + '" title="Record a payment">' + icon("wallet", 15) + '</button>' +
+        (hasWa(item, doc) ? '<button type="button" class="ic-quickact" data-x97-action="chase-one" data-id="' + attr(item.id) + '" title="WhatsApp">' + icon("message", 15) + '</button>' : '')
+      : '';
+    var rowAction = icBulk.on ? "incoming-bulk-row" : "edit-upcoming";
+    return '<article class="ic-row is-' + esc(t.key) + (bulked ? " is-bulked" : "") + '" role="row" data-cur="' + attr(cur) + '" data-x97-action="' + rowAction + '" data-id="' + attr(item.id) + '">' +
+      leading +
+      '<span class="ic-c-client"><b>' + esc(item.client || "Untitled") + '</b><small>' + esc(item.category || "Incoming") + '</small></span>' +
+      '<span class="ic-c-structure">' + esc(structure) + '</span>' +
+      '<span class="ic-c-total ic-num tabnum">' + esc(money(gross, cur)) + '</span>' +
+      '<span class="ic-c-paid ic-num tabnum ' + (paid > 0 ? "ic-pos" : "") + '">' + esc(paid > 0 ? money(paid, cur) : "—") + '</span>' +
+      '<span class="ic-c-balance ic-num tabnum ' + (left <= 0 ? "ic-pos" : "") + '">' + esc(left > 0 ? money(left, cur) : "Settled") + '</span>' +
+      '<span class="ic-c-cur"><span class="ic-badge ic-cur-' + cur.toLowerCase() + '">' + cur + '</span></span>' +
+      '<span class="ic-c-status"><span class="ic-badge ic-badge-' + esc(t.cls || "neutral") + '">' + esc(t.key === "cancelled" ? "Cancelled" : t.key === "paid" ? "Paid" : t.key === "overdue" ? "Overdue" : paid > 0 ? "Part paid" : "Pending") + '</span></span>' +
+      '<span class="ic-c-due"><b>' + esc(dueText) + '</b><small>' + esc(subLine) + '</small></span>' +
+      (quick ? '<span class="ic-quickacts">' + quick + '</span>' : '') +
+    '</article>' +
+    (deal && !collapsed ? parts.map(function (p, i) { return icPartRowHTML(item, p, i, parts.length, doc); }).join("") : "");
   }
 
-  function igFormulaBarHTML() {
-    return '<div class="ig-formula-bar"><div class="ig-cell-ref" id="ig-cell-ref">—</div><input class="ig-formula-input" id="ig-formula-input" autocomplete="off" placeholder="Select a cell" disabled></div>';
-  }
-  function igGridFilterCount() {
-    var f = state.upcoming, count = 0;
-    if (f.statuses.length) count++;
-    if (f.currencies.length) count++;
-    if (f.categories.length) count++;
-    if (f.minAmount || f.maxAmount) count++;
-    if (f.quick !== "open" && f.quick !== "all") count++;
-    return count;
-  }
-  function igSelectionBarHTML() {
-    var n = igBulkCount();
-    return '<div class="ig-toolbar ig-selbar">' +
-      '<button class="ig-tbtn" data-x97-action="grid-bulk-cancel" title="Cancel selection">' + icon("close", 16) + '</button>' +
-      '<span class="ig-selbar-count">' + n + (n === 1 ? " row selected" : " rows selected") + '</span>' +
-      '<button class="ig-tbtn ig-tbtn-danger" data-x97-action="grid-bulk-delete" title="Delete selected rows"' + (n ? "" : " disabled") + '>' + icon("trash", 16) + '<span class="ig-tlabel">Delete</span></button>' +
-    '</div>';
-  }
-  function igToolbarHTML() {
-    if (gridState.bulkMode) return igSelectionBarHTML();
-    var f = state.upcoming, count = igGridFilterCount();
-    var collapsible = igVisibleCollapsibles();
-    var anyOpen = collapsible.some(function (r) { return !r.collapsed; });
-    return '<div class="ig-toolbar">' +
-      '<div class="ig-toolbar-group">' +
-        '<button class="ig-tbtn" data-x97-action="grid-undo" title="Undo"' + (gridState.undoStack.length ? "" : " disabled") + '>' + icon("undo", 16) + '</button>' +
-        '<button class="ig-tbtn ig-tbtn-redo" data-x97-action="grid-redo" title="Redo"' + (gridState.redoStack.length ? "" : " disabled") + '>' + icon("redo", 16) + '</button>' +
-        '<span class="ig-tsep"></span>' +
-        '<button class="ig-tbtn" data-x97-action="grid-add-row" title="Add row">' + icon("plus", 16) + '<span class="ig-tlabel">Row</span></button>' +
-        (collapsible.length ? '<button class="ig-tbtn ig-tbtn-collapse" data-x97-action="grid-collapse-all" data-value="' + (anyOpen ? "collapse" : "expand") + '" title="' + (anyOpen ? "Collapse every schedule" : "Expand every schedule") + '">' + icon(anyOpen ? "collapse" : "expand", 16) + '</button>' : "") +
-      '</div>' +
-      '<div class="ig-toolbar-search"><span class="ig-search-ic">' + icon("search", 15) + '</span><input id="x97-up-search" autocomplete="off" placeholder="Search Incoming" value="' + attr(f.search) + '"></div>' +
-      '<div class="ig-toolbar-group">' +
-        '<button class="ig-tbtn" data-x97-action="open-grid-filters" title="Filter"><span class="ig-tbtn-badge-wrap">' + icon("filter", 16) + (count ? '<b class="ig-tbadge">' + count + '</b>' : "") + '</span><span class="ig-tlabel">Filter</span></button>' +
-        '<button class="ig-tbtn ig-tbtn-columns" data-x97-action="open-grid-columns" title="Columns">' + icon("columns", 16) + '</button>' +
-        '<button class="ig-tbtn" data-x97-action="grid-legend" title="What the colours mean">' + icon("info", 16) + '</button>' +
-        '<button class="ig-tbtn ig-tbtn-selrows" data-x97-action="grid-bulk-toggle" title="Select rows">' + icon("rows", 16) + '</button>' +
-        '<button class="ig-tbtn" data-x97-action="open-grid-more" title="More">' + icon("dots", 16) + '</button>' +
-      '</div>' +
-    '</div>';
-  }
-  function igQuickViewsHTML(stats) {
-    var f = state.upcoming;
-    function chip(key, label, count) {
-      return '<button class="ig-quick' + (f.quick === key ? " on" : "") + '" data-x97-action="quick-filter" data-value="' + attr(key) + '">' + esc(label) + (count != null ? ' <b>' + count + '</b>' : "") + '</button>';
-    }
-    return '<div class="ig-quickviews">' + chip("all", "All") + chip("open", "Outstanding", stats.open.length) + chip("overdue", "Overdue", stats.overdue.length) + chip("next7", "Due soon", stats.due7.length) + chip("paid", "Paid") + '</div>';
-  }
-  function igStatusBarHTML(filteredCount, totalCount, stats) {
-    var zoomPct = Math.round((gridState.zoom || 1) * 100);
-    // Instalment rows are rows too — say how many are actually on screen.
-    var instalments = (gridState.rows || []).filter(function (r) { return r.part; }).length;
-    return '<div class="ig-statusbar"><div class="ig-statusbar-info"><span>' + filteredCount + ' of ' + totalCount + ' deal' + (totalCount === 1 ? "" : "s") + (instalments ? " · " + instalments + " instalment" + (instalments === 1 ? "" : "s") : "") + '</span><span class="ig-statusbar-sep">·</span><span>Outstanding ' + esc(money(stats.outstandingUGX, "UGX", true)) + (stats.outstandingUSD ? " + " + esc(money(stats.outstandingUSD, "USD", true)) : "") + '</span></div>' +
-      '<div class="ig-selstats" id="ig-selstats" hidden></div>' +
-      '<div class="ig-zoom" role="group" aria-label="Grid zoom">' +
-        '<button class="ig-zbtn" data-x97-action="grid-zoom" data-value="out" title="Zoom out" aria-label="Zoom out">' + icon("minus", 13) + '</button>' +
-        '<button class="ig-zpct" data-x97-action="grid-zoom" data-value="reset" title="Reset zoom">' + zoomPct + '%</button>' +
-        '<button class="ig-zbtn" data-x97-action="grid-zoom" data-value="in" title="Zoom in" aria-label="Zoom in">' + icon("plus", 13) + '</button>' +
-      '</div></div>';
-  }
-  /* What is expected, and when. Every unpaid scheduled payment falls into
-     exactly one time bucket so the tiles answer "what is late, what lands
-     today, what lands this week, what lands this month" at a glance. */
-  function igPeriodStats(doc) {
-    var today = todayDate(), endMonth = endOfMonth(today);
-    function bucket() { return { ugx: 0, usd: 0, count: 0 }; }
-    var b = { overdue: bucket(), today: bucket(), week: bucket(), month: bucket() };
-    function add(target, event) {
-      target.count++;
-      if (String(event.currency || "UGX").toUpperCase() === "USD") target.usd += num(event.amount);
-      else target.ugx += num(event.amount);
-    }
-    scheduledEvents(doc, false).forEach(function (event) {
-      var due = parseLocalDate(event.date);
-      if (!due) return;
-      var days = daysBetween(today, due);
-      if (days == null) return;
-      if (days < 0) { add(b.overdue, event); return; }
-      if (days === 0) add(b.today, event);
-      if (days <= 6) add(b.week, event);
-      if (due <= endMonth) add(b.month, event);
-    });
-    return b;
-  }
-
-  function igSummaryHTML(stats, periods) {
-    function amounts(ugx, usd) {
-      var parts = [];
-      if (ugx) parts.push(esc(money(ugx, "UGX", true)));
-      if (usd) parts.push(esc(money(usd, "USD", true)));
-      // An empty period reads as a dash; "UGX 0" is noise next to a sub
-      // line that already says nothing is due.
-      return parts.length ? parts.join(" + ") : '<span class="ig-stat-empty">—</span>';
-    }
-    function tile(label, primary, sub, tone) {
-      return '<div class="ig-stat' + (tone ? " ig-stat-" + tone : "") + '">' +
-        '<div class="ig-stat-label"><i class="ig-stat-dot"></i>' + esc(label) + '</div>' +
-        '<div class="ig-stat-value tabnum">' + primary + '</div>' +
-        '<div class="ig-stat-sub">' + sub + '</div>' +
-      '</div>';
-    }
-    function payments(n) { return n + (n === 1 ? " payment" : " payments"); }
-    // A bank's account summary, not a ticker: what you are owed in total
-    // reads first and largest, and the four periods sit under it as their
-    // own block — one row of tiles on a desktop, a 2x2 panel on a phone.
-    // The old single line of pills had to be swiped sideways to be read,
-    // which is no way to show a balance.
-    return '<div class="ig-summary">' +
-      '<div class="ig-sum-total">' +
-        '<div class="ig-sum-total-label">Outstanding</div>' +
-        '<div class="ig-sum-total-value tabnum">' + amounts(stats.outstandingUGX, stats.outstandingUSD) + '</div>' +
-        '<div class="ig-sum-total-sub">' + stats.open.length + ' open · ' + stats.unscheduled.length + ' undated</div>' +
-      '</div>' +
-      '<div class="ig-sum-periods">' +
-        tile("Overdue", amounts(periods.overdue.ugx, periods.overdue.usd),
-          periods.overdue.count ? payments(periods.overdue.count) + " late" : "Nothing late",
-          periods.overdue.count ? "bad" : "good") +
-        tile("Due today", amounts(periods.today.ugx, periods.today.usd),
-          periods.today.count ? payments(periods.today.count) : "Nothing today", periods.today.count ? "warn" : "") +
-        tile("This week", amounts(periods.week.ugx, periods.week.usd),
-          periods.week.count ? payments(periods.week.count) + " to " + esc(formatDate(dateISO(addDays(todayDate(), 6)), true)) : "Nothing this week",
-          periods.week.count ? "warn" : "") +
-        tile("This month", amounts(periods.month.ugx, periods.month.usd),
-          periods.month.count ? payments(periods.month.count) + " by " + esc(formatDate(dateISO(endOfMonth(todayDate())), true)) : "Nothing this month", "") +
-      '</div>' +
-    '</div>';
+  function icGroupHTML(label, items, doc) {
+    if (!items.length) return "";
+    return '<div class="ic-group"><b>' + esc(label) + '</b><span>' + items.length + '</span></div>' + items.map(function (item) { return icRowHTML(item, doc); }).join("");
   }
 
   function renderUpcoming(doc) {
-    igSyncPersisted();
-    igRefreshFrozenMap();
+    if (!Array.isArray(state.upcoming.collapsed)) state.upcoming.collapsed = [];
+    if (icBulk.on) { var live = {}; (doc.followups || []).forEach(function (x) { if (icBulk.rows[x.id]) live[x.id] = true; }); icBulk.rows = live; }
     var all = doc.followups || [];
     var filtered = sortFollowups(all.filter(function (item) { return followupMatches(item, doc); }), doc);
-    // A row you just created belongs at the top, not wherever urgency sort
-    // files a deal with no amount and no date yet.
-    if (gridState.quickEntry) {
-      var qi = filtered.findIndex(function (x) { return String(x.id) === String(gridState.quickEntry); });
-      if (qi > 0) filtered.unshift(filtered.splice(qi, 1)[0]);
-    }
     var stats = collectionStats(doc);
-    var rows = igBuildRows(doc, filtered);
-    gridState.rows = rows;
-    gridState.filteredCount = filtered.length;
-    gridState.order = rows.map(function (r) { return r.id; });
-    gridState.byId = {};
-    rows.forEach(function (r) { gridState.byId[r.id] = r; });
-    if (gridState.active && !gridState.byId[gridState.active.rowId]) gridState.active = null;
-    if (gridState.editing && !gridState.byId[gridState.editing.rowId]) gridState.editing = null;
+    var groups = icGroupFollowups(filtered, doc);
+    var body = state.upcoming.sort === "urgency"
+      ? [icGroupHTML("Overdue", groups.overdue, doc), icGroupHTML("Due today", groups.today, doc), icGroupHTML("Due soon", groups.soon, doc),
+         icGroupHTML("No date", groups.unscheduled, doc), icGroupHTML("Later", groups.later, doc), icGroupHTML("Paid", groups.paid, doc), icGroupHTML("Cancelled", groups.cancelled, doc)].join("")
+      : filtered.map(function (item) { return icRowHTML(item, doc); }).join("");
+    var empty = filtered.length ? "" : '<div class="ic-empty">' + icon("search", 26) + '<strong>No deals in this view</strong><p>Clear filters or add one to get started.</p><button class="x97-btn primary" style="margin-top:12px" data-x97-action="add-upcoming">' + icon("plus") + ' Add incoming deal</button></div>';
 
-    var clientNames = Array.from(new Set(all.map(function (x) { return x.client; }).filter(Boolean))).sort();
-    var datalist = '<datalist id="ig-client-list">' + clientNames.map(function (n) { return '<option value="' + attr(n) + '">'; }).join("") + '</datalist>';
-    var bodyRows = rows.length ? rows.map(igRowHTML).join("") : "";
-    var empty = rows.length ? "" : '<div class="ig-empty">' + icon("search", 24) + '<strong>No rows in this view</strong><p>Clear filters or add a row to get started.</p><button class="x97-btn primary" data-x97-action="grid-add-row">' + icon("plus") + ' Add row</button></div>';
-
-    root.innerHTML = '<div class="ig-shell">' +
-      pageHeader("Collections", "Incoming", "", '<button class="x97-icon-btn x97-add-primary" data-x97-action="grid-add-row" title="Add row">' + icon("plus") + '<span>Add row</span></button>') +
-      igSummaryHTML(stats, igPeriodStats(doc)) +
-      igToolbarHTML() +
-      igQuickViewsHTML(stats) +
-      (activeFilterCount() ? '<div class="ig-filterchips">' + filterTagHTML() + '</div>' : "") +
-      igFormulaBarHTML() +
-      '<div class="ig-gridwrap" id="ig-gridwrap"><div class="ig-scroll" id="ig-scroll" tabindex="0" role="grid" aria-rowcount="' + rows.length + '" aria-label="Incoming receivables">' +
-        '<div class="ig-grid-inner" id="ig-grid-inner" style="' + igLayoutStyle() + '">' + igHeaderHTML() + '<div class="ig-body" id="ig-body">' + bodyRows + '</div><div class="ig-filler" id="ig-filler" aria-hidden="true"></div><div id="ig-range-frame" class="ig-range-frame" aria-hidden="true"></div></div>' +
+    root.innerHTML = '<div class="ic-shell" id="ic-shell">' +
+      pageHeader("Collections", "Incoming", "", '<button class="x97-icon-btn x97-add-primary" data-x97-action="add-upcoming" title="Add incoming deal">' + icon("plus") + '<span>Add deal</span></button>') +
+      icHeroHTML(stats) +
+      (icBulk.on ? icBulkBarHTML() : icToolbarHTML()) +
+      (activeFilterCount() ? '<div class="ic-filterchips">' + filterTagHTML() + '</div>' : "") +
+      '<div class="ic-gridwrap"><div class="ic-listwrap" id="ic-listwrap">' +
+        (filtered.length ? icHeadHTML() : "") +
+        '<div class="ic-list" id="ic-list" role="table" aria-label="Incoming receivables">' + body + '</div>' +
         empty +
       '</div></div>' +
-      igStatusBarHTML(filtered.length, all.length, stats) +
-      datalist +
+      '<div class="ic-statusbar"><span>' + filtered.length + ' of ' + all.length + ' shown</span><span>Sorted by ' + esc(sortLabel(state.upcoming.sort)) + '</span></div>' +
+      '<button class="x97-fab" data-x97-action="add-upcoming" aria-label="Add incoming deal">' + icon("plus", 25) + '</button>' +
     '</div>';
 
-    mountIncomingGrid();
-  }
-
-  /* ── Grid interaction controller ─────────────────────────────────────── */
-
-  function igIndexDom(body) {
-    gridState.rowEls = {}; gridState.cellEls = {};
-    Array.prototype.slice.call(body.children).forEach(function (rowEl) {
-      var rid = rowEl.getAttribute("data-row-id");
-      gridState.rowEls[rid] = rowEl;
-      var map = {};
-      Array.prototype.slice.call(rowEl.children).forEach(function (cellEl) {
-        map[cellEl.getAttribute("data-col") || "__rownum"] = cellEl;
+    var searchInput = document.getElementById("ic-search");
+    if (searchInput) {
+      searchInput.addEventListener("input", function () {
+        state.upcoming.search = searchInput.value; savePrefs(); scheduleRender(180);
       });
-      gridState.cellEls[rid] = map;
-    });
-  }
-
-  function igColLabel(key) { var c = igColDef(key); return c ? c.label : key; }
-
-  function igClearActiveClasses() {
-    (gridState.selEls || []).forEach(function (el) { el.classList.remove("ig-in-range"); });
-    if (gridState.activeEl) {
-      gridState.activeEl.classList.remove("ig-active");
-      var oldHandle = gridState.activeEl.querySelector(".ig-fill-handle");
-      if (oldHandle) oldHandle.remove();
     }
-    if (gridState.activeRowEl) gridState.activeRowEl.classList.remove("ig-row-active");
-    if (gridState.activeHeadEl) gridState.activeHeadEl.classList.remove("ig-col-active");
-    gridState.selEls = []; gridState.activeEl = null; gridState.activeRowEl = null; gridState.activeHeadEl = null;
-  }
-
-  function igRangeBounds() {
-    if (!gridState.active) return null;
-    var a = gridState.anchor || gridState.active;
-    var cols = igVisibleCols().map(function (c) { return c.key; });
-    var ai = cols.indexOf(a.col), fi = cols.indexOf(gridState.active.col);
-    var ri = gridState.order.indexOf(a.rowId), fr = gridState.order.indexOf(gridState.active.rowId);
-    if (ai < 0 || fi < 0 || ri < 0 || fr < 0) return null;
-    return { c0: Math.min(ai, fi), c1: Math.max(ai, fi), r0: Math.min(ri, fr), r1: Math.max(ri, fr), cols: cols };
-  }
-
-  function igUpdateFormulaBar() {
-    var ref = document.getElementById("ig-cell-ref"), input = document.getElementById("ig-formula-input");
-    if (!ref || !input) return;
-    if (!gridState.active) { ref.textContent = "—"; input.value = ""; input.disabled = true; input.placeholder = "Select a cell"; return; }
-    var row = gridState.byId[gridState.active.rowId], col = igColDef(gridState.active.col);
-    if (!row || !col) return;
-    ref.textContent = (row.client || "Row " + row.index) + " · " + col.label;
-    var editable = igEditable(col, row);
-    input.disabled = !editable;
-    input.placeholder = editable ? "Type to edit, Enter to commit" : "Read-only — set on the deal";
-    if (document.activeElement !== input) input.value = igRawValue(row, col.key);
-  }
-
-  function igUpdateRangeFrame(bounds) {
-    var frame = document.getElementById("ig-range-frame");
-    if (!frame) return;
-    var single = !bounds || (bounds.r0 === bounds.r1 && bounds.c0 === bounds.c1);
-    if (single) { frame.style.display = "none"; return; }
-    var tl = gridState.cellEls[gridState.order[bounds.r0]] && gridState.cellEls[gridState.order[bounds.r0]][bounds.cols[bounds.c0]];
-    var br = gridState.cellEls[gridState.order[bounds.r1]] && gridState.cellEls[gridState.order[bounds.r1]][bounds.cols[bounds.c1]];
-    if (!tl || !br) { frame.style.display = "none"; return; }
-    frame.style.display = "block";
-    frame.style.left = tl.offsetLeft + "px";
-    frame.style.top = tl.offsetTop + "px";
-    frame.style.width = (br.offsetLeft + br.offsetWidth - tl.offsetLeft) + "px";
-    frame.style.height = (br.offsetTop + br.offsetHeight - tl.offsetTop) + "px";
-  }
-
-  // What a marquee of numbers is worth — Sheets' Sum/Count status strip.
-  // Split by currency, since adding UGX to USD would just be wrong.
-  function igSelectionStats(bounds) {
-    if (!bounds || (bounds.r0 === bounds.r1 && bounds.c0 === bounds.c1)) return null;
-    var count = 0, sums = { UGX: 0, USD: 0 }, numericCount = 0;
-    for (var r = bounds.r0; r <= bounds.r1; r++) {
-      var row = gridState.byId[gridState.order[r]];
-      if (!row) continue;
-      for (var c = bounds.c0; c <= bounds.c1; c++) {
-        var col = igColDef(bounds.cols[c]);
-        count++;
-        if (col && col.type === "money") { sums[row.currency === "USD" ? "USD" : "UGX"] += num(row[col.key]); numericCount++; }
-      }
-    }
-    return { count: count, numericCount: numericCount, sums: sums };
-  }
-  function igUpdateSelectionStats(bounds) {
-    var el = document.getElementById("ig-selstats");
-    if (!el) return;
-    var s = igSelectionStats(bounds);
-    if (!s || !s.numericCount) { el.hidden = true; el.innerHTML = ""; return; }
-    var parts = [];
-    if (s.sums.UGX) parts.push(esc(money(s.sums.UGX, "UGX", true)));
-    if (s.sums.USD) parts.push(esc(money(s.sums.USD, "USD", true)));
-    el.innerHTML = '<span>Count <b class="tabnum">' + s.count + '</b></span><span>Sum <b class="tabnum">' + (parts.join(" + ") || "0") + '</b></span>';
-    el.hidden = false;
-  }
-
-  function igPaintActive() {
-    igClearActiveClasses();
-    if (!gridState.active || !gridState.byId[gridState.active.rowId]) { igUpdateFormulaBar(); igUpdateRangeFrame(null); igUpdateSelectionStats(null); return; }
-    var bounds = igRangeBounds();
-    if (bounds) {
-      for (var r = bounds.r0; r <= bounds.r1; r++) {
-        var rid = gridState.order[r];
-        for (var c = bounds.c0; c <= bounds.c1; c++) {
-          var el = gridState.cellEls[rid] && gridState.cellEls[rid][bounds.cols[c]];
-          if (el) { el.classList.add("ig-in-range"); gridState.selEls.push(el); }
-        }
-      }
-    }
-    var activeEl = gridState.cellEls[gridState.active.rowId] && gridState.cellEls[gridState.active.rowId][gridState.active.col];
-    if (activeEl) {
-      activeEl.classList.add("ig-active"); gridState.activeEl = activeEl;
-      // The fill handle only makes sense on a value you can type into, and
-      // only when nothing is in the way of dragging it.
-      var col = igColDef(gridState.active.col), row = gridState.byId[gridState.active.rowId];
-      if (col && row && igEditable(col, row) && !gridState.editing) {
-        var handle = document.createElement("div");
-        handle.className = "ig-fill-handle";
-        activeEl.appendChild(handle);
-      }
-    }
-    var rowEl = gridState.rowEls[gridState.active.rowId];
-    if (rowEl) { rowEl.classList.add("ig-row-active"); gridState.activeRowEl = rowEl; }
-    var headEl = document.querySelector('.ig-colhead[data-colhead="' + gridState.active.col + '"]');
-    if (headEl) { headEl.classList.add("ig-col-active"); gridState.activeHeadEl = headEl; }
-    igUpdateFormulaBar();
-    igUpdateRangeFrame(bounds);
-    igUpdateSelectionStats(bounds);
-  }
-
-  // How much of the scrollport the frozen run covers. The frozen columns and
-  // the header float *over* the rows rather than beside them, so the browser
-  // counts a cell tucked underneath as perfectly visible.
-  function igFrozenInset() {
-    var run = igRownumWidth(), visible = igVisibleCols(), n = igFreezeCount();
-    for (var i = 0; i < n; i++) run += igColWidth(visible[i].key);
-    return run;
-  }
-  function igScrollCellIntoView(rowId, col) {
-    var el = gridState.cellEls[rowId] && gridState.cellEls[rowId][col];
-    var scroll = document.getElementById("ig-scroll");
-    if (!el || !scroll || !el.getBoundingClientRect) return;
-    // Stamped so the touch handler can tell the sheet moving itself from the
-    // sheet still gliding under a flick — only the latter should swallow the
-    // next tap. Without this, selecting a cell scrolls it into view and the
-    // second half of a double-tap gets thrown away as a fling.
-    gridState.progScrollAt = Date.now();
-    var cr = el.getBoundingClientRect(), sr = scroll.getBoundingClientRect();
-    var head = scroll.querySelector(".ig-head-row");
-    var topInset = head ? head.getBoundingClientRect().height : 0;
-    // A frozen cell is never underneath itself, and the row-number gutter is
-    // sticky too — neither needs to be scrolled sideways into view.
-    var sticky = el.classList.contains("ig-frozen") || el.classList.contains("ig-sticky-num");
-    var dx = 0, dy = 0;
-    if (!sticky) {
-      var leftInset = igFrozenInset();
-      if (cr.left < sr.left + leftInset) dx = cr.left - (sr.left + leftInset);
-      else if (cr.right > sr.right) dx = Math.min(cr.right - sr.right, cr.left - (sr.left + leftInset));
-    }
-    if (cr.top < sr.top + topInset) dy = cr.top - (sr.top + topInset);
-    else if (cr.bottom > sr.bottom) dy = Math.min(cr.bottom - sr.bottom, cr.top - (sr.top + topInset));
-    if (dx) scroll.scrollLeft += dx;
-    if (dy) scroll.scrollTop += dy;
-  }
-
-  function igSetActive(rowId, col, opts) {
-    opts = opts || {};
-    if (gridState.bulkMode) igClearBulk();
-    if (gridState.editing && !(gridState.editing.rowId === rowId && gridState.editing.col === col)) igCommitEdit();
-    // Moving off a freshly added row ends its fast-entry run: it stops being
-    // pinned to the top and takes its place in the sort like any other row.
-    if (gridState.quickEntry && String(rowId) !== String(gridState.quickEntry)) gridState.quickEntry = null;
-    if (!opts.extend) gridState.anchor = { rowId: rowId, col: col };
-    gridState.active = { rowId: rowId, col: col };
-    igPaintActive();
-    if (!opts.silent) igScrollCellIntoView(rowId, col);
-  }
-
-  function igSelectCellFromEl(cell, extend) {
-    var rowId = cell.getAttribute("data-row"), col = cell.getAttribute("data-col");
-    if (!rowId || !col) return;
-    igSetActive(rowId, col, { extend: extend });
-  }
-
-  function igMoveAfterCommit(direction) {
-    if (!gridState.active) return;
-    var cols = igVisibleCols().map(function (c) { return c.key; });
-    var ci = cols.indexOf(gridState.active.col), ri = gridState.order.indexOf(gridState.active.rowId);
-    if (direction === "auto") direction = gridState.quickEntry === gridState.active.rowId ? "right" : "down";
-    if (direction === "down") ri = Math.min(gridState.order.length - 1, ri + 1);
-    else if (direction === "up") ri = Math.max(0, ri - 1);
-    else if (direction === "right") ci = Math.min(cols.length - 1, ci + 1);
-    else if (direction === "left") ci = Math.max(0, ci - 1);
-    var rid = gridState.order[ri], key = cols[ci];
-    if (rid && key) igSetActive(rid, key);
-  }
-  function igStep(extend, dr, dc) {
-    if (!gridState.active) return;
-    var cols = igVisibleCols().map(function (c) { return c.key; });
-    var base = gridState.active;
-    var ci = Math.max(0, Math.min(cols.length - 1, cols.indexOf(base.col) + dc));
-    var ri = Math.max(0, Math.min(gridState.order.length - 1, gridState.order.indexOf(base.rowId) + dr));
-    var rid = gridState.order[ri], key = cols[ci];
-    if (rid && key) igSetActive(rid, key, { extend: extend });
-  }
-
-  function igRepaintCell(rowId, colKey) {
-    var row = gridState.byId[rowId], col = igColDef(colKey), cell = gridState.cellEls[rowId] && gridState.cellEls[rowId][colKey];
-    if (!row || !col || !cell) return;
-    cell.classList.remove("ig-editing");
-    cell.className = igCellClass(col, row);
-    cell.title = igCellText(col, row);
-    cell.innerHTML = igCellInner(col, row);
-    if (gridState.active && gridState.active.rowId === rowId && gridState.active.col === colKey) {
-      cell.classList.add("ig-active");
-      if (igEditable(col, row)) cell.appendChild(Object.assign(document.createElement("div"), { className: "ig-fill-handle" }));
+    var listwrap = document.getElementById("ic-listwrap");
+    if (listwrap) {
+      listwrap.addEventListener("scroll", function () {
+        var shell = document.getElementById("ic-shell");
+        if (shell) shell.classList.toggle("ic-scrolled", listwrap.scrollTop > 4);
+      }, { passive: true });
     }
   }
 
-  function igFlushPendingExternalRender() {
-    if (gridState.pendingExternalRender) { gridState.pendingExternalRender = false; scheduleRender(0); }
-  }
-
-  /* Typing a figure into Paid (or Balance, which is its mirror) has to leave
-     the payment ledger telling the truth, because the dashboard, receipts
-     and account balances all read from it. Raising the figure records a
-     payment for the difference; lowering it reverses the most recent
-     payments until the totals agree again. */
-  /* Changing the schedule shape in the cell. The deal's total is what the
-     user already agreed with the client, so it is held constant and the
-     instalments are rebuilt underneath it; anything already received stays
-     recorded and is re-allocated across the new instalments. */
-  var IG_STRUCT_COUNT = { deposit: 2, split: 2, custom: 2, monthly: 3, part: 2 };
-  function igApplyStructure(doc, item, label) {
-    var type = normalizeDealType(label), now = normalizeDealType(item.dealType);
-    if (type === now && (type === "one" || Array.isArray(item.parts))) return true;
-    var gross = grossOf(item);
-    if (type === "one") {
-      item.gross = gross; item.paid = paidOf(item); item.amount = roundMoney(Math.max(0, gross - item.paid));
-      if (Array.isArray(item.parts) && item.parts.length && !item.expectedBy) item.expectedBy = item.parts[0].dueDate || "";
-      ["dealType", "parts", "partLabel", "partCount", "partEvery", "partAmount", "depositAmount"].forEach(function (k) { delete item[k]; });
-      return true;
-    }
-    var count = IG_STRUCT_COUNT[type] || 2;
-    // monthly and per-part price each instalment, so the unit is the share.
-    var unit = type === "monthly" || type === "part" ? roundMoney(gross / count) : gross;
-    var values = { dealType: type, amount: unit, partCount: count, startDate: item.expectedBy || todayISO(), partEvery: item.partEvery || 7 };
-    if (type === "custom") { values.partAmount_0 = roundMoney(gross / 2); values.partAmount_1 = roundMoney(gross - roundMoney(gross / 2)); }
-    var parts = dealPartsFor(Object.assign({}, item, { parts: null }), values);
-    item.dealType = type;
-    item.partLabel = type === "monthly" ? "months" : "parts";
-    item.parts = parts;
-    item.partCount = parts.length;
-    item.partEvery = values.partEvery;
-    item.partAmount = parts[0] ? num(parts[0].amount) : 0;
-    item.depositAmount = type === "deposit" ? num(parts[0] && parts[0].amount) : 0;
-    rebuildDealParts(doc, item);
-    return true;
-  }
-
-  function igSetPaidTotal(doc, item, target) {
-    var gross = grossOf(item);
-    target = Math.max(0, Math.min(roundMoney(target), gross));
-    if (Math.abs(target - paidOf(item)) < 0.5) return true;
-    if (target > paidOf(item)) {
-      return !!applyPayment(doc, item.id, { amount: roundMoney(target - paidOf(item)), date: todayISO(), accountId: "", note: "Entered in sheet" });
-    }
-    var newestFirst = paymentsFor(doc, item.id).slice().sort(function (a, b) {
-      return String(b.createdAt || b.date || "").localeCompare(String(a.createdAt || a.date || ""));
-    });
-    for (var i = 0; i < newestFirst.length && paidOf(item) > target + 0.5; i++) reversePayment(doc, newestFirst[i].id);
-    if (paidOf(item) > target + 0.5) {
-      // Older records carried a paid figure with no ledger entry behind it.
-      item.paid = roundMoney(target);
-      item.amount = roundMoney(Math.max(0, gross - target));
-      rebuildDealParts(doc, item);
-    } else if (paidOf(item) < target - 0.5) {
-      applyPayment(doc, item.id, { amount: roundMoney(target - paidOf(item)), date: todayISO(), accountId: "", note: "Entered in sheet" });
-    }
-    return true;
-  }
-
-  function igMutateField(doc, item, colKey, value) {
-    if (colKey === "client") { item.client = String(value || "").trim(); return true; }
-    if (colKey === "category") { item.category = String(value || "").trim() || "One Time"; return true; }
-    if (colKey === "phone") { item.phone = String(value || "").trim(); return true; }
-    if (colKey === "note") { item.note = String(value || "").trim(); return true; }
-    // Switching currency on a deal that has money against it converts the
-    // figures at the live rate instead of silently re-labelling them; the
-    // receipts in the ledger keep the currency they were taken in.
-    if (colKey === "currency") {
-      var nextCur = String(value || "UGX").toUpperCase(), curNow = String(item.currency || "UGX").toUpperCase();
-      if (nextCur !== "UGX" && nextCur !== "USD") return igFail("Currency is UGX or USD");
-      if (nextCur === curNow) return true;
-      if (dealHasRecordedMoney(item)) {
-        var rate = fxConvert(1, curNow, nextCur);
-        if (!rate) {
-          // No rate to convert with. Never re-label money silently — say what
-          // is about to happen and let the user decide.
-          if (!confirm("There is no live " + curNow + "→" + nextCur + " rate right now.\n\nSwitch this deal to " + nextCur + " and leave the figures exactly as they are?")) {
-            return igFail("Kept in " + curNow + " — no live rate to convert with");
-          }
-          item.currency = nextCur;
-          return true;
-        }
-        if (Array.isArray(item.parts)) item.parts.forEach(function (p) {
-          p.amount = roundMoney(num(p.amount) * rate);
-          p.paid = roundMoney(num(p.paid) * rate);
-        });
-        item.gross = roundMoney(grossOf(item) * (Array.isArray(item.parts) && item.parts.length ? 1 : rate));
-        item.paid = roundMoney(paidOf(item) * rate);
-        item.amount = roundMoney(Math.max(0, grossOf(item) - item.paid));
-      }
-      item.currency = nextCur;
-      return true;
-    }
-    // A new total on a schedule rescales its parts in proportion, never
-    // below what a part has already taken in.
-    if (colKey === "gross") {
-      var g = roundMoney(value);
-      if (g <= 0) return igFail("Enter the deal total");
-      var paidNow = paidOf(item);
-      if (g < paidNow - 0.5) return igFail("That total is below the " + money(paidNow, String(item.currency || "UGX").toUpperCase()) + " already received");
-      if (Array.isArray(item.parts) && item.parts.length) {
-        var oldGross = grossOf(item) || g, scale = g / oldGross;
-        item.parts.forEach(function (p) { p.amount = roundMoney(Math.max(num(p.paid), num(p.amount) * scale)); });
-        rebuildDealParts(doc, item);
-        return true;
-      }
-      item.gross = g; item.paid = paidNow; item.amount = roundMoney(Math.max(0, g - paidNow));
-      if (!isCancelled(item.status)) item.status = paidNow <= 0 ? "Pending" : paidNow >= g - 0.5 ? "Paid" : "Part Paid";
-      return true;
-    }
-    // The date on the row is the next unpaid instalment's date, so that is
-    // the one a new date lands on.
-    if (colKey === "due") {
-      if (Array.isArray(item.parts) && item.parts.length) {
-        var target = item.parts.filter(function (p) { return num(p.paid) < num(p.amount) - 0.5; })[0] || item.parts[0];
-        target.dueDate = value;
-        rebuildDealParts(doc, item);
-      } else item.expectedBy = value;
-      return true;
-    }
-    // Re-dating the last receipt in the cell, rather than in a form behind it.
-    if (colKey === "lastPaid") {
-      var log = paymentsFor(doc, item.id);
-      if (!log.length) { item.paidOn = value || ""; return true; }
-      var newestPay = log.slice().sort(function (a, b) {
-        return String(b.createdAt || b.date || "").localeCompare(String(a.createdAt || a.date || ""));
-      })[0];
-      if (newestPay) newestPay.date = value || newestPay.date;
-      item.paidOn = value || item.paidOn;
-      return true;
-    }
-    // Money on a cancelled deal reopens it — recording a receipt against
-    // something cancelled is the clearest possible statement that it isn't.
-    if (colKey === "paid") {
-      if (isCancelled(item.status) && roundMoney(value) > 0) item.status = "Pending";
-      return igSetPaidTotal(doc, item, value);
-    }
-    // Balance is Paid seen from the other side: say what is still owed and
-    // the received figure follows.
-    if (colKey === "balance") {
-      var wantPaid = grossOf(item) - roundMoney(value);
-      if (isCancelled(item.status) && wantPaid > 0) item.status = "Pending";
-      return igSetPaidTotal(doc, item, wantPaid);
-    }
-    // The shape of the schedule is a cell like any other: pick a different
-    // one and the instalments are rebuilt around the same total.
-    if (colKey === "structure") return igApplyStructure(doc, item, value);
-    if (colKey === "status") {
-      if (/cancel/i.test(String(value))) { item.status = "Cancelled"; return true; }
-      // Reopening hands the status back to whatever the money says it is.
-      item.status = paidOf(item) <= 0 ? "Pending" : outstandingOf(item) > 0 ? "Part Paid" : "Paid";
-      return true;
-    }
-    return false;
-  }
-  // Any row id resolves to the deal that owns it; an instalment row also
-  // resolves to its part.
-  function igOwnerId(rowId) {
-    var row = gridState.byId[rowId];
-    return row && row.parentId ? row.parentId : rowId;
-  }
-  function igPartOf(item, partId) {
-    return (Array.isArray(item.parts) ? item.parts : []).filter(function (p) { return String(p.id) === String(partId); })[0] || null;
-  }
-  /* Money against an instalment. Receipts are allocated in order — part 1
-     first — so "part 3 has taken X" means everything before it is settled
-     and X has landed on it. Saying so in the cell sets the deal's received
-     total to exactly that, which the ledger then re-allocates. */
-  function igSetPartPaid(doc, item, part, value) {
-    var parts = Array.isArray(item.parts) ? item.parts : [];
-    var idx = parts.map(function (p) { return String(p.id); }).indexOf(String(part.id));
-    if (idx < 0) return igFail("That instalment is no longer there");
-    var before = 0;
-    for (var i = 0; i < idx; i++) before += num(parts[i].amount);
-    var want = Math.max(0, Math.min(roundMoney(value), num(part.amount)));
-    return igSetPaidTotal(doc, item, roundMoney(before + want));
-  }
-  function igMutatePart(doc, item, partId, colKey, value) {
-    var part = igPartOf(item, partId);
-    if (!part) return igFail("That instalment is no longer there");
-    if (colKey === "client") { part.label = String(value || "").trim() || part.label; return true; }
-    if (colKey === "gross") {
-      var amount = roundMoney(value);
-      if (amount <= 0) return igFail("Enter the instalment amount");
-      if (amount < num(part.paid) - 0.5) return igFail("That is below the " + money(num(part.paid), String(item.currency || "UGX").toUpperCase()) + " already taken on this instalment");
-      part.amount = amount;
-      rebuildDealParts(doc, item);
-      return true;
-    }
-    if (colKey === "due") { part.dueDate = value || ""; rebuildDealParts(doc, item); return true; }
-    if (colKey === "paid") return igSetPartPaid(doc, item, part, value);
-    if (colKey === "balance") return igSetPartPaid(doc, item, part, num(part.amount) - roundMoney(value));
-    if (colKey === "status") {
-      if (/paid/i.test(String(value)) && !/part/i.test(String(value))) return igSetPartPaid(doc, item, part, num(part.amount));
-      if (/pending/i.test(String(value))) return igSetPartPaid(doc, item, part, 0);
-      return igFail("An instalment is Pending or Paid");
-    }
-    if (colKey === "lastPaid") { part.paidOn = value || ""; return true; }
-    // Everything else on an instalment row belongs to the deal it sits under.
-    return igMutateField(doc, item, colKey, value);
-  }
-
-  /* Editing a cell used to rebuild the entire screen: at 60 deals with a
-     12-payment schedule each — 420 rows, 4,600 cells — that was a third of a
-     second per keystroke on a laptop and near a second on a phone. An edit
-     now rewrites only the rows of the deal it touched, plus the strips that
-     read from totals, and leaves the row order alone: rows stop jumping
-     around underneath the cursor mid-edit, exactly as they don't in Sheets.
-     The order refreshes on the next filter, sort, or reload. */
-  var igSuppressRender = false;
-  function igIndexRow(rowEl) {
-    var rid = rowEl.getAttribute("data-row-id");
-    if (!rid) return;
-    gridState.rowEls[rid] = rowEl;
-    var map = {};
-    Array.prototype.slice.call(rowEl.children).forEach(function (cellEl) {
-      map[cellEl.getAttribute("data-col") || "__rownum"] = cellEl;
-    });
-    gridState.cellEls[rid] = map;
-  }
-  function igRowsOfDeal(dealId) {
-    var prefix = String(dealId) + "::";
-    return (gridState.order || []).filter(function (id) { return String(id) === String(dealId) || String(id).indexOf(prefix) === 0; });
-  }
-  // Returns false when the sheet has to be rebuilt after all (the deal is
-  // gone, or its rows are not on screen).
-  function igPatchDeal(doc, dealId) {
-    var body = document.getElementById("ig-body");
-    if (!body) return false;
-    var oldIds = igRowsOfDeal(dealId);
-    if (!oldIds.length) return false;
-    var firstEl = gridState.rowEls[oldIds[0]];
-    if (!firstEl || !firstEl.parentNode) return false;
-    var item = (doc.followups || []).find(function (x) { return String(x.id) === String(dealId); });
-    if (!item) return false;
-    var at = gridState.order.indexOf(oldIds[0]);
-    var parent = igBuildRow(item, doc, gridState.byId[dealId] ? gridState.byId[dealId].index : at + 1);
-    var parts = Array.isArray(item.parts) ? item.parts : [];
-    parent.hasParts = parts.length > 0;
-    parent.collapsed = parent.hasParts && igCollapsed(item.id);
-    var fresh = [parent];
-    if (parent.hasParts && !parent.collapsed) {
-      parts.forEach(function (part, pi) { fresh.push(igBuildPartRow(parent, item, part, doc, pi + 1, parts.length)); });
-    }
-    var holder = document.createElement("div");
-    holder.innerHTML = fresh.map(igRowHTML).join("");
-    var newEls = Array.prototype.slice.call(holder.children);
-    newEls.forEach(function (el) { firstEl.parentNode.insertBefore(el, firstEl); });
-    oldIds.forEach(function (id) {
-      var el = gridState.rowEls[id];
-      if (el && el.parentNode) el.parentNode.removeChild(el);
-      delete gridState.rowEls[id];
-      delete gridState.cellEls[id];
-      delete gridState.byId[id];
-    });
-    newEls.forEach(igIndexRow);
-    gridState.order.splice(at, oldIds.length);
-    gridState.rows.splice(at, oldIds.length);
-    fresh.forEach(function (r, i) {
-      gridState.order.splice(at + i, 0, r.id);
-      gridState.rows.splice(at + i, 0, r);
-      gridState.byId[r.id] = r;
-    });
-    // A selection sitting on an instalment that no longer exists moves to
-    // the deal itself rather than vanishing.
-    if (gridState.active && !gridState.byId[gridState.active.rowId]) gridState.active = { rowId: dealId, col: gridState.active.col };
-    if (gridState.anchor && !gridState.byId[gridState.anchor.rowId]) gridState.anchor = gridState.active;
-    return true;
-  }
-  function igPatchChrome(doc) {
-    if (!root) return;
-    var stats = collectionStats(doc);
-    var summary = root.querySelector(".ig-summary");
-    if (summary) summary.outerHTML = igSummaryHTML(stats, igPeriodStats(doc));
-    var quick = root.querySelector(".ig-quickviews");
-    if (quick) quick.outerHTML = igQuickViewsHTML(stats);
-    var status = root.querySelector(".ig-statusbar");
-    if (status) status.outerHTML = igStatusBarHTML(gridState.filteredCount || 0, (doc.followups || []).length, stats);
-    // Undo availability and the collapse-all direction both live in the
-    // toolbar and both move with an edit — but never rebuild it out from
-    // under someone typing in the search box.
-    var toolbar = root.querySelector(".ig-toolbar");
-    if (toolbar && document.activeElement !== document.getElementById("x97-up-search")) toolbar.outerHTML = igToolbarHTML();
-  }
-  // One write, then a repaint of just what moved.
-  function igWritePatched(mutator, reason, dealIds) {
-    igSuppressRender = true;
-    var ok;
-    try { ok = updateDoc(mutator, reason, true); } finally { igSuppressRender = false; }
-    if (!ok) return false;
-    var doc = readDoc();
-    var whole = false;
-    dealIds.forEach(function (id) { if (!igPatchDeal(doc, id)) whole = true; });
-    if (whole) { scheduleRender(0); return true; }
-    igPatchChrome(doc);
-    igPaintActive();
-    igFillEmptyRows();
-    return true;
-  }
-
-  function igDealsOf(rowIds) {
-    var seenDeals = {}, out = [];
-    (rowIds || []).forEach(function (rid) {
-      var owner = igOwnerId(rid);
-      if (!seenDeals[owner]) { seenDeals[owner] = true; out.push(owner); }
-    });
-    return out;
-  }
-
-  // Every batched write — fill, clear, paste — goes through the same door as
-  // a typed edit, so an instalment row is written as an instalment.
-  function igWriteRow(doc, byId, rowId, key, value) {
-    var gridRow = gridState.byId[rowId], item = byId[igOwnerId(rowId)];
-    if (!item) return false;
-    return gridRow && gridRow.partId ? igMutatePart(doc, item, gridRow.partId, key, value) : igMutateField(doc, item, key, value);
-  }
-
-  // A refusal should say what it wants, not just "locked". Mutators leave
-  // their reason here and the caller shows it.
-  function igFail(message) { gridState.editError = message || ""; return false; }
-  function igEditErrorFor(colKey) {
-    var msg = gridState.editError;
-    gridState.editError = "";
-    return msg || (colKey === "gross" ? "Enter the deal total" : "That value was not accepted");
-  }
-  function igApplyCellValue(rowId, colKey, value) {
-    var applied = true;
-    gridState.editError = "";
-    var row = gridState.byId[rowId], ownerId = igOwnerId(rowId), partId = row && row.partId;
-    igWritePatched(function (doc) {
-      var item = (doc.followups || []).find(function (x) { return String(x.id) === String(ownerId); });
-      if (!item) { applied = false; return; }
-      applied = partId ? igMutatePart(doc, item, partId, colKey, value) : igMutateField(doc, item, colKey, value);
-    }, "grid-edit", [ownerId]);
-    return applied;
-  }
-
-  function igPushUndo(rowId) {
-    var doc = readDoc(), ownerId = igOwnerId(rowId);
-    var item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(ownerId); });
-    gridState.undoStack.push({ rowId: ownerId, snapshot: item ? clone(item) : null, existed: !!item });
-    if (gridState.undoStack.length > 50) gridState.undoStack.shift();
-    gridState.redoStack = [];
-  }
-  function igRestoreSnapshot(entry) {
-    updateDoc(function (d) {
-      var idx = d.followups.findIndex(function (x) { return String(x.id) === String(entry.rowId); });
-      if (entry.existed) { if (idx >= 0) d.followups[idx] = entry.snapshot; else d.followups.unshift(entry.snapshot); }
-      else if (idx >= 0) d.followups.splice(idx, 1);
-    }, "grid-undo", true);
-  }
-  function igUndo() {
-    var entry = gridState.undoStack.pop();
-    if (!entry) return;
-    var doc = readDoc(), i = doc.followups.findIndex(function (x) { return String(x.id) === String(entry.rowId); });
-    gridState.redoStack.push({ rowId: entry.rowId, snapshot: i >= 0 ? clone(doc.followups[i]) : null, existed: i >= 0 });
-    igRestoreSnapshot(entry);
-  }
-  function igRedo() {
-    var entry = gridState.redoStack.pop();
-    if (!entry) return;
-    igRestoreSnapshot(entry);
-  }
-
-  function igBeginEdit(rowId, colKey) {
-    var row = gridState.byId[rowId], col = igColDef(colKey);
-    if (!row || !col || !igEditable(col, row)) return;
-    if (gridState.editing) igCommitEdit();
-    var cell = gridState.cellEls[rowId] && gridState.cellEls[rowId][colKey];
-    if (!cell) return;
-    gridState.editing = { rowId: rowId, col: colKey };
-    if (colKey === "currency") {
-      var current = igRawValue(row, colKey);
-      cell.classList.add("ig-editing");
-      cell.innerHTML = '<div class="ig-cur-toggle">' +
-        '<button type="button" class="ig-cur-opt ig-cur-ugx' + (current === "UGX" ? " on" : "") + '" data-cur="UGX">UGX</button>' +
-        '<button type="button" class="ig-cur-opt ig-cur-usd' + (current === "USD" ? " on" : "") + '" data-cur="USD">USD</button>' +
-      '</div>';
-      Array.prototype.slice.call(cell.querySelectorAll(".ig-cur-opt")).forEach(function (btn) {
-        btn.addEventListener("click", function (e) { e.stopPropagation(); igCommitCurrencyChoice(rowId, btn.getAttribute("data-cur")); });
-        btn.addEventListener("keydown", function (e) { if (e.key === "Escape") { e.preventDefault(); igCancelEdit(); } });
-      });
-      var firstOpt = cell.querySelector(".ig-cur-opt");
-      if (firstOpt) setTimeout(function () { firstOpt.focus(); }, 0);
-      return;
-    }
-    var value = igRawValue(row, colKey), inputHTML;
-    if (colKey === "status" && row.part) {
-      // An instalment is settled or it is not; there is no cancelling one
-      // half of a deal.
-      inputHTML = '<select class="ig-edit-input">' +
-        option("Pending", "Pending", row.status === "Pending" ? "Pending" : "") +
-        option("Paid", "Paid", row.status === "Paid" ? "Paid" : "") +
-      '</select>';
-    }
-    else if (colKey === "status") {
-      // Paid and Part Paid are what the money says, so they are shown but
-      // not choosable; cancelling and reopening are the real decisions.
-      inputHTML = '<select class="ig-edit-input">' +
-        (row.status === "Paid" || row.status === "Part Paid" ? '<option value="' + attr(row.status) + '" selected>' + esc(row.status) + '</option>' : "") +
-        option("Pending", "Pending", row.status === "Pending" ? "Pending" : "") +
-        option("Cancelled", "Cancelled", row.status === "Cancelled" ? "Cancelled" : "") +
-      '</select>';
-    }
-    else if (colKey === "structure") {
-      inputHTML = '<select class="ig-edit-input">' + Object.keys(DEAL_TYPES).map(function (key) {
-        return option(DEAL_TYPES[key], DEAL_TYPES[key], value);
-      }).join("") + '</select>';
-    }
-    else if (col.type === "date") inputHTML = '<input class="ig-edit-input" type="date" value="' + attr(value) + '">';
-    else if (colKey === "gross" || colKey === "paid" || colKey === "balance") inputHTML = '<input class="ig-edit-input ig-edit-num" type="number" inputmode="decimal" min="0" step="1" value="' + attr(roundMoney(value)) + '">';
-    else if (colKey === "phone") inputHTML = '<input class="ig-edit-input" type="text" inputmode="tel" value="' + attr(value) + '">';
-    else if (colKey === "client") inputHTML = '<input class="ig-edit-input" type="text" list="ig-client-list" value="' + attr(value) + '">';
-    else inputHTML = '<input class="ig-edit-input" type="text" value="' + attr(value) + '">';
-    cell.classList.add("ig-editing");
-    cell.innerHTML = inputHTML;
-    var input = cell.querySelector(".ig-edit-input");
-    input.setAttribute("enterkeyhint", gridState.quickEntry === rowId ? "next" : "done");
-    input.addEventListener("keydown", igEditKeydown);
-    input.addEventListener("blur", igEditBlur);
-    // Picking from a dropdown is the decision — it should not also need an
-    // Enter or a tap elsewhere to stick.
-    if (input.tagName === "SELECT") input.addEventListener("change", function () { igCommitEdit(); });
-    setTimeout(function () {
-      input.focus();
-      if (input.select) input.select();
-      // The keyboard animates in after focus; check again once it has.
-      setTimeout(function () { if (gridState.editing) igScrollCellIntoView(gridState.editing.rowId, gridState.editing.col); }, 320);
-    }, 0);
-  }
-  function igEditKeydown(e) {
-    // These keys belong to the editor. Without stopping them here they also
-    // reach the grid's own key handler, which — seeing the edit already
-    // committed — would open a second editor on the cell below and let it
-    // write its stale text back when the re-render tore it down.
-    if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); igCommitEdit(); igMoveAfterCommit(e.shiftKey ? "up" : "auto"); }
-    else if (e.key === "Tab") { e.preventDefault(); e.stopPropagation(); igCommitEdit(); igMoveAfterCommit(e.shiftKey ? "left" : "right"); }
-    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); igCancelEdit(); }
-  }
-  function igEditBlur(e) {
-    // An input the render already threw away has nothing to say.
-    if (e && e.target && !e.target.isConnected) { gridState.editing = null; return; }
-    if (gridState.editing) igCommitEdit();
-  }
-  function igCancelEdit() {
-    if (!gridState.editing) return;
-    var e = gridState.editing; gridState.editing = null;
-    igRepaintCell(e.rowId, e.col);
-    igFlushPendingExternalRender();
-  }
-  function igCommitEdit() {
-    if (!gridState.editing) return;
-    var e = gridState.editing, rowId = e.rowId, colKey = e.col;
-    var cell = gridState.cellEls[rowId] && gridState.cellEls[rowId][colKey];
-    var input = cell && cell.querySelector(".ig-edit-input");
-    // Some editors are not a single input — the currency picker is a pair of
-    // buttons that commits on its own. With nothing to read there is nothing
-    // to commit, and writing an empty value here would blank the cell.
-    if (!input) { gridState.editing = null; igRepaintCell(rowId, colKey); igFlushPendingExternalRender(); return; }
-    // Same rule for a detached editor: it holds a value from before the last
-    // render and must never be written back.
-    if (!input.isConnected) { gridState.editing = null; return; }
-    var value = input.value;
-    gridState.editing = null;
-    var row = gridState.byId[rowId], col = igColDef(colKey);
-    if (!row || !col) return;
-    if (String(value).trim() === String(igRawValue(row, colKey)).trim()) { igRepaintCell(rowId, colKey); igFlushPendingExternalRender(); return; }
-    igPushUndo(rowId);
-    var ok = igApplyCellValue(rowId, colKey, value);
-    if (!ok) { gridState.undoStack.pop(); igRepaintCell(rowId, colKey); toast(igEditErrorFor(colKey), "error"); }
-  }
-  function igCommitCurrencyChoice(rowId, value) {
-    var row = gridState.byId[rowId];
-    gridState.editing = null;
-    if (!row || String(value) === String(row.currency)) { igRepaintCell(rowId, "currency"); igFlushPendingExternalRender(); return; }
-    igPushUndo(rowId);
-    var ok = igApplyCellValue(rowId, "currency", value);
-    if (!ok) { gridState.undoStack.pop(); igRepaintCell(rowId, "currency"); toast(igEditErrorFor("currency"), "error"); }
-  }
-
-  function igActivateCell(rowId, colKey, wantsEdit) {
-    var row = gridState.byId[rowId], col = igColDef(colKey);
-    if (!row || !col) return;
-    igSetActive(rowId, colKey);
-    if (wantsEdit && igEditable(col, row)) igBeginEdit(rowId, colKey);
-  }
-
-  function igAddRow() {
-    var doc = readDoc();
-    var categories = (doc.settings && doc.settings.categories) || [];
-    var id = uid("fu");
-    // A blank row has no client and no date, so a narrow view or an active
-    // search would file it somewhere the user cannot see. Open the view up
-    // enough that the row they just asked for is the row they land on.
-    if (["all", "open", "attention", "unscheduled"].indexOf(state.upcoming.quick) < 0) state.upcoming.quick = "open";
-    if (state.upcoming.search) state.upcoming.search = "";
-    if (state.upcoming.month !== "all") state.upcoming.month = "all";
-    savePrefs();
-    igPushUndo(id);
-    updateDoc(function (d) {
-      d.followups.unshift({ id: id, client: "", category: categories[0] || "One Time", gross: 0, paid: 0, amount: 0, currency: "UGX", status: "Pending", expectedBy: "", phone: "", note: "" });
-    }, "grid-add-row", true);
-    gridState.quickEntry = id;
-    gridState.pendingFocusRow = id;
-  }
-  function igDeleteRow(rowId) {
-    var gridRow = gridState.byId[rowId];
-    var doc = readDoc(), item = doc && (doc.followups || []).find(function (x) { return String(x.id) === String(igOwnerId(rowId)); });
-    if (!item) return;
-    // On an instalment row, "delete row" means drop that instalment — the
-    // deal keeps going with one fewer payment in its schedule.
-    if (gridRow && gridRow.partId) {
-      var part = igPartOf(item, gridRow.partId);
-      if (!part) return;
-      if (num(part.paid) > 0) { toast("That instalment has money on it", "error"); return; }
-      if ((item.parts || []).length <= 1) { toast("A schedule needs at least one instalment", "error"); return; }
-      if (!confirm('Remove "' + (part.label || "this instalment") + '" from the schedule?')) return;
-      igPushUndo(rowId);
-      updateDoc(function (d) {
-        var target = (d.followups || []).find(function (x) { return String(x.id) === String(item.id); });
-        if (!target) return;
-        target.parts = (target.parts || []).filter(function (p) { return String(p.id) !== String(gridRow.partId); });
-        target.partCount = target.parts.length;
-        rebuildDealParts(d, target);
-      }, "grid-delete-part", true);
-      if (gridState.active && gridState.active.rowId === rowId) gridState.active = null;
-      toast("Instalment removed", "success");
-      return;
-    }
-    if (dealHasRecordedMoney(item)) { toast("A deal with recorded money cannot be deleted", "error"); return; }
-    if (!confirm('Delete this row? "' + (item.client || "Untitled") + '"')) return;
-    igPushUndo(rowId);
-    updateDoc(function (d) { d.followups = d.followups.filter(function (x) { return String(x.id) !== String(rowId); }); }, "grid-delete-row", true);
-    if (gridState.active && gridState.active.rowId === rowId) gridState.active = null;
-    toast("Row deleted", "success");
-  }
-
-  /* Fill handle — drag the active cell's corner down (or up) a column to
-     copy its value onto every cell it passes over, exactly like Sheets. One
-     batched write on release, not one per row crossed. */
-  function igFillPreview(fromIndex, toIndex, colKey) {
-    igClearFillPreview();
-    var lo = Math.min(fromIndex, toIndex), hi = Math.max(fromIndex, toIndex);
-    for (var i = lo; i <= hi; i++) {
-      var rid = gridState.order[i];
-      var el = rid && gridState.cellEls[rid] && gridState.cellEls[rid][colKey];
-      if (el) { el.classList.add("ig-fill-preview"); gridState.fillPreviewEls.push(el); }
-    }
-  }
-  function igClearFillPreview() {
-    (gridState.fillPreviewEls || []).forEach(function (el) { el.classList.remove("ig-fill-preview"); });
-    gridState.fillPreviewEls = [];
-  }
-  function igCommitFill(startRowId, startIndex, endIndex, colKey, sourceValue) {
-    var lo = Math.min(startIndex, endIndex), hi = Math.max(startIndex, endIndex);
-    if (lo === hi) return;
-    var col = igColDef(colKey), touched = [];
-    for (var i = lo; i <= hi; i++) {
-      var rid = gridState.order[i];
-      if (!rid || String(rid) === String(startRowId)) continue;
-      var row = gridState.byId[rid];
-      if (row && igEditable(col, row)) touched.push(rid);
-    }
-    if (!touched.length) return;
-    touched.forEach(function (rid) { igPushUndo(rid); });
-    igWritePatched(function (doc) {
-      var byId = {}; (doc.followups || []).forEach(function (it) { byId[it.id] = it; });
-      touched.forEach(function (rid) { igWriteRow(doc, byId, rid, colKey, sourceValue); });
-    }, "grid-fill", igDealsOf(touched));
-    toast("Filled " + touched.length + " cell" + (touched.length === 1 ? "" : "s"), "success");
-  }
-  function igStartFillDrag(e) {
-    if (!gridState.active || gridState.editing) return;
-    var startRowId = gridState.active.rowId, colKey = gridState.active.col;
-    var col = igColDef(colKey), row = gridState.byId[startRowId];
-    if (!col || !row || !igEditable(col, row)) return;
-    var sourceValue = igRawValue(row, colKey);
-    var startIndex = gridState.order.indexOf(startRowId);
-    if (startIndex < 0) return;
-    var lastTarget = startIndex, moved = false;
-    document.body.classList.add("ig-filling");
-    function onMove(ev) {
-      var el = document.elementFromPoint(ev.clientX, ev.clientY);
-      var cell = el && el.closest && el.closest('.ig-cell[data-col="' + colKey + '"]');
-      if (!cell) return;
-      var rid = cell.getAttribute("data-row"), idx = gridState.order.indexOf(rid);
-      if (idx < 0) return;
-      moved = true; lastTarget = idx;
-      igFillPreview(startIndex, idx, colKey);
-    }
-    function onUp() {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.body.classList.remove("ig-filling");
-      igClearFillPreview();
-      if (moved) igCommitFill(startRowId, startIndex, lastTarget, colKey, sourceValue);
-    }
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-  }
-
-  function igClearableKeys() { return { category: 1, phone: 1, note: 1, due: 1 }; }
-  function igClearSelectionValues() {
-    var bounds = igRangeBounds();
-    if (!bounds) return;
-    var clearable = igClearableKeys(), plan = [], seen = {};
-    for (var c = bounds.c0; c <= bounds.c1; c++) {
-      var key = bounds.cols[c];
-      if (!clearable[key]) continue;
-      for (var r = bounds.r0; r <= bounds.r1; r++) {
-        var rid = gridState.order[r];
-        if (!gridState.byId[rid]) continue;
-        plan.push({ rowId: rid, key: key }); seen[rid] = true;
-      }
-    }
-    if (!plan.length) return;
-    Object.keys(seen).forEach(function (rid) { igPushUndo(rid); });
-    igWritePatched(function (doc) {
-      var byId = {}; (doc.followups || []).forEach(function (it) { byId[it.id] = it; });
-      plan.forEach(function (p) { igWriteRow(doc, byId, p.rowId, p.key, ""); });
-    }, "grid-clear", igDealsOf(Object.keys(seen)));
-  }
-
-  function igCopySelection() {
-    var bounds = igRangeBounds();
-    if (!bounds) return;
-    var lines = [];
-    for (var r = bounds.r0; r <= bounds.r1; r++) {
-      var row = gridState.byId[gridState.order[r]], vals = [];
-      for (var c = bounds.c0; c <= bounds.c1; c++) vals.push(igCellText(igColDef(bounds.cols[c]), row));
-      lines.push(vals.join("\t"));
-    }
-    var text = lines.join("\n");
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { toast("Copied", "success"); }, function () { igFallbackCopy(text); });
-    else igFallbackCopy(text);
-  }
-  function igFallbackCopy(text) {
-    var ta = document.createElement("textarea");
-    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
-    document.body.appendChild(ta); ta.select();
-    try { document.execCommand("copy"); toast("Copied", "success"); } catch (_) {}
-    document.body.removeChild(ta);
-  }
-  function igPasteClipboard() {
-    if (!gridState.active) return;
-    if (!navigator.clipboard || !navigator.clipboard.readText) { toast("Use your device's paste gesture on the field", "error"); return; }
-    navigator.clipboard.readText().then(function (text) {
-      if (!text) return;
-      var lines = text.replace(/\r/g, "").split("\n"); if (lines.length && lines[lines.length - 1] === "") lines.pop();
-      var cols = igVisibleCols().map(function (c) { return c.key; });
-      var ci0 = cols.indexOf(gridState.active.col), ri0 = gridState.order.indexOf(gridState.active.rowId), plan = [], touched = {};
-      lines.forEach(function (line, r) {
-        var rid = gridState.order[ri0 + r];
-        if (!rid) return;
-        line.split("\t").forEach(function (val, c) {
-          var key = cols[ci0 + c];
-          if (!key) return;
-          var col = igColDef(key), row = gridState.byId[rid];
-          if (!col || !row || !igEditable(col, row)) return;
-          touched[rid] = true;
-          plan.push({ rowId: rid, key: key, value: val });
-        });
-      });
-      if (!plan.length) return;
-      Object.keys(touched).forEach(function (rid) { igPushUndo(rid); });
-      igWritePatched(function (doc) {
-        var byId = {}; (doc.followups || []).forEach(function (it) { byId[it.id] = it; });
-        plan.forEach(function (p) { igWriteRow(doc, byId, p.rowId, p.key, p.value); });
-      }, "grid-paste", igDealsOf(Object.keys(touched)));
-      toast("Pasted " + plan.length + " cell" + (plan.length === 1 ? "" : "s"), "success");
-    }, function () { toast("Clipboard permission was blocked", "error"); });
-  }
-
-  function igCloseMenu() {
-    if (gridState.menuEl) { gridState.menuEl.remove(); gridState.menuEl = null; }
-    document.removeEventListener("mousedown", igMenuOutsideClick, true);
-  }
-  function igMenuOutsideClick(e) { if (gridState.menuEl && !gridState.menuEl.contains(e.target)) igCloseMenu(); }
-  function igPlaceMenu(menu, x, y) {
-    document.body.appendChild(menu);
-    var vw = window.innerWidth, vh = window.innerHeight, mw = menu.offsetWidth || 180, mh = menu.offsetHeight || 160;
-    menu.style.left = Math.max(6, Math.min(x, vw - mw - 6)) + "px";
-    menu.style.top = Math.max(6, Math.min(y, vh - mh - 6)) + "px";
-    gridState.menuEl = menu;
-    setTimeout(function () { document.addEventListener("mousedown", igMenuOutsideClick, true); }, 0);
-  }
-  function igOpenCellMenuAt(x, y, rowId) {
-    igCloseMenu();
-    var row = gridState.byId[rowId];
-    if (!row) return;
-    var menu = document.createElement("div");
-    menu.className = "ig-menu";
-    // Right-clicking a row that's part of the current bulk selection acts
-    // on the whole selection, not just the row under the pointer.
-    var bulk = gridState.bulkMode && gridState.bulkRows[rowId];
-    var items = bulk
-      ? [{ label: "Delete " + igBulkCount() + " rows", action: "bulk-delete", danger: true }, { label: "Clear selection", action: "bulk-cancel" }]
-      // Nothing here opens a detail sheet: every figure this menu used to
-      // hide behind a form is a cell on the row itself.
-      : [
-        { label: "Copy", action: "copy" }, { label: "Cut", action: "cut" }, { label: "Paste", action: "paste" },
-        { label: "Clear", action: "clear" },
-        { label: row.part ? "Add instalment below" : "Add instalment", action: "add-part" },
-        { label: row.part ? "Delete instalment" : "Delete row", action: "delete", danger: !row.locked, disabled: row.locked }
-      ];
-    menu.innerHTML = items.map(function (it) { return '<button class="ig-menu-item' + (it.danger ? " danger" : "") + '" data-menu="' + it.action + '"' + (it.disabled ? " disabled" : "") + '>' + esc(it.label) + '</button>'; }).join("");
-    menu.addEventListener("click", function (e) {
-      var btn = e.target.closest && e.target.closest(".ig-menu-item");
-      if (!btn) return;
-      var act = btn.getAttribute("data-menu"); igCloseMenu();
-      if (act === "copy") igCopySelection();
-      else if (act === "cut") { igCopySelection(); igClearSelectionValues(); }
-      else if (act === "paste") igPasteClipboard();
-      else if (act === "clear") igClearSelectionValues();
-      else if (act === "add-part") igAddPart(row.id);
-      else if (act === "delete") igDeleteRow(row.id);
-      else if (act === "bulk-delete") igDeleteBulkRows();
-      else if (act === "bulk-cancel") igSetBulkMode(false);
-    });
-    igPlaceMenu(menu, x, y);
-  }
-  function igOpenCellMenu(cellEl) {
-    var rect = cellEl.getBoundingClientRect();
-    var rowId = cellEl.getAttribute("data-row") || cellEl.getAttribute("data-rownum");
-    igOpenCellMenuAt(rect.left, rect.bottom, rowId);
-  }
-
-  /* The column menu — Sheets' header dropdown. It is also the whole
-     column toolkit on a phone, where there is no room for a drag and no
-     hover to reveal anything: sort, move, freeze, hide and fit all live
-     here so a touch user can reshape the sheet with one thumb. */
-  function igSortModeFor(key, dir) {
-    if (key === "client") return "client";
-    if (key === "gross" || key === "balance") return dir === "asc" ? "amountAsc" : "amountDesc";
-    if (key === "due") return dir === "asc" ? "dateAsc" : "dateDesc";
-    return null;
-  }
-  function igOpenColMenu(key, x, y) {
-    igCloseMenu();
-    var col = igColDef(key);
-    if (!col) return;
-    var visible = igVisibleCols(), idx = visible.map(function (c) { return c.key; }).indexOf(key);
-    if (idx < 0) return;
-    var frozen = igFreezeCount(), sortable = !!igSortModeFor(key, "asc");
-    var items = [];
-    if (sortable) {
-      var asc = col.type === "money" || col.type === "date" ? "Sort smallest first" : "Sort A → Z";
-      var desc = col.type === "money" || col.type === "date" ? "Sort largest first" : "Sort Z → A";
-      if (col.type === "date") { asc = "Sort earliest first"; desc = "Sort latest first"; }
-      items.push({ label: asc, action: "sort-asc" }, { label: desc, action: "sort-desc" });
-    }
-    items.push({ label: "Move left", action: "move-left", disabled: idx === 0 });
-    items.push({ label: "Move right", action: "move-right", disabled: idx === visible.length - 1 });
-    items.push(frozen === idx + 1
-      ? { label: "Unfreeze columns", action: "freeze-none" }
-      : { label: idx === 0 ? "Freeze this column" : "Freeze up to here", action: "freeze-here" });
-    items.push({ label: "Fit to content", action: "autofit" });
-    items.push({ label: "Reset width", action: "reset-width" });
-    items.push({ label: "Hide column", action: "hide", disabled: visible.length <= 1 });
-    var menu = document.createElement("div");
-    menu.className = "ig-menu";
-    menu.innerHTML = items.map(function (it) { return '<button class="ig-menu-item" data-menu="' + it.action + '"' + (it.disabled ? " disabled" : "") + '>' + esc(it.label) + '</button>'; }).join("");
-    menu.addEventListener("click", function (e) {
-      var btn = e.target.closest && e.target.closest(".ig-menu-item");
-      if (!btn) return;
-      var act = btn.getAttribute("data-menu"); igCloseMenu();
-      var inner = document.getElementById("ig-grid-inner");
-      if (act === "sort-asc" || act === "sort-desc") {
-        var mode = igSortModeFor(key, act === "sort-asc" ? "asc" : "desc");
-        if (mode) { state.upcoming.sort = mode; savePrefs(); scheduleRender(0); }
-      } else if (act === "move-left") { if (igMoveColumn(key, idx - 1)) scheduleRender(0); }
-      else if (act === "move-right") { if (igMoveColumn(key, idx + 1)) scheduleRender(0); }
-      else if (act === "freeze-here") { state.upcoming.gridFreeze = idx + 1; savePrefs(); scheduleRender(0); }
-      else if (act === "freeze-none") { state.upcoming.gridFreeze = 0; savePrefs(); scheduleRender(0); }
-      else if (act === "autofit") { if (inner) igAutofitColumn(key, inner); }
-      else if (act === "reset-width") { delete gridState.widths[key]; igSavePersistedWidths(); if (inner) igApplyLayout(inner); }
-      else if (act === "hide") { gridState.hidden[key] = true; igSavePersistedHidden(); scheduleRender(0); }
-    });
-    igPlaceMenu(menu, x, y);
-  }
-  /* One place that spells out the vocabulary, for anyone who lands on the
-     sheet without having watched it get simplified. */
-  function igOpenLegend(x, y) {
-    igCloseMenu();
-    var pop = document.createElement("div");
-    pop.className = "ig-menu ig-legend-pop";
-    pop.innerHTML =
-      '<div class="ig-legend-title">Row colour</div>' +
-      '<div class="ig-legend-row"><i class="ig-legend-dot bad"></i>Overdue</div>' +
-      '<div class="ig-legend-row"><i class="ig-legend-dot warn"></i>Due soon</div>' +
-      '<div class="ig-legend-row"><i class="ig-legend-dot good"></i>Settled, or money in</div>' +
-      '<div class="ig-legend-row"><i class="ig-legend-dot muted"></i>Cancelled, or no date</div>';
-    igPlaceMenu(pop, x, y);
-  }
-  function igOpenColMenuFor(headEl) {
-    var rect = headEl.getBoundingClientRect();
-    igOpenColMenu(headEl.getAttribute("data-colhead"), rect.left, rect.bottom);
-  }
-  function igSelectAll() {
-    var allCols = igVisibleCols();
-    if (!gridState.order.length || !allCols.length) return;
-    gridState.anchor = { rowId: gridState.order[0], col: allCols[0].key };
-    gridState.active = { rowId: gridState.order[gridState.order.length - 1], col: allCols[allCols.length - 1].key };
-    igPaintActive();
-  }
-  function igOnClick(e) {
-    if (gridState.suppressClick) { gridState.suppressClick = false; return; }
-    var caret = e.target.closest && e.target.closest(".ig-colmenu");
-    if (caret) {
-      e.preventDefault(); e.stopPropagation();
-      igOpenColMenuFor(caret.closest(".ig-colhead"));
-      return;
-    }
-    var corner = e.target.closest && e.target.closest(".ig-rownum.ig-colhead");
-    if (corner) { igSelectAll(); return; }
-    var group = e.target.closest && e.target.closest(".ig-group");
-    // The collapse chevron sits inside the same row-number cell a bulk
-    // selection click lands on. A modifier held (or bulk mode already on)
-    // means the click is about picking the row, not folding its schedule —
-    // otherwise a Ctrl-click aimed at the row could silently collapse it
-    // instead of selecting it, with nothing on screen explaining why.
-    if (group && !(e.shiftKey || e.ctrlKey || e.metaKey || gridState.bulkMode)) {
-      e.preventDefault(); e.stopPropagation(); igToggleCollapse(group.getAttribute("data-group")); return;
-    }
-    var rownum = e.target.closest && e.target.closest(".ig-rownum:not(.ig-colhead):not(.ig-filler-cell)");
-    if (rownum) {
-      var rid = rownum.getAttribute("data-rownum"), cols = igVisibleCols();
-      // Bulk row selection only applies to a deal's own row.
-      if (rid.indexOf("::") < 0 && (e.shiftKey || e.ctrlKey || e.metaKey || gridState.bulkMode)) {
-        if (e.shiftKey) igExtendBulkRows(rid); else igToggleBulkRow(rid);
-        return;
-      }
-      igClearBulk();
-      // Not yet in bulk mode, but this is still the row a *next* shift-click
-      // would range from — exactly the anchor Sheets remembers from an
-      // ordinary row-header click.
-      gridState.bulkAnchor = rid;
-      if (cols.length) { gridState.anchor = { rowId: rid, col: cols[0].key }; gridState.active = { rowId: rid, col: cols[cols.length - 1].key }; igPaintActive(); }
-      return;
-    }
-    var colhead = e.target.closest && e.target.closest(".ig-colhead:not(.ig-rownum)");
-    if (colhead && !(e.target.closest && e.target.closest(".ig-resize"))) {
-      var key = colhead.getAttribute("data-colhead");
-      if (key && gridState.order.length) { gridState.anchor = { rowId: gridState.order[0], col: key }; gridState.active = { rowId: gridState.order[gridState.order.length - 1], col: key }; igPaintActive(); }
-    }
-  }
-  function igOnDblClick(e) {
-    var cell = e.target.closest && e.target.closest(".ig-cell:not(.ig-rownum):not(.ig-colhead):not(.ig-filler-cell)");
-    if (!cell) return;
-    igActivateCell(cell.getAttribute("data-row"), cell.getAttribute("data-col"), true);
-  }
-  function igOnContextMenu(e) {
-    var head = e.target.closest && e.target.closest(".ig-colhead[data-colhead]");
-    if (head) { e.preventDefault(); igOpenColMenu(head.getAttribute("data-colhead"), e.clientX, e.clientY); return; }
-    var cell = e.target.closest && e.target.closest(".ig-cell:not(.ig-colhead):not(.ig-filler-cell)");
-    if (!cell) return;
-    e.preventDefault();
-    var rowId = cell.getAttribute("data-row") || cell.getAttribute("data-rownum");
-    if (!rowId) return;
-    if (cell.hasAttribute("data-col")) igSelectCellFromEl(cell, false);
-    igOpenCellMenuAt(e.clientX, e.clientY, rowId);
-  }
-
-  function igWireCellEvents(scroll) {
-    scroll.addEventListener("click", igOnClick);
-    scroll.addEventListener("dblclick", igOnDblClick);
-    scroll.addEventListener("contextmenu", igOnContextMenu);
-    var dragging = false, lpTimer = null, lpFired = false, startX = 0, startY = 0, startCell = null;
-    // Two fingers on the sheet is the browser's gesture, not ours: it zooms
-    // the whole page and pans it in any direction, which is what a pinch is
-    // expected to do everywhere else. All this tracks is that a second
-    // finger landed, so the pinch never doubles as a cell drag, a long-press
-    // menu or a double-tap.
-    var touches = {}, pinching = false;
-    // A real double-tap on iOS/Android does not reliably become a native
-    // dblclick — it depends on gesture-recognition quirks that vary by OS
-    // version. Tapped twice, quickly, in the same spot, is tracked directly
-    // instead of hoping the platform synthesises it. Keyed by row+column
-    // rather than by element, so a repaint between the two taps can't break
-    // the pair.
-    var lastTapKey = null, lastTapTime = 0;
-    // Touch selection, the way Sheets does it: a finger that lands on the
-    // sheet has not selected anything yet, and only a deliberate tap — down
-    // and up in roughly the same spot, on a sheet that is not already
-    // coasting — moves the selection. A thumb is not a mouse pointer: it
-    // lands wide, wobbles, and is usually there to scroll.
-    var IG_TAP_SLOP = 14, IG_FLING_GUARD = 200;
-    var tapPending = false, lastScrollAt = 0;
-    scroll.addEventListener("scroll", function () {
-      // A scroll the sheet asked for (bringing the active cell into view)
-      // is not the user flicking, and must not eat the next tap.
-      if (Date.now() - (gridState.progScrollAt || 0) < 250) return;
-      lastScrollAt = Date.now();
-      // The sheet moved under the finger, so the gesture was a scroll. Any
-      // tap or long-press it might have become is off — the menu especially,
-      // which must never open over a moving sheet.
-      tapPending = false;
-      clearTimeout(lpTimer);
-      // A menu pinned to a spot on a sheet that is moving under it is
-      // pointing at the wrong cell by the time it settles.
-      if (gridState.menuEl) igCloseMenu();
-    }, { passive: true });
-    function touchIds() { return Object.keys(touches); }
-    scroll.addEventListener("pointerdown", function (e) {
-      var fillHandle = e.target.closest && e.target.closest(".ig-fill-handle");
-      if (fillHandle) { e.preventDefault(); e.stopPropagation(); igStartFillDrag(e); return; }
-      if (e.pointerType === "touch") {
-        touches[e.pointerId] = { x: e.clientX, y: e.clientY };
-        if (touchIds().length === 2) {
-          pinching = true; dragging = false; lpFired = true; tapPending = false; clearTimeout(lpTimer); igCloseMenu();
-          lastTapKey = null; lastTapTime = 0;
-          return;
-        }
-      }
-      if (pinching) return;
-      if (e.pointerType === "mouse" && e.button !== 0) return;
-      var cell = e.target.closest && e.target.closest(".ig-cell:not(.ig-colhead):not(.ig-filler-cell)");
-      if (!cell || gridState.editing) return;
-      startX = e.clientX; startY = e.clientY; startCell = cell; lpFired = false;
-      if (cell.classList.contains("ig-rownum")) return;
-      if (e.pointerType === "touch") {
-        // Nothing is selected on the way down. A tap that lands while the
-        // sheet is still gliding is the universal "stop here" gesture, so
-        // it stops the scroll and selects nothing.
-        tapPending = Date.now() - lastScrollAt > IG_FLING_GUARD;
-        dragging = false;
-        clearTimeout(lpTimer);
-        var pressScrollTop = scroll.scrollTop, pressScrollLeft = scroll.scrollLeft;
-        lpTimer = setTimeout(function () {
-          // Resting a thumb for a moment before flicking is how people
-          // scroll. If the sheet has moved at all since the finger landed,
-          // this was the start of a scroll and not a press-and-hold — the
-          // menu must not appear over a sheet that is already moving.
-          if (scroll.scrollTop !== pressScrollTop || scroll.scrollLeft !== pressScrollLeft) return;
-          lpFired = true; tapPending = false;
-          igSelectCellFromEl(cell, false);
-          igOpenCellMenu(cell);
-        }, 520);
-        return;
-      }
-      dragging = true;
-      igSelectCellFromEl(cell, !!e.shiftKey);
-    });
-    scroll.addEventListener("pointermove", function (e) {
-      if (e.pointerType === "touch" && touches[e.pointerId]) touches[e.pointerId] = { x: e.clientX, y: e.clientY };
-      if (pinching) return;
-      if (!startCell) return;
-      // A press-and-hold has to actually hold still. The tap itself forgives
-      // a thumb's wobble; the menu is far less forgiving, because popping one
-      // open over a sheet the user was about to scroll is worse than missing
-      // one they meant.
-      if (Math.abs(e.clientX - startX) > 6 || Math.abs(e.clientY - startY) > 6) clearTimeout(lpTimer);
-      var slop = e.pointerType === "touch" ? IG_TAP_SLOP : 8;
-      if (Math.abs(e.clientX - startX) > slop || Math.abs(e.clientY - startY) > slop) {
-        clearTimeout(lpTimer);
-        // A finger that travelled is scrolling, not selecting. It never
-        // paints a range on the way past — dragging a thumb down the sheet
-        // used to leave a block of cells selected behind it.
-        if (e.pointerType === "touch") {
-          tapPending = false; startCell = null; lastTapKey = null;
-          // A press-and-hold is provisional until the finger lifts. Sliding
-          // away from it takes the menu back and lets the gesture go back to
-          // being the scroll it turned into.
-          if (lpFired) { lpFired = false; igCloseMenu(); }
-          return;
-        }
-        if (dragging && !lpFired) {
-          var el = document.elementFromPoint(e.clientX, e.clientY);
-          var overCell = el && el.closest && el.closest(".ig-cell:not(.ig-rownum):not(.ig-colhead):not(.ig-filler-cell)");
-          if (overCell) igSelectCellFromEl(overCell, true);
-        }
-      }
-    });
-    function endTouch(e) {
-      if (e.pointerType === "touch") delete touches[e.pointerId];
-      if (pinching && !touchIds().length) pinching = false;
-    }
-    scroll.addEventListener("pointerup", function (e) {
-      endTouch(e);
-      if (e.pointerType === "touch" && startCell && tapPending && !lpFired && !pinching && !startCell.classList.contains("ig-rownum")) {
-        var cell = startCell;
-        var rowId = cell.getAttribute("data-row"), colKey = cell.getAttribute("data-col");
-        var key = rowId + "|" + colKey, now = Date.now();
-        if (rowId && colKey && lastTapKey === key && now - lastTapTime < 350) {
-          lastTapKey = null; lastTapTime = 0;
-          e.preventDefault();
-          igActivateCell(rowId, colKey, true);
-        } else {
-          // The tap the user actually meant: the finger went down and came
-          // back up on the same cell, so now the selection moves there.
-          lastTapKey = key; lastTapTime = now;
-          igSelectCellFromEl(cell, false);
-        }
-      }
-      tapPending = false; dragging = false; clearTimeout(lpTimer); startCell = null;
-    });
-    scroll.addEventListener("pointercancel", function (e) { endTouch(e); dragging = false; clearTimeout(lpTimer); startCell = null; });
-  }
-
-  // Real autofit, not a reset to the default: every row is already in the
-  // DOM (nothing here is virtualised), so the widest rendered cell in the
-  // column is measured directly rather than guessed.
-  function igAutofitColumn(key, inner) {
-    var col = igColDef(key);
-    if (!col) return;
-    var max = 0;
-    var headEl = document.querySelector('.ig-colhead[data-colhead="' + key + '"]');
-    if (headEl) max = Math.max(max, headEl.scrollWidth);
-    Object.keys(gridState.cellEls).forEach(function (rid) {
-      var cell = gridState.cellEls[rid][key];
-      if (cell) max = Math.max(max, cell.scrollWidth);
-    });
-    if (!max) return;
-    var zoom = gridState.zoom || 1;
-    // Store the unzoomed base width, matching how igColWidth() re-scales it.
-    gridState.widths[key] = Math.round(Math.max(col.min, Math.min(420, max + 20)) / zoom);
-    igApplyLayout(inner);
-    igSavePersistedWidths();
-  }
-
-  // A drag or a long press must not also land as a click on the header
-  // underneath it, but the click may never arrive (the row can re-render
-  // first), so the guard expires on its own rather than eating the next one.
-  function igSuppressNextClick() {
-    gridState.suppressClick = true;
-    setTimeout(function () { gridState.suppressClick = false; }, 350);
-  }
-
-  /* Selecting several rows at once to delete them together, the way Sheets'
-     row headers work: click one, shift-click extends a run, ctrl/cmd-click
-     toggles one in or out. Touch has no modifier keys, so the "Select rows"
-     toggle puts the sheet into the same mode explicitly — once it's on, a
-     plain tap toggles a row the same way a ctrl-click would. Only deal rows
-     are selectable this way; an instalment goes or stays with its deal. */
-  function igClearBulk() {
-    if (!gridState.bulkMode && !Object.keys(gridState.bulkRows).length) return;
-    gridState.bulkMode = false;
-    gridState.bulkRows = {};
-    gridState.bulkAnchor = null;
-  }
-  function igSetBulkMode(on) {
-    if (on === gridState.bulkMode) return;
-    if (on) { gridState.active = null; gridState.anchor = null; gridState.bulkMode = true; }
-    else igClearBulk();
-    scheduleRender(0);
-  }
-  function igBulkCount() { return Object.keys(gridState.bulkRows).length; }
-  function igToggleBulkRow(id) {
-    gridState.active = null; gridState.anchor = null; gridState.bulkMode = true;
-    if (gridState.bulkRows[id]) delete gridState.bulkRows[id]; else gridState.bulkRows[id] = true;
-    gridState.bulkAnchor = id;
-    scheduleRender(0);
-  }
-  function igExtendBulkRows(toId) {
-    gridState.active = null; gridState.anchor = null; gridState.bulkMode = true;
-    var order = igTopLevelOrder(), from = order.indexOf(String(gridState.bulkAnchor || toId)), to = order.indexOf(String(toId));
-    if (from < 0) from = to;
-    var lo = Math.min(from, to), hi = Math.max(from, to);
-    for (var i = lo; i <= hi; i++) gridState.bulkRows[order[i]] = true;
-    scheduleRender(0);
-  }
-  function igDeleteBulkRows() {
-    var ids = Object.keys(gridState.bulkRows);
-    if (!ids.length) return;
-    var doc = readDoc();
-    var items = ids.map(function (id) { return (doc.followups || []).find(function (x) { return String(x.id) === String(id); }); }).filter(Boolean);
-    var locked = items.filter(dealHasRecordedMoney);
-    var free = items.filter(function (it) { return !dealHasRecordedMoney(it); });
-    if (!free.length) { toast(locked.length === 1 ? "That deal has recorded money and can't be deleted" : "All selected deals have recorded money — none can be deleted", "error"); return; }
-    var msg = "Delete " + free.length + " row" + (free.length === 1 ? "" : "s") + (free.length === 1 && free[0].client ? ' — "' + free[0].client + '"' : "") + "?";
-    if (locked.length) msg += " (" + locked.length + " with money recorded will be kept.)";
-    if (!confirm(msg)) return;
-    var freeIds = {};
-    free.forEach(function (it) { igPushUndo(String(it.id)); freeIds[String(it.id)] = true; });
-    updateDoc(function (d) { d.followups = (d.followups || []).filter(function (x) { return !freeIds[String(x.id)]; }); }, "grid-delete-rows", true);
-    igClearBulk();
-    toast(free.length + " row" + (free.length === 1 ? "" : "s") + " deleted" + (locked.length ? " · " + locked.length + " kept" : ""), "success");
-  }
-
-  /* Dragging a row to reorder it, the way Sheets does.  /* Dragging a row to reorder it, the way Sheets does. Rows are otherwise
-     always computed by the active sort, so there is nothing to hold a manual
-     position — dragging one switches the sheet to "Custom order" (mirroring
-     how a column drag writes gridOrder) and remembers where every deal you
-     have touched belongs. A deal not yet placed sorts after the ones that
-     are, so this never has to solve a full merge with an unrelated sort. */
-  function igTopLevelOrder() { return (gridState.order || []).filter(function (id) { return String(id).indexOf("::") < 0; }); }
-  function igCommitRowOrder(draggedId, targetIndex) {
-    var visible = igTopLevelOrder();
-    var fromIdx = visible.indexOf(String(draggedId));
-    if (fromIdx < 0) return false;
-    targetIndex = Math.max(0, Math.min(visible.length - 1, targetIndex));
-    if (targetIndex === fromIdx) return false;
-    var wasCustom = state.upcoming.sort === "custom" && Array.isArray(state.upcoming.gridRowOrder) && state.upcoming.gridRowOrder.length;
-    var baseline = wasCustom ? state.upcoming.gridRowOrder.slice() : visible.slice();
-    var reordered = visible.slice();
-    reordered.splice(targetIndex, 0, reordered.splice(fromIdx, 1)[0]);
-    var visibleSet = {};
-    visible.forEach(function (id) { visibleSet[id] = true; });
-    var withoutVisible = [], insertAt = -1, seenOthers = 0;
-    baseline.forEach(function (id) {
-      if (visibleSet[id]) { if (insertAt < 0) insertAt = seenOthers; }
-      else { withoutVisible.push(id); seenOthers++; }
-    });
-    if (insertAt < 0) insertAt = withoutVisible.length;
-    state.upcoming.gridRowOrder = withoutVisible.slice(0, insertAt).concat(reordered, withoutVisible.slice(insertAt));
-    state.upcoming.sort = "custom";
-    savePrefs();
-    return true;
-  }
-  function igStartRowDrag(e, rownumEl, rowId) {
-    var scroll = document.getElementById("ig-scroll"), body = document.getElementById("ig-body");
-    if (!scroll || !body) return;
-    var startY = e.clientY, armed = false, targetIndex = null;
-    var order = igTopLevelOrder(), fromIndex = order.indexOf(String(rowId));
-    if (fromIndex < 0) return;
-    var indicator = null, ghost = null, blockEls = [];
-    try { rownumEl.setPointerCapture(e.pointerId); } catch (_) {}
-    function dealRowEls() {
-      return order.map(function (id) { return gridState.rowEls[id]; }).filter(Boolean);
-    }
-    function blockOf(id) {
-      var els = [gridState.rowEls[id]].filter(Boolean);
-      (gridState.rows || []).forEach(function (r) { if (r.part && r.parentId === id) { var el = gridState.rowEls[r.id]; if (el) els.push(el); } });
-      return els;
-    }
-    function arm() {
-      armed = true;
-      document.body.classList.add("ig-rowdragging");
-      blockEls = blockOf(rowId);
-      blockEls.forEach(function (el) { el.classList.add("ig-row-dragging"); });
-      indicator = document.createElement("div");
-      indicator.className = "ig-row-drop";
-      body.appendChild(indicator);
-      ghost = document.createElement("div");
-      ghost.className = "ig-row-ghost";
-      var row = gridState.byId[rowId];
-      ghost.textContent = (row && row.client) || "Row";
-      document.body.appendChild(ghost);
-    }
-    function onMove(ev) {
-      if (!armed) {
-        if (Math.abs(ev.clientY - startY) < 6) return;
-        arm();
-      }
-      ghost.style.left = ev.clientX + "px";
-      ghost.style.top = ev.clientY + "px";
-      var els = dealRowEls(), idx = fromIndex, placedAbove = true;
-      for (var i = 0; i < els.length; i++) {
-        var r = els[i].getBoundingClientRect();
-        if (ev.clientY < r.top + r.height / 2) { idx = i; placedAbove = true; break; }
-        idx = i; placedAbove = false;
-      }
-      targetIndex = placedAbove ? idx : Math.min(order.length - 1, idx + 1);
-      var refEl = els[idx];
-      if (refEl) {
-        // The indicator lives in #ig-body, whose only positioned ancestor
-        // is itself — offsetTop is already in the right coordinate space,
-        // no scroll math needed.
-        indicator.style.top = (placedAbove ? refEl.offsetTop : refEl.offsetTop + refEl.offsetHeight) + "px";
-        indicator.style.width = document.getElementById("ig-grid-inner").offsetWidth + "px";
-      }
-      // Auto-scroll the sheet while a drag is held near its top or bottom edge.
-      var sr = scroll.getBoundingClientRect(), edge = 28;
-      if (ev.clientY < sr.top + edge) scroll.scrollTop -= 12;
-      else if (ev.clientY > sr.bottom - edge) scroll.scrollTop += 12;
-    }
-    function onUp() {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.removeEventListener("pointercancel", onUp);
-      document.body.classList.remove("ig-rowdragging");
-      blockEls.forEach(function (el) { el.classList.remove("ig-row-dragging"); });
-      if (indicator) indicator.remove();
-      if (ghost) ghost.remove();
-      if (!armed) return;
-      igSuppressNextClick();
-      if (targetIndex !== null && igCommitRowOrder(rowId, targetIndex)) scheduleRender(0);
-    }
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-    document.addEventListener("pointercancel", onUp);
-  }
-  function igWireRowDrag(scroll) {
-    var lp = null;
-    scroll.addEventListener("pointerdown", function (e) {
-      var handle = e.target.closest && e.target.closest(".ig-rownum:not(.ig-colhead):not(.ig-filler-cell)");
-      if (!handle || (e.target.closest && e.target.closest(".ig-group"))) return;
-      if (gridState.bulkMode || e.shiftKey || e.ctrlKey || e.metaKey) return;
-      var rowId = handle.getAttribute("data-rownum");
-      if (!rowId || rowId.indexOf("::") >= 0) return;
-      if (e.pointerType === "touch") {
-        var sx = e.clientX, sy = e.clientY;
-        lp = setTimeout(function () { igStartRowDrag(e, handle, rowId); }, 380);
-        var cancel = function (ev) {
-          if (ev.type === "pointermove" && Math.abs(ev.clientX - sx) < 8 && Math.abs(ev.clientY - sy) < 8) return;
-          clearTimeout(lp);
-          document.removeEventListener("pointerup", cancel);
-          document.removeEventListener("pointercancel", cancel);
-          document.removeEventListener("pointermove", cancel);
-        };
-        document.addEventListener("pointerup", cancel);
-        document.addEventListener("pointercancel", cancel);
-        document.addEventListener("pointermove", cancel);
-        return;
-      }
-      if (e.pointerType === "mouse" && e.button !== 0) return;
-      igStartRowDrag(e, handle, rowId);
-    });
-  }
-
-  /* Drag a column header sideways to reorder, the way Sheets does.  /* Drag a column header sideways to reorder, the way Sheets does. Touch is
-     deliberately left out: a sideways swipe on a phone has to stay a scroll,
-     so a long press there opens the column menu instead, where Move left and
-     Move right do the same job with a thumb. */
-  function igStartColDrag(e, head, key, inner) {
-    var startX = e.clientX, armed = false, targetIdx = null;
-    var visible = igVisibleCols().map(function (c) { return c.key; });
-    var fromIdx = visible.indexOf(key);
-    if (fromIdx < 0) return;
-    var indicator = null, ghost = null;
-    try { head.setPointerCapture(e.pointerId); } catch (_) {}
-    function headEls() { return Array.prototype.slice.call(inner.querySelectorAll(".ig-colhead[data-colhead]")); }
-    function onMove(ev) {
-      if (!armed) {
-        if (Math.abs(ev.clientX - startX) < 5) return;
-        armed = true;
-        document.body.classList.add("ig-coldragging");
-        head.classList.add("ig-col-dragging");
-        indicator = document.createElement("div");
-        indicator.className = "ig-col-drop";
-        inner.appendChild(indicator);
-        ghost = document.createElement("div");
-        ghost.className = "ig-col-ghost";
-        ghost.textContent = igColLabel(key);
-        document.body.appendChild(ghost);
-      }
-      ghost.style.left = ev.clientX + "px";
-      ghost.style.top = ev.clientY + "px";
-      var els = headEls(), idx = fromIdx;
-      for (var i = 0; i < els.length; i++) {
-        var r = els[i].getBoundingClientRect();
-        if (ev.clientX < r.right || i === els.length - 1) { idx = i; break; }
-      }
-      targetIdx = idx;
-      var drop = els[idx];
-      indicator.style.left = (idx >= fromIdx ? drop.offsetLeft + drop.offsetWidth : drop.offsetLeft) + "px";
-    }
-    function onUp() {
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-      document.removeEventListener("pointercancel", onUp);
-      document.body.classList.remove("ig-coldragging");
-      head.classList.remove("ig-col-dragging");
-      if (indicator) indicator.remove();
-      if (ghost) ghost.remove();
-      if (!armed) return;
-      igSuppressNextClick();
-      if (targetIdx !== null && targetIdx !== fromIdx && igMoveColumn(key, targetIdx)) scheduleRender(0);
-    }
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-    document.addEventListener("pointercancel", onUp);
-  }
-  function igWireHeaderInteractions(inner) {
-    Array.prototype.slice.call(inner.querySelectorAll(".ig-colhead[data-colhead]")).forEach(function (head) {
-      head.addEventListener("pointerdown", function (e) {
-        if (e.target.closest && (e.target.closest(".ig-resize") || e.target.closest(".ig-colmenu"))) return;
-        var key = head.getAttribute("data-colhead");
-        if (e.pointerType === "touch") {
-          var lp = setTimeout(function () { igOpenColMenuFor(head); igSuppressNextClick(); }, 480);
-          var done = function () {
-            clearTimeout(lp);
-            document.removeEventListener("pointerup", done);
-            document.removeEventListener("pointercancel", done);
-            document.removeEventListener("pointermove", moved);
-          };
-          var moved = function (ev) { if (Math.abs(ev.clientX - e.clientX) > 8 || Math.abs(ev.clientY - e.clientY) > 8) done(); };
-          document.addEventListener("pointerup", done);
-          document.addEventListener("pointercancel", done);
-          document.addEventListener("pointermove", moved);
-          return;
-        }
-        if (e.pointerType === "mouse" && e.button !== 0) return;
-        igStartColDrag(e, head, key, inner);
-      });
-    });
-  }
-
-  function igWireResize(inner) {
-    Array.prototype.slice.call(inner.querySelectorAll(".ig-resize")).forEach(function (handle) {
-      handle.addEventListener("pointerdown", function (e) {
-        e.preventDefault(); e.stopPropagation();
-        var key = handle.getAttribute("data-resize"), startX = e.clientX, startW = igColWidth(key);
-        try { handle.setPointerCapture(e.pointerId); } catch (_) {}
-        function onMove(ev) {
-          var col = igColDef(key);
-          gridState.widths[key] = Math.max(col.min, startW + (ev.clientX - startX));
-          igApplyLayout(inner);
-        }
-        function onUp() { document.removeEventListener("pointermove", onMove); document.removeEventListener("pointerup", onUp); igSavePersistedWidths(); }
-        document.addEventListener("pointermove", onMove);
-        document.addEventListener("pointerup", onUp);
-      });
-      handle.addEventListener("dblclick", function (e) {
-        e.stopPropagation();
-        igAutofitColumn(handle.getAttribute("data-resize"), inner);
-      });
-    });
-  }
-
-  function igWireFormulaBar() {
-    var input = document.getElementById("ig-formula-input");
-    if (!input) return;
-    input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        if (!gridState.active || input.disabled) return;
-        var rowId = gridState.active.rowId, colKey = gridState.active.col, row = gridState.byId[rowId];
-        if (String(input.value).trim() !== String(igRawValue(row, colKey)).trim()) { igPushUndo(rowId); igApplyCellValue(rowId, colKey, input.value); }
-        igMoveAfterCommit("down");
-      } else if (e.key === "Escape") { e.preventDefault(); igUpdateFormulaBar(); input.blur(); }
-    });
-  }
-
-  function igWireKeyboard(scroll) {
-    scroll.addEventListener("keydown", function (e) {
-      if (gridState.editing) return;
-      // Bulk row selection deliberately leaves gridState.active null, so its
-      // own keys are handled before the "no active cell" branch below would
-      // otherwise swallow them.
-      if (gridState.bulkMode) {
-        if (e.key === "Escape") { e.preventDefault(); igSetBulkMode(false); return; }
-        if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); igDeleteBulkRows(); return; }
-      }
-      if (!gridState.active) {
-        if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Enter"].indexOf(e.key) >= 0 && gridState.order.length) {
-          e.preventDefault();
-          igSetActive(gridState.order[0], igVisibleCols()[0].key);
-        }
-        return;
-      }
-      var mod = e.metaKey || e.ctrlKey;
-      if (mod && !e.shiftKey && (e.key === "c" || e.key === "C")) { e.preventDefault(); igCopySelection(); return; }
-      if (mod && !e.shiftKey && (e.key === "v" || e.key === "V")) { e.preventDefault(); igPasteClipboard(); return; }
-      if (mod && !e.shiftKey && (e.key === "x" || e.key === "X")) { e.preventDefault(); igCopySelection(); igClearSelectionValues(); return; }
-      if (mod && !e.shiftKey && (e.key === "z" || e.key === "Z")) { e.preventDefault(); igUndo(); return; }
-      if (mod && ((e.shiftKey && (e.key === "z" || e.key === "Z")) || e.key === "y" || e.key === "Y")) { e.preventDefault(); igRedo(); return; }
-      if (mod && (e.key === "f" || e.key === "F")) { e.preventDefault(); var s = document.getElementById("x97-up-search"); if (s) s.focus(); return; }
-      if (mod && !e.shiftKey && (e.key === "a" || e.key === "A")) { e.preventDefault(); igSelectAll(); return; }
-      if (mod && e.key === "Home") { e.preventDefault(); igSetActive(gridState.order[0], igVisibleCols()[0].key); return; }
-      if (mod && e.key === "End") { var ec = igVisibleCols(); e.preventDefault(); igSetActive(gridState.order[gridState.order.length - 1], ec[ec.length - 1].key); return; }
-      if (e.key === "F2") {
-        e.preventDefault();
-        var f2row = gridState.byId[gridState.active.rowId], f2col = igColDef(gridState.active.col);
-        if (f2col && igEditable(f2col, f2row)) igBeginEdit(gridState.active.rowId, gridState.active.col);
-        return;
-      }
-      if (e.key === "ArrowDown") { e.preventDefault(); igStep(e.shiftKey, 1, 0); return; }
-      if (e.key === "ArrowUp") { e.preventDefault(); igStep(e.shiftKey, -1, 0); return; }
-      if (e.key === "ArrowLeft") { e.preventDefault(); igStep(e.shiftKey, 0, -1); return; }
-      if (e.key === "ArrowRight") { e.preventDefault(); igStep(e.shiftKey, 0, 1); return; }
-      if (e.key === "Tab") { e.preventDefault(); igMoveAfterCommit(e.shiftKey ? "left" : "right"); return; }
-      if (e.key === "Home") { e.preventDefault(); igSetActive(gridState.active.rowId, igVisibleCols()[0].key); return; }
-      if (e.key === "End") { var cs = igVisibleCols(); e.preventDefault(); igSetActive(gridState.active.rowId, cs[cs.length - 1].key); return; }
-      if (e.key === "Enter") {
-        e.preventDefault();
-        var row = gridState.byId[gridState.active.rowId], col = igColDef(gridState.active.col);
-        if (col && igEditable(col, row)) igBeginEdit(gridState.active.rowId, gridState.active.col);
-        return;
-      }
-      if (e.key === "Escape") { igCloseMenu(); return; }
-      if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); igClearSelectionValues(); return; }
-      if (e.key.length === 1 && !mod && !e.altKey) {
-        var rrow = gridState.byId[gridState.active.rowId], rcol = igColDef(gridState.active.col);
-        if (rcol && igEditable(rcol, rrow) && rcol.type !== "date" && rcol.key !== "currency") {
-          igBeginEdit(gridState.active.rowId, gridState.active.col);
-          var rid = gridState.active.rowId, key = gridState.active.col, ch = e.key;
-          setTimeout(function () {
-            var input = gridState.cellEls[rid] && gridState.cellEls[rid][key] && gridState.cellEls[rid][key].querySelector(".ig-edit-input");
-            // A dropdown does its own type-ahead; forcing the character in
-            // would just blank it.
-            if (input && input.tagName !== "SELECT") input.value = ch;
-          }, 0);
-        }
-      }
-    });
-  }
-
-  function mountIncomingGrid() {
-    var scroll = document.getElementById("ig-scroll");
-    if (!scroll) return;
-    var inner = document.getElementById("ig-grid-inner"), body = document.getElementById("ig-body");
-    igIndexDom(body);
-    scroll.scrollTop = gridState.scrollTop || 0;
-    scroll.scrollLeft = gridState.scrollLeft || 0;
-    // A full render replaces #ig-scroll itself, so whatever held keyboard
-    // focus a moment ago no longer exists and focus quietly falls back to
-    // the page. Selecting rows re-renders on every click, so without this
-    // the second row picked would leave Delete/Escape with nothing to reach
-    // — the toolbar becomes the selection bar in bulk mode, taking the
-    // search box (the other thing that could legitimately want focus here)
-    // out of the running.
-    if (gridState.bulkMode) scroll.focus({ preventScroll: true });
-    var shell = root && root.querySelector(".ig-shell");
-    scroll.addEventListener("scroll", function () {
-      gridState.scrollTop = scroll.scrollTop;
-      gridState.scrollLeft = scroll.scrollLeft;
-      // Hand the summary strip's height back to the rows once the user is
-      // working down the sheet; it returns as soon as they scroll back up.
-      if (shell) {
-        var away = scroll.scrollTop > 24;
-        if (away !== gridState.chromeAway) { gridState.chromeAway = away; shell.classList.toggle("ig-scrolled", away); }
-        var overX = scroll.scrollLeft > 2;
-        if (overX !== gridState.scrolledX) { gridState.scrolledX = overX; shell.classList.toggle("ig-scrolled-x", overX); }
-      }
-    }, { passive: true });
-    if (shell && gridState.chromeAway) shell.classList.add("ig-scrolled");
-    if (shell && gridState.scrolledX) shell.classList.add("ig-scrolled-x");
-    // Bulk row selection deliberately leaves nothing active, and every
-    // toggle re-renders — without this guard the sheet would silently pick
-    // the first cell back as active on the very next click.
-    if (!gridState.active && !gridState.bulkMode && gridState.order.length) {
-      var cols0 = igVisibleCols();
-      if (cols0.length) { gridState.anchor = { rowId: gridState.order[0], col: cols0[0].key }; gridState.active = gridState.anchor; }
-    }
-    // The shell's flex layout is not final in the same tick the markup lands,
-    // so the first measurement can undercount the free space; take it again
-    // once the frame has settled. igFillEmptyRows() is a no-op if nothing moved.
-    igFillEmptyRows();
-    if (window.requestAnimationFrame) requestAnimationFrame(function () { requestAnimationFrame(igFillEmptyRows); });
-    if (!gridState.viewportWired) {
-      gridState.viewportWired = true;
-      var vpTimer = null;
-      var onViewport = function () {
-        clearTimeout(vpTimer);
-        vpTimer = setTimeout(function () { if (document.getElementById("ig-grid-inner")) igOnViewportChange(); }, 120);
-      };
-      window.addEventListener("resize", onViewport);
-      window.addEventListener("orientationchange", onViewport);
-    }
-    igWireKeyboardInset();
-    igWireCellEvents(scroll);
-    igWireHeaderInteractions(inner);
-    igWireRowDrag(scroll);
-    igWireResize(inner);
-    igWireKeyboard(scroll);
-    igWireFormulaBar();
-    igPaintActive();
-    if (gridState.pendingFocusRow && gridState.byId[gridState.pendingFocusRow]) {
-      var pfr = gridState.pendingFocusRow; gridState.pendingFocusRow = null;
-      igSetActive(pfr, "client");
-      setTimeout(function () { igBeginEdit(pfr, "client"); }, 30);
-    }
-    igFlushPendingExternalRender();
-  }
-
-  /* ── Filter sheet (mobile-first, live count) & columns panel ────────── */
-
-  function igFilterCount(doc) { return (doc.followups || []).filter(function (item) { return followupMatches(item, doc); }).length; }
-
-  function openGridFilters(doc) {
+  function openIncomingFilters(doc) {
     var f = state.upcoming;
-    var currencies = Array.from(new Set((doc.followups || []).map(function (x) { return String(x.currency || "UGX").toUpperCase(); }))).sort();
-    var categories = Array.from(new Set((doc.followups || []).map(function (x) { return String(x.category || ""); }))).filter(Boolean).sort();
-    function chip(kind, label, value, on) { return '<button type="button" class="ig-filter-chip' + (on ? " on" : "") + '" data-grid-filter="' + attr(kind) + '" data-value="' + attr(value) + '">' + esc(label) + '</button>'; }
-    var body = '<div class="ig-filter-sheet">' +
-      '<div class="ig-filter-section"><label>Status</label><div class="ig-filter-chiprow">' +
-        chip("status", "Paid", "Paid", f.statuses.indexOf("Paid") >= 0) + chip("status", "Partial", "Part Paid", f.statuses.indexOf("Part Paid") >= 0) + chip("status", "Unpaid", "Pending", f.statuses.indexOf("Pending") >= 0) + chip("status", "Cancelled", "Cancelled", f.statuses.indexOf("Cancelled") >= 0) +
-      '</div></div>' +
-      '<div class="ig-filter-section"><label>Due</label><div class="ig-filter-chiprow">' +
-        chip("due", "Overdue", "overdue", f.quick === "overdue") + chip("due", "Today", "today", f.quick === "today") + chip("due", "This week", "next7", f.quick === "next7") + chip("due", "This month", "thisMonth", f.quick === "thisMonth") + chip("due", "No date", "unscheduled", f.quick === "unscheduled") +
-      '</div></div>' +
-      '<div class="ig-filter-section"><label>Month</label><select class="x97-select" id="ig-filter-month">' + option("all", "All months", f.month) + availableMonths(doc).map(function (k) { return option(k, monthLabel(k, true), f.month); }).join("") + option("unscheduled", "Unscheduled only", f.month) + '</select></div>' +
-      (categories.length ? '<div class="ig-filter-section"><label>Category</label><div class="ig-filter-chiprow">' + categories.map(function (c) { return chip("category", c, c, f.categories.indexOf(c) >= 0); }).join("") + '</div></div>' : "") +
-      (currencies.length > 1 ? '<div class="ig-filter-section"><label>Currency</label><div class="ig-filter-chiprow">' + currencies.map(function (c) { return chip("currency", c, c, f.currencies.indexOf(c) >= 0); }).join("") + '</div></div>' : "") +
-      '<div class="ig-filter-section"><label>Client</label><input class="x97-input" id="ig-filter-client" placeholder="Search client…" value="' + attr(f.search) + '"></div>' +
-      '<div class="ig-filter-section x97-fields-2"><div>' + field("Min amount", '<input class="x97-input" id="ig-filter-min" type="number" min="0" value="' + attr(f.minAmount) + '" placeholder="0">') + '</div><div>' + field("Max amount", '<input class="x97-input" id="ig-filter-max" type="number" min="0" value="' + attr(f.maxAmount) + '" placeholder="No limit">') + '</div></div>' +
+    var categories = Array.from(new Set((doc.followups || []).map(function (x) { return x.category; }).filter(Boolean))).sort();
+    function chipRow(name, options, selected) {
+      return '<div class="ic-filter-chiprow" data-filter-group="' + attr(name) + '">' + options.map(function (o) {
+        return '<button type="button" class="ic-filter-chip' + (selected.indexOf(o) >= 0 ? " on" : "") + '" data-value="' + attr(o) + '">' + esc(o) + '</button>';
+      }).join("") + '</div>';
+    }
+    var body = '<div class="ic-filter-sheet">' +
+      '<div class="ic-filter-section"><label>Status</label>' + chipRow("statuses", ["Pending", "Part Paid", "Paid", "Cancelled"], f.statuses) + '</div>' +
+      '<div class="ic-filter-section"><label>Currency</label>' + chipRow("currencies", ["UGX", "USD"], f.currencies) + '</div>' +
+      (categories.length ? '<div class="ic-filter-section"><label>Category</label>' + chipRow("categories", categories, f.categories) + '</div>' : "") +
+      '<div class="ic-filter-section"><label>Due date range</label><div class="x97-fields-2"><input class="x97-input" type="date" id="ic-f-from" value="' + attr(f.from) + '"><input class="x97-input" type="date" id="ic-f-to" value="' + attr(f.to) + '"></div></div>' +
+      '<div class="ic-filter-section"><label>Balance range</label><div class="x97-fields-2"><input class="x97-input" type="number" min="0" placeholder="Min" id="ic-f-min" value="' + attr(f.minAmount) + '"><input class="x97-input" type="number" min="0" placeholder="Max" id="ic-f-max" value="' + attr(f.maxAmount) + '"></div></div>' +
+      '<div class="ic-filter-section"><label>Sort</label>' + chipRow("sort", ["urgency", "client", "amountDesc", "amountAsc", "dateAsc", "dateDesc"], []) + '</div>' +
     '</div>';
-    var foot = '<button class="x97-btn" data-x97-action="grid-filters-reset">Reset</button><button class="x97-btn primary" type="button" data-x97-action="grid-filters-apply">' + icon("check", 15) + ' <span id="ig-filter-count">Show ' + igFilterCount(doc) + ' rows</span></button>';
+    var foot = '<button class="x97-btn" data-x97-action="incoming-filters-reset">Reset</button><button class="x97-btn primary" data-x97-action="incoming-filters-apply">' + icon("check", 15) + ' Apply</button>';
     openSheet("Filter Incoming", body, foot, { afterOpen: function (back) {
-      function refreshCount() { var el = back.querySelector("#ig-filter-count"); if (el) el.textContent = "Show " + igFilterCount(readDoc()) + " rows"; }
-      back.addEventListener("click", function (e) {
-        var chipEl = e.target.closest && e.target.closest("[data-grid-filter]");
-        if (!chipEl) return;
-        var kind = chipEl.getAttribute("data-grid-filter"), value = chipEl.getAttribute("data-value");
-        if (kind === "status") {
-          var i = f.statuses.indexOf(value); if (i >= 0) f.statuses.splice(i, 1); else f.statuses.push(value); chipEl.classList.toggle("on");
-          if (f.statuses.length && (f.quick === "open" || f.quick === "attention")) {
-            f.quick = "all";
-            Array.prototype.slice.call(back.querySelectorAll('[data-grid-filter="due"]')).forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-value") === f.quick); });
-          }
+      var draft = { statuses: f.statuses.slice(), currencies: f.currencies.slice(), categories: f.categories.slice(), sort: f.sort };
+      Array.prototype.slice.call(back.querySelectorAll(".ic-filter-chiprow")).forEach(function (row) {
+        var group = row.getAttribute("data-filter-group");
+        if (group === "sort") {
+          Array.prototype.slice.call(row.querySelectorAll(".ic-filter-chip")).forEach(function (chip) {
+            chip.textContent = sortLabel(chip.getAttribute("data-value"));
+            chip.classList.toggle("on", chip.getAttribute("data-value") === draft.sort);
+          });
         }
-        else if (kind === "category") { var j = f.categories.indexOf(value); if (j >= 0) f.categories.splice(j, 1); else f.categories.push(value); chipEl.classList.toggle("on"); }
-        else if (kind === "currency") { var k = f.currencies.indexOf(value); if (k >= 0) f.currencies.splice(k, 1); else f.currencies.push(value); chipEl.classList.toggle("on"); }
-        else if (kind === "due") {
-          f.quick = f.quick === value ? "all" : value;
-          Array.prototype.slice.call(back.querySelectorAll('[data-grid-filter="due"]')).forEach(function (b) { b.classList.toggle("on", b.getAttribute("data-value") === f.quick); });
-        }
-        refreshCount();
+        row.addEventListener("click", function (e) {
+          var chip = e.target.closest(".ic-filter-chip"); if (!chip) return;
+          var value = chip.getAttribute("data-value");
+          if (group === "sort") { draft.sort = value; Array.prototype.slice.call(row.querySelectorAll(".ic-filter-chip")).forEach(function (c) { c.classList.toggle("on", c === chip); }); return; }
+          chip.classList.toggle("on");
+          var arr = draft[group], i = arr.indexOf(value);
+          if (i >= 0) arr.splice(i, 1); else arr.push(value);
+        });
       });
-      var minEl = back.querySelector("#ig-filter-min"), maxEl = back.querySelector("#ig-filter-max"), clientEl = back.querySelector("#ig-filter-client"), monthEl = back.querySelector("#ig-filter-month");
-      if (minEl) minEl.addEventListener("input", function () { f.minAmount = minEl.value; refreshCount(); });
-      if (maxEl) maxEl.addEventListener("input", function () { f.maxAmount = maxEl.value; refreshCount(); });
-      if (clientEl) clientEl.addEventListener("input", function () { f.search = clientEl.value; refreshCount(); });
-      if (monthEl) monthEl.addEventListener("change", function () { f.month = monthEl.value; refreshCount(); });
-    } });
-  }
-
-  function openGridColumns() {
-    var body = '<div class="x97-checks">' + igOrderedCols().map(function (c) {
-      var visible = !gridState.hidden[c.key];
-      return '<label class="x97-check"><input type="checkbox" data-col-toggle="' + attr(c.key) + '" ' + (visible ? "checked" : "") + (c.key === "client" ? " disabled" : "") + '><span>' + esc(c.label) + '</span></label>';
-    }).join("") + '</div><div class="x97-help" style="margin-top:10px">Hidden columns keep their data — nothing is deleted.</div>';
-    openSheet("Visible columns", body, '<button class="x97-btn primary" data-x97-action="close-sheet">Done</button>', { afterOpen: function (back) {
-      back.addEventListener("change", function (e) {
-        var box = e.target.closest && e.target.closest("[data-col-toggle]");
-        if (!box) return;
-        var key = box.getAttribute("data-col-toggle");
-        if (box.checked) delete gridState.hidden[key]; else gridState.hidden[key] = true;
-        igSavePersistedHidden(); scheduleRender(0);
+      back.querySelector('[data-x97-action="incoming-filters-reset"]').addEventListener("click", function () {
+        state.upcoming.statuses = []; state.upcoming.currencies = []; state.upcoming.categories = [];
+        state.upcoming.from = ""; state.upcoming.to = ""; state.upcoming.minAmount = ""; state.upcoming.maxAmount = ""; state.upcoming.sort = "urgency";
+        savePrefs(); closeSheet(); scheduleRender(0);
+      });
+      back.querySelector('[data-x97-action="incoming-filters-apply"]').addEventListener("click", function () {
+        state.upcoming.statuses = draft.statuses; state.upcoming.currencies = draft.currencies; state.upcoming.categories = draft.categories; state.upcoming.sort = draft.sort;
+        state.upcoming.from = back.querySelector("#ic-f-from").value; state.upcoming.to = back.querySelector("#ic-f-to").value;
+        state.upcoming.minAmount = back.querySelector("#ic-f-min").value; state.upcoming.maxAmount = back.querySelector("#ic-f-max").value;
+        savePrefs(); closeSheet(); scheduleRender(0);
       });
     } });
   }
 
-  function openGridMore() {
-    var theme = loadTheme();
-    var moreCollapsible = igVisibleCollapsibles();
-    var moreAnyOpen = moreCollapsible.some(function (r) { return !r.collapsed; });
-    var body = '<div class="ig-more-list">' +
-      '<button class="x97-card-action full" data-x97-action="grid-add-row">' + icon("plus", 15) + ' Add row</button>' +
-      '<button class="x97-card-action full" data-x97-action="grid-undo">' + icon("undo", 15) + ' Undo</button>' +
-      '<button class="x97-card-action full" data-x97-action="grid-redo">' + icon("redo", 15) + ' Redo</button>' +
-      '<button class="x97-card-action full" data-x97-action="open-grid-columns">' + icon("columns", 15) + ' Columns</button>' +
-      '<button class="x97-card-action full" data-x97-action="grid-bulk-toggle">' + icon("rows", 15) + ' Select rows…</button>' +
-      (moreCollapsible.length ? '<button class="x97-card-action full" data-x97-action="grid-collapse-all" data-value="' + (moreAnyOpen ? "collapse" : "expand") + '">' + icon(moreAnyOpen ? "collapse" : "expand", 15) + (moreAnyOpen ? ' Collapse all schedules' : ' Expand all schedules') + '</button>' : "") +
-      '<button class="x97-card-action full" data-x97-action="open-exports">' + icon("list", 15) + ' Export</button>' +
-      '<div class="ig-theme-row">' +
-        '<span class="ig-theme-label">Appearance</span>' +
-        '<div class="ig-theme-seg" role="group" aria-label="Appearance">' +
-          '<button class="ig-theme-opt' + (theme === "light" ? " on" : "") + '" data-x97-action="set-theme" data-value="light">' + icon("sun", 14) + 'Light</button>' +
-          '<button class="ig-theme-opt' + (theme === "dark" ? " on" : "") + '" data-x97-action="set-theme" data-value="dark">' + icon("moon", 14) + 'Dark</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
-    openSheet("More", body, "");
+  function openIncomingMore() {
+    var dark = loadTheme() === "dark";
+    var body = '<div class="ic-more-list">' +
+      '<button class="x97-row" data-x97-action="incoming-bulk-toggle-close">' + icon("rows", 16) + '<div class="x97-row-main"><div class="x97-row-title">Select rows…</div><div class="x97-row-sub">Pick several deals to delete at once</div></div></button>' +
+      '<button class="x97-row" data-x97-action="grid-collapse-all" data-value="collapse">' + icon("collapse", 16) + '<div class="x97-row-main"><div class="x97-row-title">Collapse all schedules</div></div></button>' +
+      '<button class="x97-row" data-x97-action="grid-collapse-all" data-value="expand">' + icon("expand", 16) + '<div class="x97-row-main"><div class="x97-row-title">Expand all schedules</div></div></button>' +
+      '<button class="x97-row" data-x97-action="export-csv" data-kind="receivables">' + icon("list", 16) + '<div class="x97-row-main"><div class="x97-row-title">Export CSV</div></div></button>' +
+    '</div>' +
+    '<div class="ic-theme-row"><span class="ic-theme-label">Appearance</span><div class="ic-theme-seg"><button class="ic-theme-opt' + (!dark ? " on" : "") + '" data-x97-action="set-theme" data-value="light">' + icon("sun", 14) + ' Light</button><button class="ic-theme-opt' + (dark ? " on" : "") + '" data-x97-action="set-theme" data-value="dark">' + icon("moon", 14) + ' Dark</button></div></div>';
+    openSheet("More", body, "", { afterOpen: function (back) {
+      var b = back.querySelector('[data-x97-action="incoming-bulk-toggle-close"]');
+      if (b) b.addEventListener("click", function () { closeSheet(); icSetBulkMode(true); });
+    } });
   }
 
+  function icSetBulkMode(on) {
+    icBulk.on = on; icBulk.rows = {};
+    scheduleRender(0);
+  }
+  function icToggleBulkRow(id) {
+    if (icBulk.rows[id]) delete icBulk.rows[id]; else icBulk.rows[id] = true;
+    scheduleRender(0);
+  }
+  function icDeleteBulkRows() {
+    var doc = readDoc(); if (!doc) return;
+    var ids = Object.keys(icBulk.rows);
+    if (!ids.length) return;
+    var locked = ids.filter(function (id) { var item = (doc.followups || []).find(function (x) { return String(x.id) === String(id); }); return item && dealHasRecordedMoney(item); });
+    var removable = ids.filter(function (id) { return locked.indexOf(id) < 0; });
+    if (!removable.length) { toast("Every selected deal has recorded money — nothing was deleted", "error"); return; }
+    var msg = "Delete " + removable.length + " deal" + (removable.length === 1 ? "" : "s") + "?" + (locked.length ? " (" + locked.length + " with money recorded will be kept.)" : "");
+    if (!confirm(msg)) return;
+    updateDoc(function (d) { d.followups = (d.followups || []).filter(function (x) { return removable.indexOf(String(x.id)) < 0; }); }, "incoming-bulk-delete");
+    icClearBulk(); scheduleRender(0);
+  }
   function networkClass(network) {
     var n = String(network || "").toLowerCase();
     return n.indexOf("airtel") >= 0 ? "airtel" : n.indexOf("mtn") >= 0 ? "mtn" : "other";
@@ -6750,22 +4581,15 @@
     if(action==="copy-document"){var ta=document.getElementById("x97-doc-text");if(ta){navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(ta.value).then(function(){toast("Copied","success");},function(){toast("Could not copy","error");}):(ta.style.display="block",ta.select(),toast("Select and copy","success"));}return;}
     if(action==="send-document"){var sdoc=readDoc();var sitem=sdoc&&(sdoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(sitem){var body=documentText(sitem,sdoc,btn.dataset.kind);window.open("https://wa.me/"+waNumber(sitem.phone,sdoc)+"?text="+encodeURIComponent(body),"_blank");closeSheet();}return;}
     if(action==="fx-amount"){fxConv.amount=btn.dataset.value;var amt=document.getElementById("x97-fx-amount");if(amt)amt.value=fxConv.amount;fxPaint();return;}
-    if(action==="grid-add-row"){igAddRow();return;}
-    if(action==="grid-undo"){igUndo();return;}
-    if(action==="grid-redo"){igRedo();return;}
-    if(action==="grid-sort"){var gsKey=btn.dataset.col;if(gsKey==="client")state.upcoming.sort="client";else if(gsKey==="gross"||gsKey==="balance")state.upcoming.sort=state.upcoming.sort==="amountDesc"?"amountAsc":"amountDesc";else if(gsKey==="due")state.upcoming.sort=state.upcoming.sort==="dateAsc"?"dateDesc":"dateAsc";savePrefs();scheduleRender(0);return;}
-    if(action==="open-grid-filters"){openGridFilters(readDoc());return;}
-    if(action==="grid-filters-apply"){savePrefs();closeSheet();scheduleRender(0);return;}
-    if(action==="grid-filters-reset"){state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.quick="open";state.upcoming.sort="urgency";state.upcoming.search="";state.upcoming.month="all";savePrefs();closeSheet();scheduleRender(0);return;}
-    if(action==="grid-legend"){var lgr=btn.getBoundingClientRect();igOpenLegend(lgr.left,lgr.bottom+6);return;}
-    if(action==="open-grid-columns"){openGridColumns();return;}
-    if(action==="open-grid-more"){openGridMore();return;}
-    if(action==="grid-zoom"){igSetZoom(btn.dataset.value);return;}
+    if(action==="open-incoming-filters"){openIncomingFilters(readDoc());return;}
+    if(action==="open-incoming-more"){openIncomingMore();return;}
     if(action==="set-theme"){setTheme(btn.dataset.value);return;}
-    if(action==="grid-collapse-all"){igCollapseAll(btn.dataset.value!=="expand");closeSheet();return;}
-    if(action==="grid-bulk-toggle"){igSetBulkMode(!gridState.bulkMode);closeSheet();return;}
-    if(action==="grid-bulk-cancel"){igSetBulkMode(false);return;}
-    if(action==="grid-bulk-delete"){igDeleteBulkRows();return;}
+    if(action==="grid-collapse-all"){icCollapseAll(btn.dataset.value!=="expand");closeSheet();return;}
+    if(action==="incoming-bulk-toggle"){icSetBulkMode(!icBulk.on);return;}
+    if(action==="incoming-bulk-cancel"){icSetBulkMode(false);return;}
+    if(action==="incoming-bulk-delete"){icDeleteBulkRows();return;}
+    if(action==="incoming-bulk-row"){e.stopPropagation();icToggleBulkRow(btn.dataset.id);return;}
+    if(action==="incoming-collapse"){e.stopPropagation();icToggleCollapse(btn.dataset.id);return;}
   }, true);
 
   function resumeOriginalTab() {
@@ -6779,7 +4603,7 @@
       updateCloudPill();
       if (!currentScreen) return;
       var raw="";try{raw=localStorage.getItem(DATA_KEY)||"";}catch(_){}
-      if(raw&&raw!==lastRaw){lastRaw=raw;if(gridState.editing){gridState.pendingExternalRender=true;return;}scheduleRender(50);}
+      if(raw&&raw!==lastRaw){lastRaw=raw;scheduleRender(50);}
     },1000);
   }
 
