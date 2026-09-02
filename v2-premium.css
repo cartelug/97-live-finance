@@ -1839,6 +1839,22 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
    rest of the columns. Stays invisible until there's something to float over. */
 .ig-shell.ig-scrolled-x .ig-frozen-last { box-shadow: 3px 0 6px -2px color-mix(in srgb, var(--tx) 35%, transparent); }
 
+/* Dragging a row to reorder it. Only a deal's own row is draggable — its
+   instalments move with it, not on their own. (.ig-group already sets its
+   own pointer cursor, which wins over this on the toggle itself.) */
+.ig-rownum:not(.ig-colhead):not(.ig-filler-cell) { cursor: grab; }
+.ig-row-part .ig-rownum { cursor: default; }
+body.ig-rowdragging { cursor: grabbing !important; user-select: none !important; }
+.ig-row-dragging { opacity: .4; }
+.ig-row-drop { position: absolute; left: 0; height: 2px; margin-top: -1px; background: var(--pos); pointer-events: none; z-index: 11; }
+.ig-row-ghost {
+  position: fixed; z-index: 90; transform: translate(14px, -50%); pointer-events: none;
+  background: var(--card); border: 1px solid var(--pos); color: var(--tx);
+  border-radius: 7px; padding: 5px 10px; font-size: 11px; font-weight: 700;
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  box-shadow: var(--elev-2);
+}
+
 /* Instalment rows. A deal with a schedule shows a row per payment under the
    row that totals them — same grid, same cells, nothing behind a form. */
 .ig-row-part .ig-c-client { padding-left: calc(20px * var(--ig-zoom, 1)); font-weight: 600; color: var(--tx2); }

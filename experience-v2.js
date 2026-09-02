@@ -95,7 +95,8 @@
       gridZoom: null,
       gridOrder: null,
       gridFreeze: 1,
-      gridCollapsed: []
+      gridCollapsed: [],
+      gridRowOrder: []
     },
     creditView: "available"
   };
@@ -2470,6 +2471,18 @@
 
   function sortFollowups(items, doc) {
     var mode = state.upcoming.sort;
+    if (mode === "custom") {
+      var order = state.upcoming.gridRowOrder || [];
+      var rank = {};
+      order.forEach(function (id, i) { rank[String(id)] = i; });
+      return items.sort(function (a, b) {
+        var ra = rank[String(a.id)], rb = rank[String(b.id)];
+        if (ra == null && rb == null) return 0;
+        if (ra == null) return 1;
+        if (rb == null) return -1;
+        return ra - rb;
+      });
+    }
     return items.sort(function (a, b) {
       var at = timing(a, doc), bt = timing(b, doc), ad = at.next ? at.next.dueDate : a.expectedBy, bd = bt.next ? bt.next.dueDate : b.expectedBy;
       if (mode === "dateAsc") return String(ad || "9999-12-31").localeCompare(String(bd || "9999-12-31"));
@@ -2498,7 +2511,7 @@
   }
 
   function igSortLabel(mode) {
-    return { urgency: "Most urgent", client: "Client A–Z", amountDesc: "Largest first", amountAsc: "Smallest first", dateAsc: "Earliest due", dateDesc: "Latest due" }[mode] || mode;
+    return { urgency: "Most urgent", client: "Client A–Z", amountDesc: "Largest first", amountAsc: "Smallest first", dateAsc: "Earliest due", dateDesc: "Latest due", custom: "Custom order" }[mode] || mode;
   }
 
   function collectionStats(doc) {
@@ -4225,7 +4238,137 @@
     setTimeout(function () { gridState.suppressClick = false; }, 350);
   }
 
-  /* Drag a column header sideways to reorder, the way Sheets does. Touch is
+  /* Dragging a row to reorder it, the way Sheets does. Rows are otherwise
+     always computed by the active sort, so there is nothing to hold a manual
+     position — dragging one switches the sheet to "Custom order" (mirroring
+     how a column drag writes gridOrder) and remembers where every deal you
+     have touched belongs. A deal not yet placed sorts after the ones that
+     are, so this never has to solve a full merge with an unrelated sort. */
+  function igTopLevelOrder() { return (gridState.order || []).filter(function (id) { return String(id).indexOf("::") < 0; }); }
+  function igCommitRowOrder(draggedId, targetIndex) {
+    var visible = igTopLevelOrder();
+    var fromIdx = visible.indexOf(String(draggedId));
+    if (fromIdx < 0) return false;
+    targetIndex = Math.max(0, Math.min(visible.length - 1, targetIndex));
+    if (targetIndex === fromIdx) return false;
+    var wasCustom = state.upcoming.sort === "custom" && Array.isArray(state.upcoming.gridRowOrder) && state.upcoming.gridRowOrder.length;
+    var baseline = wasCustom ? state.upcoming.gridRowOrder.slice() : visible.slice();
+    var reordered = visible.slice();
+    reordered.splice(targetIndex, 0, reordered.splice(fromIdx, 1)[0]);
+    var visibleSet = {};
+    visible.forEach(function (id) { visibleSet[id] = true; });
+    var withoutVisible = [], insertAt = -1, seenOthers = 0;
+    baseline.forEach(function (id) {
+      if (visibleSet[id]) { if (insertAt < 0) insertAt = seenOthers; }
+      else { withoutVisible.push(id); seenOthers++; }
+    });
+    if (insertAt < 0) insertAt = withoutVisible.length;
+    state.upcoming.gridRowOrder = withoutVisible.slice(0, insertAt).concat(reordered, withoutVisible.slice(insertAt));
+    state.upcoming.sort = "custom";
+    savePrefs();
+    return true;
+  }
+  function igStartRowDrag(e, rownumEl, rowId) {
+    var scroll = document.getElementById("ig-scroll"), body = document.getElementById("ig-body");
+    if (!scroll || !body) return;
+    var startY = e.clientY, armed = false, targetIndex = null;
+    var order = igTopLevelOrder(), fromIndex = order.indexOf(String(rowId));
+    if (fromIndex < 0) return;
+    var indicator = null, ghost = null, blockEls = [];
+    try { rownumEl.setPointerCapture(e.pointerId); } catch (_) {}
+    function dealRowEls() {
+      return order.map(function (id) { return gridState.rowEls[id]; }).filter(Boolean);
+    }
+    function blockOf(id) {
+      var els = [gridState.rowEls[id]].filter(Boolean);
+      (gridState.rows || []).forEach(function (r) { if (r.part && r.parentId === id) { var el = gridState.rowEls[r.id]; if (el) els.push(el); } });
+      return els;
+    }
+    function arm() {
+      armed = true;
+      document.body.classList.add("ig-rowdragging");
+      blockEls = blockOf(rowId);
+      blockEls.forEach(function (el) { el.classList.add("ig-row-dragging"); });
+      indicator = document.createElement("div");
+      indicator.className = "ig-row-drop";
+      body.appendChild(indicator);
+      ghost = document.createElement("div");
+      ghost.className = "ig-row-ghost";
+      var row = gridState.byId[rowId];
+      ghost.textContent = (row && row.client) || "Row";
+      document.body.appendChild(ghost);
+    }
+    function onMove(ev) {
+      if (!armed) {
+        if (Math.abs(ev.clientY - startY) < 6) return;
+        arm();
+      }
+      ghost.style.left = ev.clientX + "px";
+      ghost.style.top = ev.clientY + "px";
+      var els = dealRowEls(), idx = fromIndex, placedAbove = true;
+      for (var i = 0; i < els.length; i++) {
+        var r = els[i].getBoundingClientRect();
+        if (ev.clientY < r.top + r.height / 2) { idx = i; placedAbove = true; break; }
+        idx = i; placedAbove = false;
+      }
+      targetIndex = placedAbove ? idx : Math.min(order.length - 1, idx + 1);
+      var refEl = els[idx];
+      if (refEl) {
+        // The indicator lives in #ig-body, whose only positioned ancestor
+        // is itself — offsetTop is already in the right coordinate space,
+        // no scroll math needed.
+        indicator.style.top = (placedAbove ? refEl.offsetTop : refEl.offsetTop + refEl.offsetHeight) + "px";
+        indicator.style.width = document.getElementById("ig-grid-inner").offsetWidth + "px";
+      }
+      // Auto-scroll the sheet while a drag is held near its top or bottom edge.
+      var sr = scroll.getBoundingClientRect(), edge = 28;
+      if (ev.clientY < sr.top + edge) scroll.scrollTop -= 12;
+      else if (ev.clientY > sr.bottom - edge) scroll.scrollTop += 12;
+    }
+    function onUp() {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+      document.body.classList.remove("ig-rowdragging");
+      blockEls.forEach(function (el) { el.classList.remove("ig-row-dragging"); });
+      if (indicator) indicator.remove();
+      if (ghost) ghost.remove();
+      if (!armed) return;
+      igSuppressNextClick();
+      if (targetIndex !== null && igCommitRowOrder(rowId, targetIndex)) scheduleRender(0);
+    }
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+  }
+  function igWireRowDrag(scroll) {
+    var lp = null;
+    scroll.addEventListener("pointerdown", function (e) {
+      var handle = e.target.closest && e.target.closest(".ig-rownum:not(.ig-colhead):not(.ig-filler-cell)");
+      if (!handle || (e.target.closest && e.target.closest(".ig-group"))) return;
+      var rowId = handle.getAttribute("data-rownum");
+      if (!rowId || rowId.indexOf("::") >= 0) return;
+      if (e.pointerType === "touch") {
+        var sx = e.clientX, sy = e.clientY;
+        lp = setTimeout(function () { igStartRowDrag(e, handle, rowId); }, 380);
+        var cancel = function (ev) {
+          if (ev.type === "pointermove" && Math.abs(ev.clientX - sx) < 8 && Math.abs(ev.clientY - sy) < 8) return;
+          clearTimeout(lp);
+          document.removeEventListener("pointerup", cancel);
+          document.removeEventListener("pointercancel", cancel);
+          document.removeEventListener("pointermove", cancel);
+        };
+        document.addEventListener("pointerup", cancel);
+        document.addEventListener("pointercancel", cancel);
+        document.addEventListener("pointermove", cancel);
+        return;
+      }
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      igStartRowDrag(e, handle, rowId);
+    });
+  }
+
+  /* Drag a column header sideways to reorder, the way Sheets does.  /* Drag a column header sideways to reorder, the way Sheets does. Touch is
      deliberately left out: a sideways swipe on a phone has to stay a scroll,
      so a long press there opens the column menu instead, where Move left and
      Move right do the same job with a thumb. */
@@ -4440,6 +4583,7 @@
     igWireKeyboardInset();
     igWireCellEvents(scroll);
     igWireHeaderInteractions(inner);
+    igWireRowDrag(scroll);
     igWireResize(inner);
     igWireKeyboard(scroll);
     igWireFormulaBar();
