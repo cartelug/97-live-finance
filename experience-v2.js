@@ -1400,7 +1400,8 @@
       sun: '<circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>',
       moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"></path>',
       collapse: '<path d="m7 4 5 5 5-5"></path><path d="m7 20 5-5 5 5"></path>',
-      expand: '<path d="m7 9 5-5 5 5"></path><path d="m7 15 5 5 5-5"></path>'
+      expand: '<path d="m7 9 5-5 5 5"></path><path d="m7 15 5 5 5-5"></path>',
+      rows: '<rect x="3" y="5" width="18" height="4" rx="1"></rect><rect x="3" y="11" width="18" height="4" rx="1"></rect><path d="M3 20h18"></path>'
     };
     return '<svg aria-hidden="true" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' + (paths[name] || paths.more) + '</svg>';
   }
@@ -2627,7 +2628,8 @@
     quickEntry: null, pendingFocusRow: null, chromeAway: false,
     undoStack: [], redoStack: [],
     pendingExternalRender: false,
-    menuEl: null, selEls: [], activeEl: null, activeRowEl: null, activeHeadEl: null, fillPreviewEls: []
+    menuEl: null, selEls: [], activeEl: null, activeRowEl: null, activeHeadEl: null, fillPreviewEls: [],
+    bulkMode: false, bulkRows: {}, bulkAnchor: null
   };
   var IG_ZOOM_MIN = 0.6, IG_ZOOM_MAX = 1.3, IG_ZOOM_STEP = 0.1;
 
@@ -3070,12 +3072,15 @@
     return '<div class="' + igCellClass(col, row) + '" role="gridcell" data-col="' + attr(col.key) + '" data-row="' + attr(row.id) + '" tabindex="-1" title="' + attr(text) + '"' + igFrozenAttrs(col.key) + '>' + igCellInner(col, row) + '</div>';
   }
   function igRowHTML(row) {
-    var num0 = row.hasParts
-      ? '<button type="button" class="ig-group" data-group="' + attr(row.raw && row.raw.id || row.id) + '" aria-expanded="' + (row.collapsed ? "false" : "true") + '" title="' + (row.collapsed ? "Show instalments" : "Hide instalments") + '">' + icon("chevron", 9) + '</button><span class="ig-rownum-n">' + row.index + '</span>'
-      : '<span class="ig-rownum-n">' + row.index + '</span>';
-    var cells = '<div class="ig-cell ig-rownum ig-sticky ig-sticky-num' + (row.hasParts ? " ig-has-parts" : "") + (row.collapsed ? " ig-collapsed" : "") + '" role="rowheader" data-rownum="' + attr(row.id) + '">' + num0 + '</div>';
+    var bulked = !row.part && !!gridState.bulkRows[row.id];
+    var num0 = bulked
+      ? '<span class="ig-rownum-check">' + icon("check", 11) + '</span>'
+      : (row.hasParts
+        ? '<button type="button" class="ig-group" data-group="' + attr(row.raw && row.raw.id || row.id) + '" aria-expanded="' + (row.collapsed ? "false" : "true") + '" title="' + (row.collapsed ? "Show instalments" : "Hide instalments") + '">' + icon("chevron", 9) + '</button><span class="ig-rownum-n">' + row.index + '</span>'
+        : '<span class="ig-rownum-n">' + row.index + '</span>');
+    var cells = '<div class="ig-cell ig-rownum ig-sticky ig-sticky-num' + (row.hasParts ? " ig-has-parts" : "") + (row.collapsed ? " ig-collapsed" : "") + (bulked ? " ig-row-bulk" : "") + '" role="rowheader" data-rownum="' + attr(row.id) + '">' + num0 + '</div>';
     cells += igVisibleCols().map(function (c) { return igCellHTML(c, row); }).join("");
-    return '<div class="ig-row' + (row.open ? "" : " ig-row-settled") + (row.tone ? " ig-row-" + row.tone : "") + (row.part ? " ig-row-part" : "") + '" role="row" data-row-id="' + attr(row.id) + '">' + cells + '</div>';
+    return '<div class="ig-row' + (row.open ? "" : " ig-row-settled") + (row.tone ? " ig-row-" + row.tone : "") + (row.part ? " ig-row-part" : "") + (bulked ? " ig-row-bulk" : "") + '" role="row" data-row-id="' + attr(row.id) + '">' + cells + '</div>';
   }
   function igSortMatches(key) {
     var s = state.upcoming.sort;
@@ -3106,7 +3111,16 @@
     if (f.quick !== "open" && f.quick !== "all") count++;
     return count;
   }
+  function igSelectionBarHTML() {
+    var n = igBulkCount();
+    return '<div class="ig-toolbar ig-selbar">' +
+      '<button class="ig-tbtn" data-x97-action="grid-bulk-cancel" title="Cancel selection">' + icon("close", 16) + '</button>' +
+      '<span class="ig-selbar-count">' + n + (n === 1 ? " row selected" : " rows selected") + '</span>' +
+      '<button class="ig-tbtn ig-tbtn-danger" data-x97-action="grid-bulk-delete" title="Delete selected rows"' + (n ? "" : " disabled") + '>' + icon("trash", 16) + '<span class="ig-tlabel">Delete</span></button>' +
+    '</div>';
+  }
   function igToolbarHTML() {
+    if (gridState.bulkMode) return igSelectionBarHTML();
     var f = state.upcoming, count = igGridFilterCount();
     var collapsible = igVisibleCollapsibles();
     var anyOpen = collapsible.some(function (r) { return !r.collapsed; });
@@ -3123,6 +3137,7 @@
         '<button class="ig-tbtn" data-x97-action="open-grid-filters" title="Filter"><span class="ig-tbtn-badge-wrap">' + icon("filter", 16) + (count ? '<b class="ig-tbadge">' + count + '</b>' : "") + '</span><span class="ig-tlabel">Filter</span></button>' +
         '<button class="ig-tbtn ig-tbtn-columns" data-x97-action="open-grid-columns" title="Columns">' + icon("columns", 16) + '</button>' +
         '<button class="ig-tbtn" data-x97-action="grid-legend" title="What the colours mean">' + icon("info", 16) + '</button>' +
+        '<button class="ig-tbtn ig-tbtn-selrows" data-x97-action="grid-bulk-toggle" title="Select rows">' + icon("rows", 16) + '</button>' +
         '<button class="ig-tbtn" data-x97-action="open-grid-more" title="More">' + icon("dots", 16) + '</button>' +
       '</div>' +
     '</div>';
@@ -3384,6 +3399,7 @@
 
   function igSetActive(rowId, col, opts) {
     opts = opts || {};
+    if (gridState.bulkMode) igClearBulk();
     if (gridState.editing && !(gridState.editing.rowId === rowId && gridState.editing.col === col)) igCommitEdit();
     // Moving off a freshly added row ends its fast-entry run: it stops being
     // pinned to the top and takes its place in the sort like any other row.
@@ -4131,14 +4147,19 @@
     if (!row) return;
     var menu = document.createElement("div");
     menu.className = "ig-menu";
-    // Nothing here opens a detail sheet: every figure this menu used to hide
-    // behind a form is a cell on the row itself.
-    var items = [
-      { label: "Copy", action: "copy" }, { label: "Cut", action: "cut" }, { label: "Paste", action: "paste" },
-      { label: "Clear", action: "clear" },
-      { label: row.part ? "Add instalment below" : "Add instalment", action: "add-part" },
-      { label: row.part ? "Delete instalment" : "Delete row", action: "delete", danger: !row.locked, disabled: row.locked }
-    ];
+    // Right-clicking a row that's part of the current bulk selection acts
+    // on the whole selection, not just the row under the pointer.
+    var bulk = gridState.bulkMode && gridState.bulkRows[rowId];
+    var items = bulk
+      ? [{ label: "Delete " + igBulkCount() + " rows", action: "bulk-delete", danger: true }, { label: "Clear selection", action: "bulk-cancel" }]
+      // Nothing here opens a detail sheet: every figure this menu used to
+      // hide behind a form is a cell on the row itself.
+      : [
+        { label: "Copy", action: "copy" }, { label: "Cut", action: "cut" }, { label: "Paste", action: "paste" },
+        { label: "Clear", action: "clear" },
+        { label: row.part ? "Add instalment below" : "Add instalment", action: "add-part" },
+        { label: row.part ? "Delete instalment" : "Delete row", action: "delete", danger: !row.locked, disabled: row.locked }
+      ];
     menu.innerHTML = items.map(function (it) { return '<button class="ig-menu-item' + (it.danger ? " danger" : "") + '" data-menu="' + it.action + '"' + (it.disabled ? " disabled" : "") + '>' + esc(it.label) + '</button>'; }).join("");
     menu.addEventListener("click", function (e) {
       var btn = e.target.closest && e.target.closest(".ig-menu-item");
@@ -4150,6 +4171,8 @@
       else if (act === "clear") igClearSelectionValues();
       else if (act === "add-part") igAddPart(row.id);
       else if (act === "delete") igDeleteRow(row.id);
+      else if (act === "bulk-delete") igDeleteBulkRows();
+      else if (act === "bulk-cancel") igSetBulkMode(false);
     });
     igPlaceMenu(menu, x, y);
   }
@@ -4248,10 +4271,27 @@
     var corner = e.target.closest && e.target.closest(".ig-rownum.ig-colhead");
     if (corner) { igSelectAll(); return; }
     var group = e.target.closest && e.target.closest(".ig-group");
-    if (group) { e.preventDefault(); e.stopPropagation(); igToggleCollapse(group.getAttribute("data-group")); return; }
+    // The collapse chevron sits inside the same row-number cell a bulk
+    // selection click lands on. A modifier held (or bulk mode already on)
+    // means the click is about picking the row, not folding its schedule —
+    // otherwise a Ctrl-click aimed at the row could silently collapse it
+    // instead of selecting it, with nothing on screen explaining why.
+    if (group && !(e.shiftKey || e.ctrlKey || e.metaKey || gridState.bulkMode)) {
+      e.preventDefault(); e.stopPropagation(); igToggleCollapse(group.getAttribute("data-group")); return;
+    }
     var rownum = e.target.closest && e.target.closest(".ig-rownum:not(.ig-colhead):not(.ig-filler-cell)");
     if (rownum) {
       var rid = rownum.getAttribute("data-rownum"), cols = igVisibleCols();
+      // Bulk row selection only applies to a deal's own row.
+      if (rid.indexOf("::") < 0 && (e.shiftKey || e.ctrlKey || e.metaKey || gridState.bulkMode)) {
+        if (e.shiftKey) igExtendBulkRows(rid); else igToggleBulkRow(rid);
+        return;
+      }
+      igClearBulk();
+      // Not yet in bulk mode, but this is still the row a *next* shift-click
+      // would range from — exactly the anchor Sheets remembers from an
+      // ordinary row-header click.
+      gridState.bulkAnchor = rid;
       if (cols.length) { gridState.anchor = { rowId: rid, col: cols[0].key }; gridState.active = { rowId: rid, col: cols[cols.length - 1].key }; igPaintActive(); }
       return;
     }
@@ -4374,7 +4414,58 @@
     setTimeout(function () { gridState.suppressClick = false; }, 350);
   }
 
-  /* Dragging a row to reorder it, the way Sheets does. Rows are otherwise
+  /* Selecting several rows at once to delete them together, the way Sheets'
+     row headers work: click one, shift-click extends a run, ctrl/cmd-click
+     toggles one in or out. Touch has no modifier keys, so the "Select rows"
+     toggle puts the sheet into the same mode explicitly — once it's on, a
+     plain tap toggles a row the same way a ctrl-click would. Only deal rows
+     are selectable this way; an instalment goes or stays with its deal. */
+  function igClearBulk() {
+    if (!gridState.bulkMode && !Object.keys(gridState.bulkRows).length) return;
+    gridState.bulkMode = false;
+    gridState.bulkRows = {};
+    gridState.bulkAnchor = null;
+  }
+  function igSetBulkMode(on) {
+    if (on === gridState.bulkMode) return;
+    if (on) { gridState.active = null; gridState.anchor = null; gridState.bulkMode = true; }
+    else igClearBulk();
+    scheduleRender(0);
+  }
+  function igBulkCount() { return Object.keys(gridState.bulkRows).length; }
+  function igToggleBulkRow(id) {
+    gridState.active = null; gridState.anchor = null; gridState.bulkMode = true;
+    if (gridState.bulkRows[id]) delete gridState.bulkRows[id]; else gridState.bulkRows[id] = true;
+    gridState.bulkAnchor = id;
+    scheduleRender(0);
+  }
+  function igExtendBulkRows(toId) {
+    gridState.active = null; gridState.anchor = null; gridState.bulkMode = true;
+    var order = igTopLevelOrder(), from = order.indexOf(String(gridState.bulkAnchor || toId)), to = order.indexOf(String(toId));
+    if (from < 0) from = to;
+    var lo = Math.min(from, to), hi = Math.max(from, to);
+    for (var i = lo; i <= hi; i++) gridState.bulkRows[order[i]] = true;
+    scheduleRender(0);
+  }
+  function igDeleteBulkRows() {
+    var ids = Object.keys(gridState.bulkRows);
+    if (!ids.length) return;
+    var doc = readDoc();
+    var items = ids.map(function (id) { return (doc.followups || []).find(function (x) { return String(x.id) === String(id); }); }).filter(Boolean);
+    var locked = items.filter(dealHasRecordedMoney);
+    var free = items.filter(function (it) { return !dealHasRecordedMoney(it); });
+    if (!free.length) { toast(locked.length === 1 ? "That deal has recorded money and can't be deleted" : "All selected deals have recorded money — none can be deleted", "error"); return; }
+    var msg = "Delete " + free.length + " row" + (free.length === 1 ? "" : "s") + (free.length === 1 && free[0].client ? ' — "' + free[0].client + '"' : "") + "?";
+    if (locked.length) msg += " (" + locked.length + " with money recorded will be kept.)";
+    if (!confirm(msg)) return;
+    var freeIds = {};
+    free.forEach(function (it) { igPushUndo(String(it.id)); freeIds[String(it.id)] = true; });
+    updateDoc(function (d) { d.followups = (d.followups || []).filter(function (x) { return !freeIds[String(x.id)]; }); }, "grid-delete-rows", true);
+    igClearBulk();
+    toast(free.length + " row" + (free.length === 1 ? "" : "s") + " deleted" + (locked.length ? " · " + locked.length + " kept" : ""), "success");
+  }
+
+  /* Dragging a row to reorder it, the way Sheets does.  /* Dragging a row to reorder it, the way Sheets does. Rows are otherwise
      always computed by the active sort, so there is nothing to hold a manual
      position — dragging one switches the sheet to "Custom order" (mirroring
      how a column drag writes gridOrder) and remembers where every deal you
@@ -4482,6 +4573,7 @@
     scroll.addEventListener("pointerdown", function (e) {
       var handle = e.target.closest && e.target.closest(".ig-rownum:not(.ig-colhead):not(.ig-filler-cell)");
       if (!handle || (e.target.closest && e.target.closest(".ig-group"))) return;
+      if (gridState.bulkMode || e.shiftKey || e.ctrlKey || e.metaKey) return;
       var rowId = handle.getAttribute("data-rownum");
       if (!rowId || rowId.indexOf("::") >= 0) return;
       if (e.pointerType === "touch") {
@@ -4621,6 +4713,13 @@
   function igWireKeyboard(scroll) {
     scroll.addEventListener("keydown", function (e) {
       if (gridState.editing) return;
+      // Bulk row selection deliberately leaves gridState.active null, so its
+      // own keys are handled before the "no active cell" branch below would
+      // otherwise swallow them.
+      if (gridState.bulkMode) {
+        if (e.key === "Escape") { e.preventDefault(); igSetBulkMode(false); return; }
+        if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); igDeleteBulkRows(); return; }
+      }
       if (!gridState.active) {
         if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Enter"].indexOf(e.key) >= 0 && gridState.order.length) {
           e.preventDefault();
@@ -4682,6 +4781,14 @@
     igIndexDom(body);
     scroll.scrollTop = gridState.scrollTop || 0;
     scroll.scrollLeft = gridState.scrollLeft || 0;
+    // A full render replaces #ig-scroll itself, so whatever held keyboard
+    // focus a moment ago no longer exists and focus quietly falls back to
+    // the page. Selecting rows re-renders on every click, so without this
+    // the second row picked would leave Delete/Escape with nothing to reach
+    // — the toolbar becomes the selection bar in bulk mode, taking the
+    // search box (the other thing that could legitimately want focus here)
+    // out of the running.
+    if (gridState.bulkMode) scroll.focus({ preventScroll: true });
     var shell = root && root.querySelector(".ig-shell");
     scroll.addEventListener("scroll", function () {
       gridState.scrollTop = scroll.scrollTop;
@@ -4697,7 +4804,10 @@
     }, { passive: true });
     if (shell && gridState.chromeAway) shell.classList.add("ig-scrolled");
     if (shell && gridState.scrolledX) shell.classList.add("ig-scrolled-x");
-    if (!gridState.active && gridState.order.length) {
+    // Bulk row selection deliberately leaves nothing active, and every
+    // toggle re-renders — without this guard the sheet would silently pick
+    // the first cell back as active on the very next click.
+    if (!gridState.active && !gridState.bulkMode && gridState.order.length) {
       var cols0 = igVisibleCols();
       if (cols0.length) { gridState.anchor = { rowId: gridState.order[0], col: cols0[0].key }; gridState.active = gridState.anchor; }
     }
@@ -4809,6 +4919,7 @@
       '<button class="x97-card-action full" data-x97-action="grid-undo">' + icon("undo", 15) + ' Undo</button>' +
       '<button class="x97-card-action full" data-x97-action="grid-redo">' + icon("redo", 15) + ' Redo</button>' +
       '<button class="x97-card-action full" data-x97-action="open-grid-columns">' + icon("columns", 15) + ' Columns</button>' +
+      '<button class="x97-card-action full" data-x97-action="grid-bulk-toggle">' + icon("rows", 15) + ' Select rows…</button>' +
       (moreCollapsible.length ? '<button class="x97-card-action full" data-x97-action="grid-collapse-all" data-value="' + (moreAnyOpen ? "collapse" : "expand") + '">' + icon(moreAnyOpen ? "collapse" : "expand", 15) + (moreAnyOpen ? ' Collapse all schedules' : ' Expand all schedules') + '</button>' : "") +
       '<button class="x97-card-action full" data-x97-action="open-exports">' + icon("list", 15) + ' Export</button>' +
       '<div class="ig-theme-row">' +
@@ -6535,6 +6646,9 @@
     if(action==="grid-zoom"){igSetZoom(btn.dataset.value);return;}
     if(action==="set-theme"){setTheme(btn.dataset.value);return;}
     if(action==="grid-collapse-all"){igCollapseAll(btn.dataset.value!=="expand");closeSheet();return;}
+    if(action==="grid-bulk-toggle"){igSetBulkMode(!gridState.bulkMode);closeSheet();return;}
+    if(action==="grid-bulk-cancel"){igSetBulkMode(false);return;}
+    if(action==="grid-bulk-delete"){igDeleteBulkRows();return;}
   }, true);
 
   function resumeOriginalTab() {

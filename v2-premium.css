@@ -2097,6 +2097,22 @@ select.ig-edit-input { padding: 0 calc(6px * var(--ig-zoom, 1)); }
 .ig-menu-item { text-align: left; padding: 8px 10px; border-radius: 8px; border: 0; background: transparent; font-size: 12.5px; font-weight: 650; color: var(--tx); cursor: pointer; }
 .ig-menu-item:hover { background: var(--ig-surface2); }
 .ig-menu-item.danger { color: var(--neg); }
+
+/* Bulk row selection — click a row number to pick it, shift-click to run a
+   range, ctrl/cmd-click to add one anywhere, exactly like Sheets' row
+   headers. The checkmark replaces the row number itself, the same way
+   Sheets and most row-select UIs show what's picked. */
+.ig-row-bulk .ig-rownum { background: var(--ig-selected); color: var(--tx); }
+.ig-row-bulk .ig-cell:not(.ig-rownum) { background: color-mix(in srgb, var(--tx) 4%, var(--card)); }
+.ig-rownum-check { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: var(--tx); }
+
+/* The selection bar replaces the normal toolbar while bulk mode is on —
+   same slot, same height, so nothing above or below it shifts. */
+.ig-selbar { gap: 10px; }
+.ig-selbar-count { flex: 1 1 auto; font-size: 12.5px; font-weight: 750; color: var(--tx); }
+.ig-tbtn-danger { color: var(--neg); }
+.ig-tbtn-danger:hover { background: color-mix(in srgb, var(--neg) 12%, transparent); border-color: color-mix(in srgb, var(--neg) 30%, transparent); }
+.ig-tbtn-danger[disabled] { color: var(--tx2); }
 .ig-menu-item[disabled] { opacity: .4; pointer-events: none; }
 
 .ig-filter-sheet { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
@@ -2202,7 +2218,7 @@ select.ig-edit-input { padding: 0 calc(6px * var(--ig-zoom, 1)); }
 
   /* Secondary controls move to the More sheet so the toolbar never wraps. */
   .ig-toolbar { padding: 4px var(--ig-gut); gap: 4px; }
-  .ig-tbtn-redo, .ig-tbtn-columns, .ig-tbtn-collapse { display: none; }
+  .ig-tbtn-redo, .ig-tbtn-columns, .ig-tbtn-collapse, .ig-tbtn-selrows { display: none; }
   .ig-tsep { display: none; }
   .ig-toolbar-search { flex: 1 1 90px; }
 }
