@@ -2020,9 +2020,32 @@ body.ig-coldragging { cursor: grabbing !important; user-select: none !important;
 .ig-resize { position: absolute; right: 0; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; }
 .ig-resize:hover, .ig-resize:active { background: var(--ig-selected-line); }
 
-.ig-edit-input { width: 100%; height: 100%; border: 0; background: var(--card); outline: 2px solid var(--pos); outline-offset: -2px; font: inherit; color: var(--tx); padding: 0 8px; margin: 0 -10px; box-sizing: border-box; user-select: text; -webkit-user-select: text; }
-.ig-cell.ig-editing { padding: 0; overflow: visible; z-index: 5; }
-select.ig-edit-input { padding: 0 4px; }
+/* The editor has to land exactly where the cell's own text already is —
+   same padding, same alignment, same box. It used to pull itself 10px out
+   of the cell with a negative margin that was cancelling padding the
+   editing cell had already dropped, so text jumped sideways the moment you
+   typed, numbers lost their right alignment to the browser's default, and
+   the overhang on the last column scrolled the whole sheet sideways. */
+.ig-edit-input {
+  width: 100%; height: 100%; border: 0; margin: 0;
+  padding: 0 calc(10px * var(--ig-zoom, 1));
+  background: var(--card);
+  outline: 2px solid var(--pos); outline-offset: -2px;
+  font: inherit; text-align: inherit; color: var(--tx);
+  box-sizing: border-box; user-select: text; -webkit-user-select: text;
+}
+.ig-cell.ig-editing { padding: 0; overflow: hidden; z-index: 5; }
+select.ig-edit-input { padding: 0 calc(6px * var(--ig-zoom, 1)); }
+/* A client cell offers suggestions from a datalist, and Chrome paints its
+   own picker button for one. There is no room for it in a spreadsheet cell,
+   and typing still brings the suggestions up. Date cells keep their
+   calendar button — that one earns its place. */
+.ig-edit-input[list]::-webkit-calendar-picker-indicator { display: none !important; }
+/* Same for the number spinner: it sits on the right edge of a money cell,
+   which is exactly where the figure it is nudging needs to be. */
+.ig-edit-num { appearance: textfield; -moz-appearance: textfield; }
+.ig-edit-num::-webkit-outer-spin-button,
+.ig-edit-num::-webkit-inner-spin-button { -webkit-appearance: none; appearance: none; margin: 0; }
 
 .ig-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--tx2); text-align: center; padding: 24px; background: var(--card); }
 .ig-empty strong { font-size: 14px; color: var(--tx); }
@@ -2179,7 +2202,7 @@ select.ig-edit-input { padding: 0 4px; }
 
   /* Secondary controls move to the More sheet so the toolbar never wraps. */
   .ig-toolbar { padding: 4px var(--ig-gut); gap: 4px; }
-  .ig-tbtn-redo, .ig-tbtn-columns { display: none; }
+  .ig-tbtn-redo, .ig-tbtn-columns, .ig-tbtn-collapse { display: none; }
   .ig-tsep { display: none; }
   .ig-toolbar-search { flex: 1 1 90px; }
 }

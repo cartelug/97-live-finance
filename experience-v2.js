@@ -357,7 +357,7 @@
       }
     });
     rows.forEach(function (row) {
-      row.status = row.paid >= num(row.amount) - 0.5 ? "Paid" : row.paid > 0 ? "Part Paid" : "Pending";
+      row.status = num(row.amount) > 0 && row.paid >= num(row.amount) - 0.5 ? "Paid" : row.paid > 0 ? "Part Paid" : "Pending";
     });
     return rows;
   }
@@ -535,7 +535,10 @@
   }
 
   function dealPaidPartCount(item) {
-    return (item && Array.isArray(item.parts) ? item.parts : []).filter(function (p) { return num(p.paid) >= num(p.amount) - 0.5; }).length;
+    // An instalment with no amount on it yet is a placeholder, not a settled
+    // payment — counting it as paid would make an untouched deal look like it
+    // had money against it, and lock the row.
+    return (item && Array.isArray(item.parts) ? item.parts : []).filter(function (p) { return num(p.amount) > 0 && num(p.paid) >= num(p.amount) - 0.5; }).length;
   }
 
   function dealHasRecordedMoney(item) {
@@ -1395,7 +1398,9 @@
       dots: '<circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle>',
       info: '<circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path>',
       sun: '<circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>',
-      moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"></path>'
+      moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"></path>',
+      collapse: '<path d="m7 4 5 5 5-5"></path><path d="m7 20 5-5 5 5"></path>',
+      expand: '<path d="m7 9 5-5 5 5"></path><path d="m7 15 5 5 5-5"></path>'
     };
     return '<svg aria-hidden="true" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' + (paths[name] || paths.more) + '</svg>';
   }
@@ -2889,11 +2894,82 @@
     savePrefs();
     scheduleRender(0);
   }
+  /* One button for every schedule on the sheet. The direction is decided by
+     what is on screen — if anything is open, the button closes things — but
+     the action covers every deal in the document, so a schedule that is
+     filtered out of view now does not spring open when it comes back. */
+  function igVisibleCollapsibles() { return (gridState.rows || []).filter(function (r) { return r.hasParts; }); }
+  function igCollapseAll(collapse) {
+    var doc = readDoc();
+    var ids = ((doc && doc.followups) || [])
+      .filter(function (it) { return Array.isArray(it.parts) && it.parts.length; })
+      .map(function (it) { return String(it.id); });
+    if (!ids.length) return;
+    state.upcoming.gridCollapsed = collapse ? ids : [];
+    savePrefs();
+    scheduleRender(0);
+  }
+
+  /* Adding an instalment. A new one arrives at zero, so the deal's total and
+     everything already received are untouched — the sheet then puts the
+     cursor on its amount so the figure can just be typed. */
+  function igAddPart(rowId) {
+    var gridRow = gridState.byId[rowId], ownerId = igOwnerId(rowId), newPartId = uid("part");
+    if (!ownerId) return;
+    // A collapsed deal has to open, or the row that was just added is added
+    // somewhere the user cannot see.
+    if (igCollapsed(ownerId)) {
+      state.upcoming.gridCollapsed = (state.upcoming.gridCollapsed || []).filter(function (id) { return String(id) !== String(ownerId); });
+      savePrefs();
+    }
+    igPushUndo(ownerId);
+    igWritePatched(function (doc) {
+      var item = (doc.followups || []).find(function (x) { return String(x.id) === String(ownerId); });
+      if (!item) return;
+      var every = Math.max(1, Math.round(num(item.partEvery || 7)));
+      var singular = dealLabelSingular(item);
+      var word = singular.charAt(0).toUpperCase() + singular.slice(1);
+      if (!Array.isArray(item.parts) || !item.parts.length) {
+        // A one-payment deal becomes a schedule: what was already agreed
+        // stays as the first payment, the new one lands after it.
+        item.dealType = "custom";
+        item.partLabel = item.partLabel || "parts";
+        item.partEvery = every;
+        item.parts = [{
+          id: uid("part"), index: 1, label: word + " 1",
+          amount: roundMoney(grossOf(item)), dueDate: item.expectedBy || todayISO(),
+          paid: paidOf(item), status: item.status || "Pending", paidOn: item.paidOn || ""
+        }];
+      }
+      var parts = item.parts;
+      var at = gridRow && gridRow.partId ? parts.map(function (p) { return String(p.id); }).indexOf(String(gridRow.partId)) : parts.length - 1;
+      if (at < 0) at = parts.length - 1;
+      var prev = parts[at];
+      var due = prev && prev.dueDate ? dateISO(addDays(prev.dueDate, every)) : (item.expectedBy || todayISO());
+      parts.splice(at + 1, 0, {
+        id: newPartId, index: at + 2, label: word + " " + (at + 2),
+        amount: 0, dueDate: due, paid: 0, status: "Pending", paidOn: ""
+      });
+      parts.forEach(function (p, i) { p.index = i + 1; });
+      // Renumber only the labels still in the default "<thing> <n>" shape;
+      // anything renamed by hand ("Deposit", "Kickoff") keeps its name.
+      var auto = new RegExp("^\\s*" + word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s+\\d+\\s*$", "i");
+      parts.forEach(function (p, i) { if (auto.test(String(p.label || ""))) p.label = word + " " + (i + 1); });
+      item.partCount = parts.length;
+      rebuildDealParts(doc, item);
+    }, "grid-add-part", [ownerId]);
+    var newRowId = ownerId + "::" + newPartId;
+    if (gridState.byId[newRowId]) igSetActive(newRowId, "gross");
+    toast("Instalment added — type its amount", "success");
+  }
+
   function igBuildPartRow(parent, item, part, doc, index, count) {
     var due = part.dueDate || "";
     var t = due ? timingForDate(due) : null;
     var paid = num(part.paid), amount = roundMoney(part.amount), balance = Math.max(0, amount - paid);
-    var status = paid >= amount - 0.5 && amount > 0 ? "Paid" : paid > 0 ? "Part Paid" : "Pending";
+    // A brand-new instalment has no amount yet. Arithmetically nothing is
+    // owed on it, but calling that "Paid" reads as done rather than empty.
+    var status = amount <= 0 ? "Pending" : paid >= amount - 0.5 ? "Paid" : paid > 0 ? "Part Paid" : "Pending";
     var tone = isCancelled(item.status) ? "muted"
       : balance <= 0 ? "good"
       : t === "overdue" ? "bad"
@@ -3032,12 +3108,15 @@
   }
   function igToolbarHTML() {
     var f = state.upcoming, count = igGridFilterCount();
+    var collapsible = igVisibleCollapsibles();
+    var anyOpen = collapsible.some(function (r) { return !r.collapsed; });
     return '<div class="ig-toolbar">' +
       '<div class="ig-toolbar-group">' +
         '<button class="ig-tbtn" data-x97-action="grid-undo" title="Undo"' + (gridState.undoStack.length ? "" : " disabled") + '>' + icon("undo", 16) + '</button>' +
         '<button class="ig-tbtn ig-tbtn-redo" data-x97-action="grid-redo" title="Redo"' + (gridState.redoStack.length ? "" : " disabled") + '>' + icon("redo", 16) + '</button>' +
         '<span class="ig-tsep"></span>' +
         '<button class="ig-tbtn" data-x97-action="grid-add-row" title="Add row">' + icon("plus", 16) + '<span class="ig-tlabel">Row</span></button>' +
+        (collapsible.length ? '<button class="ig-tbtn ig-tbtn-collapse" data-x97-action="grid-collapse-all" data-value="' + (anyOpen ? "collapse" : "expand") + '" title="' + (anyOpen ? "Collapse every schedule" : "Expand every schedule") + '">' + icon(anyOpen ? "collapse" : "expand", 16) + '</button>' : "") +
       '</div>' +
       '<div class="ig-toolbar-search"><span class="ig-search-ic">' + icon("search", 15) + '</span><input id="x97-up-search" autocomplete="off" placeholder="Search Incoming" value="' + attr(f.search) + '"></div>' +
       '<div class="ig-toolbar-group">' +
@@ -3638,6 +3717,11 @@
     if (quick) quick.outerHTML = igQuickViewsHTML(stats);
     var status = root.querySelector(".ig-statusbar");
     if (status) status.outerHTML = igStatusBarHTML(gridState.filteredCount || 0, (doc.followups || []).length, stats);
+    // Undo availability and the collapse-all direction both live in the
+    // toolbar and both move with an edit — but never rebuild it out from
+    // under someone typing in the search box.
+    var toolbar = root.querySelector(".ig-toolbar");
+    if (toolbar && document.activeElement !== document.getElementById("x97-up-search")) toolbar.outerHTML = igToolbarHTML();
   }
   // One write, then a repaint of just what moved.
   function igWritePatched(mutator, reason, dealIds) {
@@ -4052,7 +4136,8 @@
     var items = [
       { label: "Copy", action: "copy" }, { label: "Cut", action: "cut" }, { label: "Paste", action: "paste" },
       { label: "Clear", action: "clear" },
-      { label: "Delete row", action: "delete", danger: !row.locked, disabled: row.locked }
+      { label: row.part ? "Add instalment below" : "Add instalment", action: "add-part" },
+      { label: row.part ? "Delete instalment" : "Delete row", action: "delete", danger: !row.locked, disabled: row.locked }
     ];
     menu.innerHTML = items.map(function (it) { return '<button class="ig-menu-item' + (it.danger ? " danger" : "") + '" data-menu="' + it.action + '"' + (it.disabled ? " disabled" : "") + '>' + esc(it.label) + '</button>'; }).join("");
     menu.addEventListener("click", function (e) {
@@ -4063,6 +4148,7 @@
       else if (act === "cut") { igCopySelection(); igClearSelectionValues(); }
       else if (act === "paste") igPasteClipboard();
       else if (act === "clear") igClearSelectionValues();
+      else if (act === "add-part") igAddPart(row.id);
       else if (act === "delete") igDeleteRow(row.id);
     });
     igPlaceMenu(menu, x, y);
@@ -4716,11 +4802,14 @@
 
   function openGridMore() {
     var theme = loadTheme();
+    var moreCollapsible = igVisibleCollapsibles();
+    var moreAnyOpen = moreCollapsible.some(function (r) { return !r.collapsed; });
     var body = '<div class="ig-more-list">' +
       '<button class="x97-card-action full" data-x97-action="grid-add-row">' + icon("plus", 15) + ' Add row</button>' +
       '<button class="x97-card-action full" data-x97-action="grid-undo">' + icon("undo", 15) + ' Undo</button>' +
       '<button class="x97-card-action full" data-x97-action="grid-redo">' + icon("redo", 15) + ' Redo</button>' +
       '<button class="x97-card-action full" data-x97-action="open-grid-columns">' + icon("columns", 15) + ' Columns</button>' +
+      (moreCollapsible.length ? '<button class="x97-card-action full" data-x97-action="grid-collapse-all" data-value="' + (moreAnyOpen ? "collapse" : "expand") + '">' + icon(moreAnyOpen ? "collapse" : "expand", 15) + (moreAnyOpen ? ' Collapse all schedules' : ' Expand all schedules') + '</button>' : "") +
       '<button class="x97-card-action full" data-x97-action="open-exports">' + icon("list", 15) + ' Export</button>' +
       '<div class="ig-theme-row">' +
         '<span class="ig-theme-label">Appearance</span>' +
@@ -6445,6 +6534,7 @@
     if(action==="open-grid-more"){openGridMore();return;}
     if(action==="grid-zoom"){igSetZoom(btn.dataset.value);return;}
     if(action==="set-theme"){setTheme(btn.dataset.value);return;}
+    if(action==="grid-collapse-all"){igCollapseAll(btn.dataset.value!=="expand");closeSheet();return;}
   }, true);
 
   function resumeOriginalTab() {
