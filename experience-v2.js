@@ -1362,7 +1362,8 @@
       minus: '<path d="M5 12h14"></path>',
       lock: '<rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path>',
       pin: '<path d="M12 2 9 9l-6 2 4.5 3.5L6 21l6-4 6 4-1.5-6.5L21 11l-6-2Z"></path>',
-      dots: '<circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle>'
+      dots: '<circle cx="12" cy="5" r="1.4"></circle><circle cx="12" cy="12" r="1.4"></circle><circle cx="12" cy="19" r="1.4"></circle>',
+      info: '<circle cx="12" cy="12" r="9"></circle><path d="M12 11v5"></path><path d="M12 8h.01"></path>'
     };
     return '<svg aria-hidden="true" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' + (paths[name] || paths.more) + '</svg>';
   }
@@ -2819,9 +2820,11 @@
   function igBuildRow(item, doc, index) {
     var t = timing(item, doc), next = t.next, due = next ? next.dueDate : item.expectedBy;
     var locked = dealHasRecordedMoney(item), structured = isDeal(item), status = igStatusInfo(item);
-    var dueTone = t.key === "overdue" || t.key === "today" ? "bad" : (t.key === "very-soon" || t.key === "soon") ? "warn" : "";
-    // One tone per row drives the edge marker, the balance colour and the
-    // status badge together, so a colour always means the same thing.
+    // One tone drives the row: the edge marker in the frozen row-number
+    // gutter, always on screen regardless of horizontal scroll. Nothing
+    // else repeats it — the due date and the balance used to be recoloured
+    // to say the same thing a second and third time, which is what read as
+    // "confusing" rather than as one clear signal.
     var rowTone = isCancelled(item.status) ? "muted"
       : outstandingOf(item) <= 0 ? "good"
       : t.key === "overdue" ? "bad"
@@ -2834,7 +2837,7 @@
       gross: grossOf(item), paid: paidOf(item), balance: outstandingOf(item),
       currency: String(item.currency || "UGX").toUpperCase(),
       status: status.label, statusTone: status.tone,
-      due: due || "", dueTone: due ? dueTone : "warn",
+      due: due || "",
       lastPaid: igLastPaidDate(doc, item),
       structure: structured ? (DEAL_TYPES[normalizeDealType(item.dealType)] || "Payment schedule") : "One payment",
       phone: item.phone || "", note: item.note || "",
@@ -2871,7 +2874,7 @@
       gross: amount, paid: paid, balance: balance,
       currency: parent.currency,
       status: status, statusTone: balance <= 0 ? "good" : paid > 0 ? "warn" : "",
-      due: due, dueTone: tone === "bad" ? "bad" : tone === "warn" ? "warn" : "",
+      due: due,
       lastPaid: part.paidOn || "",
       structure: "Part " + index + " of " + count,
       phone: parent.phone, note: parent.note,
@@ -2936,12 +2939,12 @@
     if (igEditable(col, row)) cls.push("ig-editable");
     else cls.push("ig-readonly");
     if (col.key === "status") cls.push("ig-tone-badge");
-    if (col.key === "due" && row.dueTone) cls.push("ig-tone-" + row.dueTone);
     if (col.key === "client" && !row.client) cls.push("ig-placeholder");
-    // Money reads by colour: what is still owed takes the row's urgency,
-    // what has been received reads as money in, and a cleared balance is
-    // green whatever the date said.
-    if (col.key === "balance") cls.push(row.balance <= 0 ? "ig-tone-good" : row.tone === "bad" || row.tone === "warn" ? "ig-tone-" + row.tone : "ig-tone-owed");
+    // One meaning per colour: green on Balance says the deal is settled —
+    // nothing recolours it for urgency a second time, since the frozen
+    // row-edge marker already says that, always in view. What's still owed
+    // reads as plain, bold text; the due date is plain text too.
+    if (col.key === "balance") cls.push(row.balance <= 0 ? "ig-tone-good" : "ig-tone-owed");
     if (col.key === "paid" && row.paid > 0) cls.push("ig-tone-paid");
     return cls.join(" ");
   }
@@ -3008,6 +3011,7 @@
       '<div class="ig-toolbar-group">' +
         '<button class="ig-tbtn" data-x97-action="open-grid-filters" title="Filter"><span class="ig-tbtn-badge-wrap">' + icon("filter", 16) + (count ? '<b class="ig-tbadge">' + count + '</b>' : "") + '</span><span class="ig-tlabel">Filter</span></button>' +
         '<button class="ig-tbtn ig-tbtn-columns" data-x97-action="open-grid-columns" title="Columns">' + icon("columns", 16) + '</button>' +
+        '<button class="ig-tbtn" data-x97-action="grid-legend" title="What the colours mean">' + icon("info", 16) + '</button>' +
         '<button class="ig-tbtn" data-x97-action="open-grid-more" title="More">' + icon("dots", 16) + '</button>' +
       '</div>' +
     '</div>';
@@ -4089,6 +4093,20 @@
       else if (act === "hide") { gridState.hidden[key] = true; igSavePersistedHidden(); scheduleRender(0); }
     });
     igPlaceMenu(menu, x, y);
+  }
+  /* One place that spells out the vocabulary, for anyone who lands on the
+     sheet without having watched it get simplified. */
+  function igOpenLegend(x, y) {
+    igCloseMenu();
+    var pop = document.createElement("div");
+    pop.className = "ig-menu ig-legend-pop";
+    pop.innerHTML =
+      '<div class="ig-legend-title">Row colour</div>' +
+      '<div class="ig-legend-row"><i class="ig-legend-dot bad"></i>Overdue</div>' +
+      '<div class="ig-legend-row"><i class="ig-legend-dot warn"></i>Due soon</div>' +
+      '<div class="ig-legend-row"><i class="ig-legend-dot good"></i>Settled, or money in</div>' +
+      '<div class="ig-legend-row"><i class="ig-legend-dot muted"></i>Cancelled, or no date</div>';
+    igPlaceMenu(pop, x, y);
   }
   function igOpenColMenuFor(headEl) {
     var rect = headEl.getBoundingClientRect();
@@ -6382,6 +6400,7 @@
     if(action==="open-grid-filters"){openGridFilters(readDoc());return;}
     if(action==="grid-filters-apply"){savePrefs();closeSheet();scheduleRender(0);return;}
     if(action==="grid-filters-reset"){state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.quick="open";state.upcoming.sort="urgency";state.upcoming.search="";state.upcoming.month="all";savePrefs();closeSheet();scheduleRender(0);return;}
+    if(action==="grid-legend"){var lgr=btn.getBoundingClientRect();igOpenLegend(lgr.left,lgr.bottom+6);return;}
     if(action==="open-grid-columns"){openGridColumns();return;}
     if(action==="open-grid-more"){openGridMore();return;}
     if(action==="grid-zoom"){igSetZoom(btn.dataset.value);return;}

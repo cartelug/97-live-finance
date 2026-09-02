@@ -1749,6 +1749,18 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
   display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden;
   /* Set from visualViewport while a phone keyboard is up. */
   --ig-kb: 0px;
+  /* Sheets is white, not green: a true-neutral gray for gridlines, header
+     and toolbar surfaces, and "this control is toggled on" states, derived
+     from the theme's own text/background so it holds in dark mode without
+     a second set of rules. Green stays reserved for what it already means
+     elsewhere in this app — money received, UGX, your current selection —
+     not for "this button happens to be active". */
+  --ig-line: color-mix(in srgb, var(--tx) 12%, transparent);
+  --ig-line2: color-mix(in srgb, var(--tx) 22%, transparent);
+  --ig-surface2: color-mix(in srgb, var(--tx) 5%, var(--card));
+  --ig-surface3: color-mix(in srgb, var(--tx) 9%, var(--card));
+  --ig-selected: color-mix(in srgb, var(--tx) 9%, var(--card));
+  --ig-selected-line: color-mix(in srgb, var(--tx) 24%, transparent);
 }
 /* The keyboard covers the window without resizing it, so the sheet hands
    back exactly the covered height and keeps the open cell in view. */
@@ -1769,30 +1781,30 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 .ig-shell .x97-eyebrow { display: none; }
 .ig-shell .x97-sub { display: none; }
 
-.ig-toolbar { display: flex; align-items: center; gap: 6px; padding: 5px var(--ig-gut); flex: 0 0 auto; border-top: 1px solid var(--line); flex-wrap: nowrap; }
+.ig-toolbar { display: flex; align-items: center; gap: 6px; padding: 5px var(--ig-gut); flex: 0 0 auto; border-top: 1px solid var(--ig-line); flex-wrap: nowrap; }
 .ig-toolbar-group { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
-.ig-tsep { width: 1px; align-self: stretch; background: var(--line2); margin: 4px 2px; }
+.ig-tsep { width: 1px; align-self: stretch; background: var(--ig-line2); margin: 4px 2px; }
 .ig-tbtn { height: 34px; min-width: 34px; padding: 0 9px; border-radius: 9px; border: 1px solid transparent; background: transparent; color: var(--tx2); display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 750; cursor: pointer; }
-.ig-tbtn:hover { background: var(--card2); border-color: var(--line); }
+.ig-tbtn:hover { background: var(--ig-surface2); border-color: var(--ig-line); }
 .ig-tbtn[disabled] { opacity: .35; pointer-events: none; }
 .ig-tbtn-badge-wrap { position: relative; display: inline-flex; }
 .ig-tbadge { position: absolute; right: -6px; top: -6px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 99px; background: var(--pos); color: #fff; font-size: 9px; display: grid; place-items: center; }
-.ig-toolbar-search { flex: 1 1 220px; min-width: 0; display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 10px; border-radius: 9px; background: var(--card2); border: 1px solid var(--line); }
+.ig-toolbar-search { flex: 1 1 220px; min-width: 0; display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 10px; border-radius: 9px; background: var(--ig-surface2); border: 1px solid var(--ig-line); }
 .ig-toolbar-search input { flex: 1; min-width: 0; border: 0; background: transparent; font-size: 12.5px; color: var(--tx); outline: none; }
 .ig-search-ic { color: var(--tx3); display: flex; }
 
 .ig-quickviews { display: flex; gap: 5px; padding: 0 var(--ig-gut) 5px; flex: 0 0 auto; overflow-x: auto; scrollbar-width: none; }
 .ig-quickviews::-webkit-scrollbar { display: none; }
-.ig-quick { white-space: nowrap; height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--tx2); font-size: 10.5px; font-weight: 750; display: inline-flex; align-items: center; gap: 5px; }
+.ig-quick { white-space: nowrap; height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--ig-line); background: var(--card); color: var(--tx2); font-size: 10.5px; font-weight: 750; display: inline-flex; align-items: center; gap: 5px; }
 .ig-quick b { font-weight: 800; color: var(--tx3); }
-.ig-quick.on { background: var(--posdim); border-color: color-mix(in srgb, var(--pos) 30%, transparent); color: var(--pos); }
-.ig-quick.on b { color: var(--pos); }
+.ig-quick.on { background: var(--ig-selected); border-color: var(--ig-selected-line); color: var(--tx); }
+.ig-quick.on b { color: var(--tx); }
 
 .ig-filterchips { padding: 0 var(--ig-gut) 5px; flex: 0 0 auto; }
 .ig-filterchips .x97-active-filters { margin: 0; }
 
-.ig-formula-bar { display: flex; align-items: center; gap: 8px; padding: 4px var(--ig-gut); flex: 0 0 auto; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--card2); }
-.ig-cell-ref { flex: 0 0 auto; min-width: 64px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 800; color: var(--tx3); padding: 0 8px; height: 24px; display: flex; align-items: center; border-right: 1px solid var(--line2); }
+.ig-formula-bar { display: flex; align-items: center; gap: 8px; padding: 4px var(--ig-gut); flex: 0 0 auto; border-top: 1px solid var(--ig-line); border-bottom: 1px solid var(--ig-line); background: var(--ig-surface2); }
+.ig-cell-ref { flex: 0 0 auto; min-width: 64px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 800; color: var(--tx3); padding: 0 8px; height: 24px; display: flex; align-items: center; border-right: 1px solid var(--ig-line2); }
 .ig-formula-input { flex: 1; min-width: 0; height: 24px; border: 0; background: transparent; font-size: 12.5px; color: var(--tx); outline: none; font-family: var(--fnum); }
 .ig-formula-input:disabled { color: var(--tx3); }
 
@@ -1801,26 +1813,26 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 .ig-scroll:focus, .ig-scroll:focus-visible { outline: none; }
 .ig-grid-inner { --ig-rownum-w: 42px; --ig-zoom: 1; width: fit-content; min-width: 100%; position: relative; }
 .ig-row { display: grid; grid-template-columns: var(--ig-tpl, 42px 178px 116px 124px 112px 124px 58px 112px 118px 132px 130px 220px); align-items: stretch; }
-.ig-head-row { position: sticky; top: 0; z-index: 10; background: var(--card2); }
+.ig-head-row { position: sticky; top: 0; z-index: 10; background: var(--ig-surface2); }
 .ig-body { position: relative; content-visibility: auto; contain-intrinsic-size: 0 2000px; }
 
 .ig-cell {
   min-width: 0; box-sizing: border-box; display: flex; align-items: center;
   padding: 0 calc(10px * var(--ig-zoom, 1)); height: calc(36px * var(--ig-zoom, 1)); font-size: max(10.5px, calc(12px * var(--ig-zoom, 1))); color: var(--tx);
-  border-bottom: 1px solid var(--line); border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--ig-line); border-right: 1px solid var(--ig-line);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   background: var(--card); position: relative;
   user-select: none; -webkit-user-select: none; touch-action: pan-x pan-y;
 }
 .ig-a-right { justify-content: flex-end; text-align: right; }
 .ig-a-center { justify-content: center; text-align: center; }
-.ig-colhead { height: calc(36px * var(--ig-zoom, 1)); background: var(--card2); font-size: max(9.5px, calc(10.5px * var(--ig-zoom, 1))); font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .03em; cursor: default; }
+.ig-colhead { height: calc(36px * var(--ig-zoom, 1)); background: var(--ig-surface2); font-size: max(9.5px, calc(10.5px * var(--ig-zoom, 1))); font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .03em; cursor: default; }
 .ig-colhead[data-x97-action] { cursor: pointer; }
 .ig-colhead span { overflow: hidden; text-overflow: ellipsis; }
 .ig-sorted { color: var(--tx); }
 .ig-sort-ic { display: inline-flex; margin-left: 3px; transform: rotate(90deg); }
-.ig-rownum { justify-content: center; color: var(--tx3); font-size: max(9.5px, calc(10.5px * var(--ig-zoom, 1))); font-weight: 700; padding: 0; cursor: default; background: var(--card2); }
-.ig-head-row .ig-rownum { background: var(--card2); }
+.ig-rownum { justify-content: center; color: var(--tx3); font-size: max(9.5px, calc(10.5px * var(--ig-zoom, 1))); font-weight: 700; padding: 0; cursor: default; background: var(--ig-surface2); }
+.ig-head-row .ig-rownum { background: var(--ig-surface2); }
 /* The corner cell selects the whole sheet, same as Sheets — give it the
    same pointer affordance as every other clickable header. */
 .ig-rownum.ig-colhead { cursor: pointer; }
@@ -1830,10 +1842,20 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
    carries its own left offset as a variable, so resizing or zooming moves
    the whole run without touching the markup. */
 .ig-frozen { position: sticky; left: var(--ig-fz-0, 0px); z-index: 5; background: var(--card); }
-.ig-head-row .ig-frozen { z-index: 8; background: var(--card2); }
+.ig-head-row .ig-frozen { z-index: 8; background: var(--ig-surface2); }
 .ig-head-row .ig-sticky-num { z-index: 9; }
 /* The client is the row's identity — small, but the boldest thing in it. */
 .ig-c-client { font-weight: 800; font-size: max(9.5px, calc(11px * var(--ig-zoom, 1))) !important; letter-spacing: -.01em; }
+
+/* A slightly heavier line where one cluster of columns ends and the next
+   begins — identity, then money, then status/timing, then everything
+   else — so the header reads as four groups instead of ten flat columns.
+   Keyed to the default columns, so it stays put through a drag reorder even
+   if it no longer marks the same logical seam once things have moved. */
+.ig-cell[data-col="currency"], .ig-cell[data-colhead="currency"],
+.ig-cell[data-col="lastPaid"], .ig-cell[data-colhead="lastPaid"] {
+  border-right-width: 2px; border-right-color: var(--ig-line2);
+}
 /* Sheets drops a faint shadow off the frozen pane once you've actually
    scrolled the sheet under it — a depth cue that it's floating above the
    rest of the columns. Stays invisible until there's something to float over. */
@@ -1860,7 +1882,7 @@ body.ig-rowdragging { cursor: grabbing !important; user-select: none !important;
 .ig-row-part .ig-c-client { padding-left: calc(20px * var(--ig-zoom, 1)); font-weight: 600; color: var(--tx2); }
 .ig-row-part .ig-c-client::before {
   content: ""; position: absolute; left: calc(9px * var(--ig-zoom, 1)); top: 0; bottom: 50%;
-  width: calc(7px * var(--ig-zoom, 1)); border-left: 1px solid var(--line2); border-bottom: 1px solid var(--line2);
+  width: calc(7px * var(--ig-zoom, 1)); border-left: 1px solid var(--ig-line2); border-bottom: 1px solid var(--ig-line2);
   border-bottom-left-radius: 3px; pointer-events: none;
 }
 .ig-row-part .ig-rownum { color: var(--tx3); font-weight: 600; font-size: max(8.5px, calc(9.5px * var(--ig-zoom, 1))); }
@@ -1875,7 +1897,7 @@ body.ig-rowdragging { cursor: grabbing !important; user-select: none !important;
   transform: rotate(90deg); transition: transform .12s var(--v2-ease), background .12s var(--v2-ease);
 }
 .ig-collapsed .ig-group { transform: rotate(0deg); }
-.ig-group:hover { background: var(--card3); color: var(--tx); }
+.ig-group:hover { background: var(--ig-surface3); color: var(--tx); }
 .ig-rownum-n { font-variant-numeric: tabular-nums; }
 .ig-rownum.ig-has-parts .ig-rownum-n { font-size: max(8.5px, calc(9.5px * var(--ig-zoom, 1))); }
 
@@ -1883,7 +1905,7 @@ body.ig-rowdragging { cursor: grabbing !important; user-select: none !important;
    looking like a sheet all the way to the bottom of the window. */
 .ig-filler { position: relative; }
 .ig-filler-cell { pointer-events: none; background: var(--card); }
-.ig-filler-row .ig-rownum { background: var(--card2); box-shadow: none; }
+.ig-filler-row .ig-rownum { background: var(--ig-surface2); box-shadow: none; }
 
 .ig-cell.ig-editable { cursor: cell; }
 .ig-cell.ig-readonly { color: var(--tx2); }
@@ -1916,30 +1938,35 @@ body.ig-filling { cursor: crosshair !important; user-select: none !important; }
    up to" without leaving the sheet. */
 .ig-selstats { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; font-size: 10.5px; color: var(--tx2); white-space: nowrap; }
 .ig-selstats b { color: var(--tx); font-weight: 800; margin-left: 3px; }
-.ig-row.ig-row-active .ig-rownum { background: var(--posdim); color: var(--pos); }
-.ig-colhead.ig-col-active { color: var(--pos); }
+.ig-row.ig-row-active .ig-rownum { background: var(--ig-selected); color: var(--tx); }
+.ig-colhead.ig-col-active { color: var(--tx); }
 .ig-row-settled .ig-c-client, .ig-row-settled .ig-c-gross { opacity: .72; }
 
 .ig-badge { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 10.5px; font-weight: 800; }
 .ig-badge-good { background: var(--posdim); color: var(--pos); }
 .ig-badge-warn { background: var(--warndim); color: var(--warn); }
-.ig-badge-neutral { background: var(--card3); color: var(--tx2); }
-.ig-badge-muted { background: var(--card3); color: var(--tx3); text-decoration: line-through; }
+.ig-badge-neutral { background: var(--ig-surface3); color: var(--tx2); }
+.ig-badge-muted { background: var(--ig-surface3); color: var(--tx3); text-decoration: line-through; }
 .ig-cur-ugx { background: var(--posdim); color: var(--pos); }
 .ig-cur-usd { background: var(--usddim); color: var(--usd); }
 
 .ig-cur-toggle { display: flex; width: 100%; height: 100%; gap: 2px; padding: 3px; box-sizing: border-box; }
-.ig-cur-opt { flex: 1; border: 1px solid var(--line2); border-radius: 7px; background: var(--card); font-size: 10px; font-weight: 800; cursor: pointer; color: var(--tx3); }
+.ig-cur-opt { flex: 1; border: 1px solid var(--ig-line2); border-radius: 7px; background: var(--card); font-size: 10px; font-weight: 800; cursor: pointer; color: var(--tx3); }
 .ig-cur-opt.ig-cur-ugx { color: var(--pos); }
 .ig-cur-opt.ig-cur-usd { color: var(--usd); }
 .ig-cur-opt.on.ig-cur-ugx { background: var(--posdim); border-color: color-mix(in srgb, var(--pos) 40%, transparent); }
 .ig-cur-opt.on.ig-cur-usd { background: var(--usddim); border-color: color-mix(in srgb, var(--usd) 40%, transparent); }
 
-/* ── One colour vocabulary, used the same way everywhere ───────────────────
+/* ── One colour vocabulary, one signal per fact ─────────────────────────────
    red = late · amber = due now/soon · green = money in or settled ·
-   grey = cancelled or undated. It appears three times per row — the edge
-   marker, the due date, and the balance — so a glance down any one of them
-   tells the same story. */
+   grey = cancelled or undated — and each fact is only painted ONCE. The
+   row's overall state lives entirely in the edge marker below, which sits
+   in the frozen row-number column, so it's on screen no matter how far
+   right you've scrolled — there's no need to repeat it on the due date or
+   the balance too. Balance still turns green on its own when a deal is
+   settled (a fact about that number, not a repeat of the row's urgency);
+   Paid turns green when money has actually come in. Nothing else recolours
+   with urgency — that would just be the same word said twice. */
 .ig-tone-bad { color: var(--neg); font-weight: 700; }
 .ig-tone-warn { color: var(--warn); font-weight: 700; }
 .ig-tone-good { color: var(--pos); font-weight: 700; }
@@ -1952,7 +1979,7 @@ body.ig-filling { cursor: crosshair !important; user-select: none !important; }
 .ig-row-warn .ig-rownum { box-shadow: inset 3px 0 0 var(--warn); color: var(--warn); }
 .ig-row-good .ig-rownum { box-shadow: inset 3px 0 0 var(--pos); color: var(--pos); }
 .ig-row-undated .ig-rownum { box-shadow: inset 3px 0 0 var(--tx3); }
-.ig-row-muted .ig-rownum { box-shadow: inset 3px 0 0 var(--line2); }
+.ig-row-muted .ig-rownum { box-shadow: inset 3px 0 0 var(--ig-line2); }
 .ig-row-muted .ig-c-client { text-decoration: line-through; opacity: .7; }
 
 /* Column menu caret. Quiet until the column is the one you're working in
@@ -1967,9 +1994,9 @@ body.ig-filling { cursor: crosshair !important; user-select: none !important; }
 /* While it is showing, the header makes room for it — otherwise the caret
    would sit on top of a right-aligned label and swallow clicks meant for
    the sort. Hidden, it takes no space and no events. */
-.ig-colhead:hover .ig-colmenu, .ig-colhead.ig-col-active .ig-colmenu { opacity: 1; pointer-events: auto; background: var(--card2); }
+.ig-colhead:hover .ig-colmenu, .ig-colhead.ig-col-active .ig-colmenu { opacity: 1; pointer-events: auto; background: var(--ig-surface2); }
 .ig-colhead:hover, .ig-colhead.ig-col-active { padding-right: 28px; }
-.ig-colmenu:hover { background: var(--card3); color: var(--tx); }
+.ig-colmenu:hover { background: var(--ig-surface3); color: var(--tx); }
 @media (pointer: coarse) {
   .ig-colmenu { opacity: 0; }
   .ig-colhead.ig-col-active .ig-colmenu { opacity: 1; }
@@ -1988,7 +2015,7 @@ body.ig-coldragging { cursor: grabbing !important; user-select: none !important;
 }
 
 .ig-resize { position: absolute; right: 0; top: 0; bottom: 0; width: 8px; cursor: col-resize; touch-action: none; }
-.ig-resize:hover, .ig-resize:active { background: color-mix(in srgb, var(--pos) 22%, transparent); }
+.ig-resize:hover, .ig-resize:active { background: var(--ig-selected-line); }
 
 .ig-edit-input { width: 100%; height: 100%; border: 0; background: var(--bg2); outline: 2px solid var(--pos); outline-offset: -2px; font: inherit; color: var(--tx); padding: 0 8px; margin: 0 -10px; box-sizing: border-box; user-select: text; -webkit-user-select: text; }
 .ig-cell.ig-editing { padding: 0; overflow: visible; z-index: 5; }
@@ -1998,24 +2025,24 @@ select.ig-edit-input { padding: 0 4px; }
 .ig-empty strong { font-size: 14px; color: var(--tx); }
 .ig-empty p { font-size: 12px; color: var(--tx3); max-width: 260px; margin: 0; }
 
-.ig-statusbar { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; padding: 4px var(--ig-gut); font-size: 10.5px; color: var(--tx3); border-top: 1px solid var(--line); background: var(--card2); padding-bottom: max(4px, env(safe-area-inset-bottom)); }
+.ig-statusbar { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: nowrap; padding: 4px var(--ig-gut); font-size: 10.5px; color: var(--tx3); border-top: 1px solid var(--ig-line); background: var(--ig-surface2); padding-bottom: max(4px, env(safe-area-inset-bottom)); }
 .ig-statusbar-info { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ig-statusbar-info > span { overflow: hidden; text-overflow: ellipsis; }
 .ig-statusbar-sep { opacity: .5; }
-.ig-zoom { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; background: var(--card); border: 1px solid var(--line2); border-radius: 999px; padding: 3px; box-shadow: var(--elev-1); }
+.ig-zoom { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; background: var(--card); border: 1px solid var(--ig-line2); border-radius: 999px; padding: 3px; box-shadow: var(--elev-1); }
 .ig-zbtn { width: 28px; height: 28px; border-radius: 999px; border: 0; background: transparent; color: var(--tx2); display: grid; place-items: center; cursor: pointer; }
-.ig-zbtn:hover, .ig-zbtn:active { background: var(--posdim); color: var(--pos); }
+.ig-zbtn:hover, .ig-zbtn:active { background: var(--ig-selected); color: var(--tx); }
 .ig-zpct { min-width: 42px; height: 28px; padding: 0 6px; border: 0; background: transparent; color: var(--tx2); font-size: 10.5px; font-weight: 800; cursor: pointer; }
-.ig-zpct:hover { color: var(--pos); }
+.ig-zpct:hover { color: var(--tx); }
 
 .ig-summary {
   /* Five period tiles: always one row, each capped so they stay dense on a
      2560px monitor and shrink to fit rather than wrapping on a tablet. */
   display: grid; grid-template-columns: repeat(5, minmax(0, 190px)); justify-content: start;
-  background: var(--card); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  background: var(--card); border-top: 1px solid var(--ig-line); border-bottom: 1px solid var(--ig-line);
   flex: 0 0 auto; overflow: hidden;
 }
-.ig-stat { background: var(--card); padding: clamp(5px, 1.2vw, 8px) var(--ig-gut); min-width: 0; border-right: 1px solid var(--line); }
+.ig-stat { background: var(--card); padding: clamp(5px, 1.2vw, 8px) var(--ig-gut); min-width: 0; border-right: 1px solid var(--ig-line); }
 .ig-stat-label { display: flex; align-items: center; gap: 5px; font-size: clamp(8.5px, 1.6vw, 9.5px); font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ig-stat-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--tx3); opacity: .55; }
 .ig-stat-value { font-size: clamp(13.5px, 2.6vw, 16px); font-weight: 650; color: var(--tx); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -.02em; }
@@ -2027,14 +2054,22 @@ select.ig-edit-input { padding: 0 4px; }
 .ig-stat-warn .ig-stat-value, .ig-stat-warn .ig-stat-label { color: var(--warn); }
 .ig-stat-warn .ig-stat-dot { background: var(--warn); opacity: 1; }
 .ig-stat-good .ig-stat-dot { background: var(--pos); opacity: 1; }
-.ig-stat-total { background: var(--card2); }
+.ig-stat-total { background: var(--ig-surface2); }
 .ig-stat-total .ig-stat-value { color: var(--tx); font-weight: 800; }
 .ig-stat-total .ig-stat-dot { background: var(--tx2); opacity: .8; }
 .ig-stat-empty { color: var(--tx3); opacity: .6; font-weight: 500; }
 
-.ig-menu { position: fixed; z-index: 70; min-width: 170px; background: var(--card); border: 1px solid var(--line2); border-radius: 12px; box-shadow: var(--elev-2); padding: 6px; display: flex; flex-direction: column; gap: 1px; }
+.ig-menu { position: fixed; z-index: 70; min-width: 170px; background: var(--card); border: 1px solid var(--ig-line2); border-radius: 12px; box-shadow: var(--elev-2); padding: 6px; display: flex; flex-direction: column; gap: 1px; }
+.ig-legend-pop { padding: 10px 12px; gap: 7px; min-width: 190px; }
+.ig-legend-title { font-size: 10px; font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+.ig-legend-row { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 650; color: var(--tx); }
+.ig-legend-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; }
+.ig-legend-dot.bad { background: var(--neg); }
+.ig-legend-dot.warn { background: var(--warn); }
+.ig-legend-dot.good { background: var(--pos); }
+.ig-legend-dot.muted { background: var(--tx3); }
 .ig-menu-item { text-align: left; padding: 8px 10px; border-radius: 8px; border: 0; background: transparent; font-size: 12.5px; font-weight: 650; color: var(--tx); cursor: pointer; }
-.ig-menu-item:hover { background: var(--card2); }
+.ig-menu-item:hover { background: var(--ig-surface2); }
 .ig-menu-item.danger { color: var(--neg); }
 .ig-menu-item[disabled] { opacity: .4; pointer-events: none; }
 
@@ -2047,8 +2082,8 @@ select.ig-edit-input { padding: 0 4px; }
 }
 .ig-filter-section label { display: block; font-size: 11px; font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 8px; }
 .ig-filter-chiprow { display: flex; flex-wrap: wrap; gap: 7px; }
-.ig-filter-chip { height: 34px; padding: 0 13px; border-radius: 999px; border: 1px solid var(--line2); background: var(--card); color: var(--tx2); font-size: 12px; font-weight: 750; }
-.ig-filter-chip.on { background: var(--posdim); border-color: color-mix(in srgb, var(--pos) 30%, transparent); color: var(--pos); }
+.ig-filter-chip { height: 34px; padding: 0 13px; border-radius: 999px; border: 1px solid var(--ig-line2); background: var(--card); color: var(--tx2); font-size: 12px; font-weight: 750; }
+.ig-filter-chip.on { background: var(--ig-selected); border-color: var(--ig-selected-line); color: var(--tx); }
 .ig-more-list { display: flex; flex-direction: column; gap: 8px; }
 
 /* Coarse pointer (touch): larger rows and hit targets, scaled by the same
