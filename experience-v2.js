@@ -1895,16 +1895,19 @@
       /* Sheets stay inside the visible viewport when browser chrome or the keyboard changes height. */
       body.x97-sheet-open{position:fixed;left:0;top:var(--x97-sheet-scroll-y,0px);width:100%;overflow:hidden;overscroll-behavior:none}
       .x97-back,.backdrop,.x97-remind-overlay,.s97-cloud-back{overscroll-behavior:contain}
-      .x97-back{padding-top:env(safe-area-inset-top);touch-action:none}
+      /* Sheets and their backdrops still refuse to pan the page behind them,
+         but two fingers must always be able to zoom — every surface in the
+         app is pinchable, not just the sheet. */
+      .x97-back{padding-top:env(safe-area-inset-top);touch-action:pinch-zoom}
       .x97-sheet,.sheet,.x97-remind-panel,.s97-cloud-modal{
         min-height:0;max-height:calc(100vh - env(safe-area-inset-top));
         max-height:calc(100svh - env(safe-area-inset-top));max-height:calc(100dvh - env(safe-area-inset-top));
       }
-      .x97-sheet{touch-action:pan-y}
+      .x97-sheet{touch-action:pan-y pinch-zoom}
       .x97-sheet-body,.x97-rm-list{min-height:0;flex:1 1 auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
       .x97-sheet-foot{flex:0 0 auto}
-      .x97-remind-overlay{padding-top:env(safe-area-inset-top);touch-action:none}
-      .x97-remind-panel{touch-action:pan-y}
+      .x97-remind-overlay{padding-top:env(safe-area-inset-top);touch-action:pinch-zoom}
+      .x97-remind-panel{touch-action:pan-y pinch-zoom}
 
       /* Motion is composited only. Backwards fill avoids leaving a transformed parent around fixed UI. */
       @keyframes x97-v4-reveal{from{opacity:0;transform:translate3d(0,10px,0)}to{opacity:1;transform:none}}
@@ -2631,7 +2634,7 @@
     menuEl: null, selEls: [], activeEl: null, activeRowEl: null, activeHeadEl: null, fillPreviewEls: [],
     bulkMode: false, bulkRows: {}, bulkAnchor: null
   };
-  var IG_ZOOM_MIN = 0.6, IG_ZOOM_MAX = 1.3, IG_ZOOM_STEP = 0.1;
+  var IG_ZOOM_MIN = 0.6, IG_ZOOM_MAX = 1.6, IG_ZOOM_STEP = 0.1;
 
   // Columns sit in whatever order the user dragged them into. Anything the
   // saved order doesn't mention (a column added in a later build) keeps its
@@ -3056,6 +3059,11 @@
     // reads as plain, bold text; the due date is plain text too.
     if (col.key === "balance") cls.push(row.balance <= 0 ? "ig-tone-good" : "ig-tone-owed");
     if (col.key === "paid" && row.paid > 0) cls.push("ig-tone-paid");
+    // Money that isn't in shillings says so without being read: the whole
+    // money block of a USD row is washed in the same blue the USD badge
+    // uses, so a foreign-currency figure can never be mistaken for a UGX
+    // one at a glance.
+    if (col.type === "money" && row.currency === "USD") cls.push("ig-money-usd");
     return cls.join(" ");
   }
   function igCellInner(col, row) {
@@ -4323,16 +4331,18 @@
     scroll.addEventListener("dblclick", igOnDblClick);
     scroll.addEventListener("contextmenu", igOnContextMenu);
     var dragging = false, lpTimer = null, lpFired = false, startX = 0, startY = 0, startCell = null;
-    var touches = {}, pinching = false, pinchStartDist = 0, pinchStartZoom = 1;
+    // Two fingers on the sheet is the browser's gesture, not ours: it zooms
+    // the whole page and pans it in any direction, which is what a pinch is
+    // expected to do everywhere else. All this tracks is that a second
+    // finger landed, so the pinch never doubles as a cell drag, a long-press
+    // menu or a double-tap.
+    var touches = {}, pinching = false;
     // A real double-tap on iOS/Android does not reliably become a native
     // dblclick — it depends on gesture-recognition quirks that vary by OS
-    // version and are exactly what touch-action: pan-x/pan-y (deliberately
-    // set here to keep the browser's own pinch/double-tap-zoom out of the
-    // grid's way) tends to disturb. Tapped twice, quickly, in the same spot,
-    // is tracked directly instead of hoping the platform synthesises it.
+    // version. Tapped twice, quickly, in the same spot, is tracked directly
+    // instead of hoping the platform synthesises it.
     var lastTapCell = null, lastTapTime = 0;
     function touchIds() { return Object.keys(touches); }
-    function touchDist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
     scroll.addEventListener("pointerdown", function (e) {
       var fillHandle = e.target.closest && e.target.closest(".ig-fill-handle");
       if (fillHandle) { e.preventDefault(); e.stopPropagation(); igStartFillDrag(e); return; }
@@ -4340,9 +4350,7 @@
         touches[e.pointerId] = { x: e.clientX, y: e.clientY };
         if (touchIds().length === 2) {
           pinching = true; dragging = false; lpFired = true; clearTimeout(lpTimer); igCloseMenu();
-          var ids = touchIds();
-          pinchStartDist = touchDist(touches[ids[0]], touches[ids[1]]);
-          pinchStartZoom = gridState.zoom || 1;
+          lastTapCell = null; lastTapTime = 0;
           return;
         }
       }
@@ -4361,16 +4369,7 @@
     });
     scroll.addEventListener("pointermove", function (e) {
       if (e.pointerType === "touch" && touches[e.pointerId]) touches[e.pointerId] = { x: e.clientX, y: e.clientY };
-      if (pinching) {
-        var ids = touchIds();
-        if (ids.length === 2 && pinchStartDist > 10) {
-          var d = touchDist(touches[ids[0]], touches[ids[1]]);
-          var z = Math.max(IG_ZOOM_MIN, Math.min(IG_ZOOM_MAX, Math.round((pinchStartZoom * (d / pinchStartDist)) * 100) / 100));
-          gridState.zoom = z;
-          igApplyZoomLive();
-        }
-        return;
-      }
+      if (pinching) return;
       if (!startCell) return;
       if (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8) {
         clearTimeout(lpTimer);
@@ -4383,10 +4382,7 @@
     });
     function endTouch(e) {
       if (e.pointerType === "touch") delete touches[e.pointerId];
-      if (pinching && touchIds().length < 2) {
-        pinching = false; pinchStartDist = 0;
-        state.upcoming.gridZoom = gridState.zoom; savePrefs();
-      }
+      if (pinching && !touchIds().length) pinching = false;
     }
     scroll.addEventListener("pointerup", function (e) {
       endTouch(e);

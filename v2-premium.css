@@ -1761,6 +1761,12 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
   --ig-surface3: color-mix(in srgb, var(--tx) 9%, var(--card));
   --ig-selected: color-mix(in srgb, var(--tx) 9%, var(--card));
   --ig-selected-line: color-mix(in srgb, var(--tx) 24%, transparent);
+  /* USD money, washed across the whole cell in the same blue the USD badge
+     wears. Mixed into the card colour rather than laid over it as an alpha,
+     so the cell stays fully opaque — the same reason the settled/cancelled
+     rows fade their text colour instead of their opacity. */
+  --ig-usd-cell: color-mix(in srgb, var(--usd) 20%, var(--card));
+  --ig-usd-cell-line: color-mix(in srgb, var(--usd) 28%, var(--ig-line));
   /* A spreadsheet stands on plain paper. Without this the app's tinted,
      gradient background shows through wherever the grid does not reach. */
   background: var(--card);
@@ -1812,7 +1818,12 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 .ig-formula-input:disabled { color: var(--tx3); }
 
 .ig-gridwrap { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; }
-.ig-scroll { position: absolute; inset: 0; overflow: auto; outline: none; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-x pan-y; }
+/* manipulation = pan in both directions + the browser's own continuous
+   pinch-zoom, minus double-tap-to-zoom. So two fingers zoom the whole page
+   (not just the sheet) and you can pan the zoomed page anywhere, while a
+   double-tap on a cell opens the editor instead of zooming — iOS ignores
+   `pan-x pan-y` for double-tap zoom, but it honours this. */
+.ig-scroll { position: absolute; inset: 0; overflow: auto; outline: none; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: manipulation; }
 .ig-scroll:focus, .ig-scroll:focus-visible { outline: none; }
 .ig-grid-inner { --ig-rownum-w: 42px; --ig-zoom: 1; width: fit-content; min-width: 100%; position: relative; }
 .ig-row { display: grid; grid-template-columns: var(--ig-tpl, 42px 178px 116px 124px 112px 124px 58px 112px 118px 132px 130px 220px); align-items: stretch; }
@@ -1825,7 +1836,7 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
   border-bottom: 1px solid var(--ig-line); border-right: 1px solid var(--ig-line);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   background: var(--card); position: relative;
-  user-select: none; -webkit-user-select: none; touch-action: pan-x pan-y;
+  user-select: none; -webkit-user-select: none; touch-action: manipulation;
 }
 .ig-a-right { justify-content: flex-end; text-align: right; }
 .ig-a-center { justify-content: center; text-align: center; }
@@ -1849,6 +1860,10 @@ body.x97-v2-mode:has(#x97-v2-root[data-screen="upcoming"]) .wrap {
 .ig-head-row .ig-sticky-num { z-index: 9; }
 /* The client is the row's identity — small, but the boldest thing in it. */
 .ig-c-client { font-weight: 800; font-size: max(9.5px, calc(11px * var(--ig-zoom, 1))) !important; letter-spacing: -.01em; }
+/* A USD deal's Total/Paid/Balance read as one blue band across the row, so
+   a dollar figure is never mistaken for a shilling one. Declared here,
+   above the selection rules, so selecting a cell still paints over it. */
+.ig-cell.ig-money-usd { background: var(--ig-usd-cell); border-bottom-color: var(--ig-usd-cell-line); border-right-color: var(--ig-usd-cell-line); }
 
 /* A slightly heavier line where one cluster of columns ends and the next
    begins — identity, then money, then status/timing, then everything
@@ -1951,7 +1966,7 @@ body.ig-filling { cursor: crosshair !important; user-select: none !important; }
    Fading the colour toward the surface instead reads the same but keeps
    the cell fully opaque, so there's no layer to go stale. */
 .ig-row-settled .ig-c-client { color: color-mix(in srgb, var(--tx) 72%, var(--card)); }
-.ig-row-settled .ig-c-gross { opacity: .72; }
+.ig-row-settled .ig-c-gross { color: color-mix(in srgb, var(--tx) 72%, var(--card)); }
 
 .ig-badge { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 10.5px; font-weight: 800; }
 .ig-badge-good { background: var(--posdim); color: var(--pos); }
