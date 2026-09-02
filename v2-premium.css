@@ -2084,13 +2084,29 @@ select.ig-edit-input { padding: 0 calc(6px * var(--ig-zoom, 1)); }
 .ig-zpct { min-width: 42px; height: 28px; padding: 0 6px; border: 0; background: transparent; color: var(--tx2); font-size: 10.5px; font-weight: 800; cursor: pointer; }
 .ig-zpct:hover { color: var(--tx); }
 
+/* ── The account summary ───────────────────────────────────────────────────
+   Read like a bank statement header: the balance owed, stated once and
+   large, with the four periods it is spread across underneath. */
 .ig-summary {
-  /* Five period tiles: always one row, each capped so they stay dense on a
-     2560px monitor and shrink to fit rather than wrapping on a tablet. */
-  display: grid; grid-template-columns: repeat(5, minmax(0, 190px)); justify-content: start;
+  display: flex; align-items: stretch;
   background: var(--card); border-top: 1px solid var(--ig-line); border-bottom: 1px solid var(--ig-line);
   flex: 0 0 auto; overflow: hidden;
 }
+.ig-sum-total {
+  flex: 0 0 auto; min-width: 0; max-width: 300px;
+  padding: clamp(6px, 1.2vw, 10px) var(--ig-gut);
+  background: var(--ig-surface2); border-right: 1px solid var(--ig-line2);
+  display: flex; flex-direction: column; justify-content: center;
+}
+.ig-sum-total-label { font-size: clamp(8.5px, 1.6vw, 9.5px); font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .06em; }
+.ig-sum-total-value {
+  font-size: clamp(17px, 3vw, 22px); font-weight: 800; color: var(--tx); letter-spacing: -.025em;
+  margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ig-sum-total-sub { font-size: clamp(9px, 1.8vw, 10.5px); color: var(--tx3); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The periods: one row that stays dense on a 2560px monitor and shrinks to
+   fit rather than wrapping on a tablet. */
+.ig-sum-periods { display: grid; grid-template-columns: repeat(4, minmax(0, 300px)); justify-content: start; min-width: 0; flex: 1 1 auto; }
 .ig-stat { background: var(--card); padding: clamp(5px, 1.2vw, 8px) var(--ig-gut); min-width: 0; border-right: 1px solid var(--ig-line); }
 .ig-stat-label { display: flex; align-items: center; gap: 5px; font-size: clamp(8.5px, 1.6vw, 9.5px); font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ig-stat-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: var(--tx3); opacity: .55; }
@@ -2103,9 +2119,6 @@ select.ig-edit-input { padding: 0 calc(6px * var(--ig-zoom, 1)); }
 .ig-stat-warn .ig-stat-value, .ig-stat-warn .ig-stat-label { color: var(--warn); }
 .ig-stat-warn .ig-stat-dot { background: var(--warn); opacity: 1; }
 .ig-stat-good .ig-stat-dot { background: var(--pos); opacity: 1; }
-.ig-stat-total { background: var(--ig-surface2); }
-.ig-stat-total .ig-stat-value { color: var(--tx); font-weight: 800; }
-.ig-stat-total .ig-stat-dot { background: var(--tx2); opacity: .8; }
 .ig-stat-empty { color: var(--tx3); opacity: .6; font-weight: 500; }
 
 .ig-menu { position: fixed; z-index: 70; min-width: 170px; background: var(--card); border: 1px solid var(--ig-line2); border-radius: 12px; box-shadow: var(--elev-2); padding: 6px; display: flex; flex-direction: column; gap: 1px; }
@@ -2216,25 +2229,27 @@ select.ig-edit-input { padding: 0 calc(6px * var(--ig-zoom, 1)); }
   .ig-statusbar { font-size: 10px; }
   .ig-selstats { gap: 8px; font-size: 9.5px; }
 
-  /* Summary: one horizontally scrolling row of single-line pills. The mask
-     fades the last one out at the edge so it reads as "swipe for more"
-     rather than as a tile someone forgot to finish. */
-  .ig-summary {
-    display: flex; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
-    scroll-snap-type: x proximity;
-    -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
-    mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+  /* Summary: the balance across the top, then the four periods as a 2x2
+     panel under it — everything readable at a glance, standing still. It
+     used to be one sideways-scrolling line of pills, which meant swiping
+     to read your own figures and left the last one clipped at the edge.
+     The whole block folds away the moment the sheet is scrolled (below),
+     so the rows lose nothing to it. */
+  .ig-summary { display: block; }
+  .ig-sum-total {
+    max-width: none; border-right: 0; border-bottom: 1px solid var(--ig-line);
+    padding: 6px var(--ig-gut) 7px;
   }
-  .ig-summary::-webkit-scrollbar { display: none; }
-  .ig-stat {
-    flex: 0 0 auto; display: flex; align-items: baseline; gap: 5px;
-    padding: 5px var(--ig-gut); max-width: none; white-space: nowrap;
-    scroll-snap-align: start;
-  }
+  .ig-sum-total-label { font-size: 9px; letter-spacing: .07em; }
+  .ig-sum-total-value { font-size: 20px; margin-top: 0; }
+  .ig-sum-total-sub { font-size: 9.5px; }
+  .ig-sum-periods { grid-template-columns: 1fr 1fr; }
+  .ig-stat { padding: 5px var(--ig-gut); }
+  .ig-stat:nth-child(2n) { border-right: 0; }
+  .ig-stat:nth-child(-n + 2) { border-bottom: 1px solid var(--ig-line); }
   .ig-stat-label { font-size: 9px; }
-  .ig-stat-value { font-size: 12.5px; margin-top: 0; }
+  .ig-stat-value { font-size: 13px; margin-top: 0; }
   .ig-stat-sub { font-size: 9.5px; margin-top: 0; }
-  .ig-stat-sub::before { content: "· "; opacity: .55; }
 
   /* Value bar duplicates in-cell editing on touch; give the rows its 38px. */
   .ig-formula-bar { display: none; }
@@ -2260,11 +2275,21 @@ select.ig-edit-input { padding: 0 calc(6px * var(--ig-zoom, 1)); }
   .ig-zpct { height: 26px; }
 }
 
+/* On a short phone the panel has to earn its height against the rows. The
+   figures stay; the sentences under them go, since the status bar and the
+   sheet itself already say how many payments are involved. */
+@media (max-width: 759px) and (max-height: 720px) {
+  .ig-sum-total { padding: 4px var(--ig-gut) 5px; }
+  .ig-sum-total-value { font-size: 17px; }
+  .ig-sum-total-sub, .ig-stat-sub { display: none; }
+  .ig-stat { padding: 4px var(--ig-gut); }
+}
+
 /* ── Scroll-away chrome ────────────────────────────────────────────────────
    Once the user starts working down the sheet, the summary row folds away
    and hands its height to the rows. It comes straight back at the top. */
 @media (max-width: 759px) {
-  .ig-summary { transition: max-height 140ms ease, opacity 120ms ease; max-height: 60px; }
+  .ig-summary { transition: max-height 160ms ease, opacity 120ms ease; max-height: 170px; }
   .ig-shell.ig-scrolled .ig-summary { max-height: 0; opacity: 0; border-bottom-width: 0; }
 }
 

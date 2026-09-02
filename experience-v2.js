@@ -3211,19 +3211,29 @@
       '</div>';
     }
     function payments(n) { return n + (n === 1 ? " payment" : " payments"); }
+    // A bank's account summary, not a ticker: what you are owed in total
+    // reads first and largest, and the four periods sit under it as their
+    // own block — one row of tiles on a desktop, a 2x2 panel on a phone.
+    // The old single line of pills had to be swiped sideways to be read,
+    // which is no way to show a balance.
     return '<div class="ig-summary">' +
-      tile("Overdue", amounts(periods.overdue.ugx, periods.overdue.usd),
-        periods.overdue.count ? payments(periods.overdue.count) + " late" : "Nothing late",
-        periods.overdue.count ? "bad" : "good") +
-      tile("Due today", amounts(periods.today.ugx, periods.today.usd),
-        periods.today.count ? payments(periods.today.count) : "Nothing today", periods.today.count ? "warn" : "") +
-      tile("This week", amounts(periods.week.ugx, periods.week.usd),
-        periods.week.count ? payments(periods.week.count) + " to " + esc(formatDate(dateISO(addDays(todayDate(), 6)), true)) : "Nothing this week",
-        periods.week.count ? "warn" : "") +
-      tile("This month", amounts(periods.month.ugx, periods.month.usd),
-        periods.month.count ? payments(periods.month.count) + " by " + esc(formatDate(dateISO(endOfMonth(todayDate())), true)) : "Nothing this month", "") +
-      tile("Outstanding", amounts(stats.outstandingUGX, stats.outstandingUSD),
-        stats.open.length + " open · " + stats.unscheduled.length + " undated", "total") +
+      '<div class="ig-sum-total">' +
+        '<div class="ig-sum-total-label">Outstanding</div>' +
+        '<div class="ig-sum-total-value tabnum">' + amounts(stats.outstandingUGX, stats.outstandingUSD) + '</div>' +
+        '<div class="ig-sum-total-sub">' + stats.open.length + ' open · ' + stats.unscheduled.length + ' undated</div>' +
+      '</div>' +
+      '<div class="ig-sum-periods">' +
+        tile("Overdue", amounts(periods.overdue.ugx, periods.overdue.usd),
+          periods.overdue.count ? payments(periods.overdue.count) + " late" : "Nothing late",
+          periods.overdue.count ? "bad" : "good") +
+        tile("Due today", amounts(periods.today.ugx, periods.today.usd),
+          periods.today.count ? payments(periods.today.count) : "Nothing today", periods.today.count ? "warn" : "") +
+        tile("This week", amounts(periods.week.ugx, periods.week.usd),
+          periods.week.count ? payments(periods.week.count) + " to " + esc(formatDate(dateISO(addDays(todayDate(), 6)), true)) : "Nothing this week",
+          periods.week.count ? "warn" : "") +
+        tile("This month", amounts(periods.month.ugx, periods.month.usd),
+          periods.month.count ? payments(periods.month.count) + " by " + esc(formatDate(dateISO(endOfMonth(todayDate())), true)) : "Nothing this month", "") +
+      '</div>' +
     '</div>';
   }
 
@@ -3402,7 +3412,13 @@
 
   function igScrollCellIntoView(rowId, col) {
     var el = gridState.cellEls[rowId] && gridState.cellEls[rowId][col];
-    if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (!el || !el.scrollIntoView) return;
+    // Stamped so the touch handler can tell the sheet moving itself from the
+    // sheet still gliding under a flick — only the latter should swallow the
+    // next tap. Without this, selecting a cell scrolls it into view and the
+    // second half of a double-tap gets thrown away as a fling.
+    gridState.progScrollAt = Date.now();
+    el.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
 
   function igSetActive(rowId, col, opts) {
@@ -4340,8 +4356,26 @@
     // A real double-tap on iOS/Android does not reliably become a native
     // dblclick — it depends on gesture-recognition quirks that vary by OS
     // version. Tapped twice, quickly, in the same spot, is tracked directly
-    // instead of hoping the platform synthesises it.
-    var lastTapCell = null, lastTapTime = 0;
+    // instead of hoping the platform synthesises it. Keyed by row+column
+    // rather than by element, so a repaint between the two taps can't break
+    // the pair.
+    var lastTapKey = null, lastTapTime = 0;
+    // Touch selection, the way Sheets does it: a finger that lands on the
+    // sheet has not selected anything yet, and only a deliberate tap — down
+    // and up in roughly the same spot, on a sheet that is not already
+    // coasting — moves the selection. A thumb is not a mouse pointer: it
+    // lands wide, wobbles, and is usually there to scroll.
+    var IG_TAP_SLOP = 14, IG_FLING_GUARD = 200;
+    var tapPending = false, lastScrollAt = 0;
+    scroll.addEventListener("scroll", function () {
+      // A scroll the sheet asked for (bringing the active cell into view)
+      // is not the user flicking, and must not eat the next tap.
+      if (Date.now() - (gridState.progScrollAt || 0) < 250) return;
+      lastScrollAt = Date.now();
+      // The sheet moved under the finger, so the gesture was a scroll. Any
+      // tap or long-press it might have become is off.
+      if (tapPending) { tapPending = false; clearTimeout(lpTimer); }
+    }, { passive: true });
     function touchIds() { return Object.keys(touches); }
     scroll.addEventListener("pointerdown", function (e) {
       var fillHandle = e.target.closest && e.target.closest(".ig-fill-handle");
@@ -4349,8 +4383,8 @@
       if (e.pointerType === "touch") {
         touches[e.pointerId] = { x: e.clientX, y: e.clientY };
         if (touchIds().length === 2) {
-          pinching = true; dragging = false; lpFired = true; clearTimeout(lpTimer); igCloseMenu();
-          lastTapCell = null; lastTapTime = 0;
+          pinching = true; dragging = false; lpFired = true; tapPending = false; clearTimeout(lpTimer); igCloseMenu();
+          lastTapKey = null; lastTapTime = 0;
           return;
         }
       }
@@ -4360,19 +4394,34 @@
       if (!cell || gridState.editing) return;
       startX = e.clientX; startY = e.clientY; startCell = cell; lpFired = false;
       if (cell.classList.contains("ig-rownum")) return;
+      if (e.pointerType === "touch") {
+        // Nothing is selected on the way down. A tap that lands while the
+        // sheet is still gliding is the universal "stop here" gesture, so
+        // it stops the scroll and selects nothing.
+        tapPending = Date.now() - lastScrollAt > IG_FLING_GUARD;
+        dragging = false;
+        clearTimeout(lpTimer);
+        lpTimer = setTimeout(function () {
+          lpFired = true; tapPending = false;
+          igSelectCellFromEl(cell, false);
+          igOpenCellMenu(cell);
+        }, 520);
+        return;
+      }
       dragging = true;
       igSelectCellFromEl(cell, !!e.shiftKey);
-      if (e.pointerType === "touch") {
-        clearTimeout(lpTimer);
-        lpTimer = setTimeout(function () { lpFired = true; dragging = false; igOpenCellMenu(cell); }, 520);
-      }
     });
     scroll.addEventListener("pointermove", function (e) {
       if (e.pointerType === "touch" && touches[e.pointerId]) touches[e.pointerId] = { x: e.clientX, y: e.clientY };
       if (pinching) return;
       if (!startCell) return;
-      if (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8) {
+      var slop = e.pointerType === "touch" ? IG_TAP_SLOP : 8;
+      if (Math.abs(e.clientX - startX) > slop || Math.abs(e.clientY - startY) > slop) {
         clearTimeout(lpTimer);
+        // A finger that travelled is scrolling, not selecting. It never
+        // paints a range on the way past — dragging a thumb down the sheet
+        // used to leave a block of cells selected behind it.
+        if (e.pointerType === "touch") { tapPending = false; startCell = null; lastTapKey = null; return; }
         if (dragging && !lpFired) {
           var el = document.elementFromPoint(e.clientX, e.clientY);
           var overCell = el && el.closest && el.closest(".ig-cell:not(.ig-rownum):not(.ig-colhead):not(.ig-filler-cell)");
@@ -4386,17 +4435,22 @@
     }
     scroll.addEventListener("pointerup", function (e) {
       endTouch(e);
-      if (e.pointerType === "touch" && startCell && !lpFired && !pinching && !startCell.classList.contains("ig-rownum")) {
-        var now = Date.now();
-        if (lastTapCell === startCell && now - lastTapTime < 350) {
-          lastTapCell = null; lastTapTime = 0;
-          var rowId = startCell.getAttribute("data-row"), colKey = startCell.getAttribute("data-col");
-          if (rowId && colKey) { e.preventDefault(); igActivateCell(rowId, colKey, true); }
+      if (e.pointerType === "touch" && startCell && tapPending && !lpFired && !pinching && !startCell.classList.contains("ig-rownum")) {
+        var cell = startCell;
+        var rowId = cell.getAttribute("data-row"), colKey = cell.getAttribute("data-col");
+        var key = rowId + "|" + colKey, now = Date.now();
+        if (rowId && colKey && lastTapKey === key && now - lastTapTime < 350) {
+          lastTapKey = null; lastTapTime = 0;
+          e.preventDefault();
+          igActivateCell(rowId, colKey, true);
         } else {
-          lastTapCell = startCell; lastTapTime = now;
+          // The tap the user actually meant: the finger went down and came
+          // back up on the same cell, so now the selection moves there.
+          lastTapKey = key; lastTapTime = now;
+          igSelectCellFromEl(cell, false);
         }
       }
-      dragging = false; clearTimeout(lpTimer); startCell = null;
+      tapPending = false; dragging = false; clearTimeout(lpTimer); startCell = null;
     });
     scroll.addEventListener("pointercancel", function (e) { endTouch(e); dragging = false; clearTimeout(lpTimer); startCell = null; });
   }
