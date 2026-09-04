@@ -2696,6 +2696,21 @@
     return '<div class="ic-month-row" role="tablist" aria-label="Filter by month">' + chips + '</div>';
   }
 
+  // Outstanding for one month only — the same expectedBy derivation
+  // icMonthChipsHTML counts by, so the number on a chip and the total that
+  // appears when you tap it always agree.
+  function icOutstandingForMonth(doc, key) {
+    var ugx = 0, usd = 0;
+    (doc.followups || []).forEach(function (item) {
+      if (!isOpenFollowup(item)) return;
+      var t = timing(item, doc), next = t.next, expectedBy = next ? next.dueDate : item.expectedBy;
+      if (!expectedBy || monthKey(expectedBy) !== key) return;
+      if (String(item.currency || "UGX").toUpperCase() === "USD") usd += outstandingOf(item);
+      else ugx += outstandingOf(item);
+    });
+    return { ugx: ugx, usd: usd };
+  }
+
   function icHeroHTML(doc, stats) {
     var headline = stats.overdue.length
       ? stats.overdue.length + " payment" + (stats.overdue.length === 1 ? "" : "s") + " overdue"
@@ -2704,8 +2719,13 @@
         : stats.unscheduled.length
           ? stats.unscheduled.length + " open deal" + (stats.unscheduled.length === 1 ? "" : "s") + " need" + (stats.unscheduled.length === 1 ? "s" : "") + " a date"
           : "Nothing needs chasing right now";
+    var selectedMonth = state.upcoming.month;
+    var scoped = selectedMonth !== "all" && selectedMonth !== "unscheduled" ? icOutstandingForMonth(doc, selectedMonth) : null;
+    var outUGX = scoped ? scoped.ugx : stats.outstandingUGX;
+    var outUSD = scoped ? scoped.usd : stats.outstandingUSD;
+    var heroLabel = scoped ? "Outstanding · " + monthLabel(selectedMonth, true) : "Outstanding";
     return '<section class="ic-hero">' +
-      '<div class="ic-hero-top"><div><div class="ic-hero-label">Outstanding</div><div class="ic-hero-value tabnum">' + money(stats.outstandingUGX, "UGX", true) + (stats.outstandingUSD ? ' <span class="ic-hero-usd">+ ' + money(stats.outstandingUSD, "USD", true) + '</span>' : '') + '</div></div><div class="ic-hero-headline">' + esc(headline) + '</div></div>' +
+      '<div class="ic-hero-top"><div><div class="ic-hero-label">' + esc(heroLabel) + '</div><div class="ic-hero-value tabnum">' + money(outUGX, "UGX", true) + (outUSD ? ' <span class="ic-hero-usd">+ ' + money(outUSD, "USD", true) + '</span>' : '') + '</div></div><div class="ic-hero-headline">' + esc(headline) + '</div></div>' +
       '<div class="ic-hero-chips">' +
         icQuickChip("overdue", "Overdue", stats.overdue.length, true) +
         icQuickChip("next7", "Next 7 days", stats.due7.length) +
