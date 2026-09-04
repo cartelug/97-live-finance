@@ -2666,6 +2666,10 @@
   // filter sheet and multi-select a category by hand. It rides the same
   // state.upcoming.categories array the filter sheet itself writes to, so it
   // stays in sync with "Category" there rather than being a second system.
+  // The count below is every retainer deal regardless of status — turning
+  // the chip on also sets quick to "all" (see the filter-retainer action),
+  // so a paid or cancelled retainer isn't silently dropped by the default
+  // "open deals only" view while its own badge still counted it.
   function icRetainerChip(doc) {
     var count = (doc.followups || []).filter(function (x) { return String(x.category || "").trim() === "Retainer"; }).length;
     if (!count) return "";
@@ -4690,7 +4694,7 @@
     if(action==="quick-date"){var value=btn.dataset.value==="month-end"?dateISO(endOfMonth(todayDate())):dateISO(addDays(todayDate(),num(btn.dataset.days))),changed=[];var input=document.querySelector("#x97-upcoming-form [name=expectedBy]"),start=document.querySelector("#x97-upcoming-form [name=startDate]"),first=document.querySelector("#x97-upcoming-form [name=firstDue]"),depositDue=document.querySelector("#x97-upcoming-form [name=depositDue]");if(input){input.value=value;changed.push(input);}if(start){start.value=value;changed.push(start);}if(first){first.value=value;changed.push(first);}if(depositDue){depositDue.value=value;changed.push(depositDue);}var second=document.querySelector("#x97-upcoming-form [name=secondDue]"),balanceDue=document.querySelector("#x97-upcoming-form [name=balanceDue]"),dealTypeInput=document.querySelector("#x97-upcoming-form [name=dealType]");if(second&&dealTypeInput&&(dealTypeInput.value==="split"||dealTypeInput.value==="deposit")&&!second.value){second.value=value;changed.push(second);}if(balanceDue&&dealTypeInput&&dealTypeInput.value==="deposit"&&!balanceDue.value){balanceDue.value=value;changed.push(balanceDue);}changed.forEach(function(el){try{el.dispatchEvent(new Event("input",{bubbles:true}));}catch(_){}});return;}
     if(action==="quick-filter"){state.upcoming.quick=btn.dataset.value;savePrefs();scheduleRender(0);return;}
     if(action==="month-filter"){state.upcoming.month=btn.dataset.month;savePrefs();scheduleRender(0);return;}
-    if(action==="filter-retainer"){var wasOn=state.upcoming.categories.length===1&&state.upcoming.categories[0]==="Retainer";state.upcoming.categories=wasOn?[]:["Retainer"];savePrefs();scheduleRender(0);return;}
+    if(action==="filter-retainer"){var wasOn=state.upcoming.categories.length===1&&state.upcoming.categories[0]==="Retainer";if(wasOn){state.upcoming.categories=[];state.upcoming.quick="open";}else{state.upcoming.categories=["Retainer"];state.upcoming.quick="all";}savePrefs();scheduleRender(0);return;}
     if(action==="open-month"){state.upcoming.month=btn.dataset.month;state.upcoming.quick="open";savePrefs();var item=findNavItem("upcoming");if(item&&!item.classList.contains("on"))item.click();else scheduleRender(0);return;}
     if(action==="clear-filter"){var k=btn.dataset.filter;if(k==="month")state.upcoming.month="all";else if(k==="statuses")state.upcoming.statuses=[];else if(k==="currencies")state.upcoming.currencies=[];else if(k==="categories")state.upcoming.categories=[];else if(k==="dates"){state.upcoming.from="";state.upcoming.to="";}else if(k==="amount"){state.upcoming.minAmount="";state.upcoming.maxAmount="";}else if(k==="sort")state.upcoming.sort="urgency";savePrefs();scheduleRender(0);return;}
     if(action==="clear-all-filters"){state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.sort="urgency";state.upcoming.month="all";state.upcoming.quick="all";savePrefs();scheduleRender(0);return;}
