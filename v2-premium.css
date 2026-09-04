@@ -2231,10 +2231,32 @@ body > .x97-fab.x97-fab-viewport,
   .ic-row-part .ic-c-cur, .ic-row-part .ic-c-structure { display: none; }
   .ic-row-part .ic-c-status { display: none; }
 
-  /* Scroll-away hero: the moment the list moves, the balance folds away and
-     hands its height straight back to the rows — it comes back at the top. */
-  .ic-hero, .ic-toolbar { transition: max-height 160ms ease, opacity 120ms ease, padding 160ms ease, border-color 160ms ease; overflow: hidden; }
-  .ic-shell.ic-scrolled .ic-hero { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; border-bottom-width: 0; }
+  /* Collapsing hero: what you're owed is the one number that should never
+     disappear, so scrolling shrinks the hero to a compact bar instead of
+     hiding it — label and value stay put; the chips, headline and month
+     row (secondary, always reachable by scrolling back up) fold away to
+     hand their height back to the list. */
+  .ic-hero { transition: padding 180ms var(--v2-ease, cubic-bezier(.22, 1, .36, 1)), border-radius 180ms ease; }
+  .ic-hero-headline,
+  .ic-hero-chips,
+  .ic-month-row {
+    transition: max-height 180ms var(--v2-ease, cubic-bezier(.22, 1, .36, 1)), opacity 140ms ease, margin-top 180ms ease;
+    max-height: 60px;
+  }
+  /* .ic-hero-chips and .ic-month-row already scroll horizontally
+     (overflow-x: auto) — clip only the vertical axis here so that isn't
+     clobbered by the overflow shorthand. */
+  .ic-hero-headline { overflow: hidden; }
+  .ic-hero-chips, .ic-month-row { overflow-y: hidden; }
+  .ic-hero-value { transition: font-size 180ms var(--v2-ease, cubic-bezier(.22, 1, .36, 1)); }
+  .ic-toolbar { transition: padding 160ms ease, border-color 160ms ease; }
+  .ic-shell.ic-scrolled .ic-hero { padding-top: 9px; padding-bottom: 9px; border-radius: 0 0 16px 16px; }
+  .ic-shell.ic-scrolled .ic-hero-value { font-size: 19px; }
+  .ic-shell.ic-scrolled .ic-hero-headline,
+  .ic-shell.ic-scrolled .ic-hero-chips,
+  .ic-shell.ic-scrolled .ic-month-row {
+    max-height: 0; opacity: 0; margin-top: 0; pointer-events: none;
+  }
 }
 
 @media (max-width: 420px) {
