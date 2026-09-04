@@ -2,12 +2,12 @@
    Network-first for the app shell so new versions actually reach every device;
    stale-while-revalidate for static assets; cache is the offline fallback only.
    Cross-origin requests (Supabase and live rates) are never intercepted. */
-const CACHE = "ns97-live-v4-finished-1";
+const CACHE = "ns97-live-v5-incoming-overhaul";
 const ASSETS = [
   "./",
   "./index.html",
-  "./experience-v2.js?v=12",
-  "./v2-premium.css?v=4",
+  "./experience-v2.js?v=13",
+  "./v2-premium.css?v=5",
   "./v2-premium.js?v=4",
   "./fonts/geist-sans.woff2",
   "./fonts/geist-mono.woff2",
@@ -15,6 +15,9 @@ const ASSETS = [
   "./fonts/ibm-plex-mono-500.woff",
   "./fonts/ibm-plex-mono-600.woff",
   "./fonts/ibm-plex-mono-700.woff",
+  "./fonts/fraunces-500.woff2",
+  "./fonts/fraunces-600.woff2",
+  "./fonts/fraunces-700.woff2",
   "./sync.js?v=21",
   "./manifest.webmanifest",
   "./icons/icon-192.png",

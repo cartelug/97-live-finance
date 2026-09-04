@@ -1442,7 +1442,7 @@
       body.x97-v2-mode{overflow-x:visible}
       body.x97-v2-mode .wrap{max-width:1040px!important;background:var(--bg)!important}
       body.x97-v2-mode .navin{max-width:1040px!important}
-      #x97-v2-root{display:none;min-height:100vh;color:var(--tx);font-family:var(--fu);padding:18px 16px calc(132px + env(safe-area-inset-bottom));position:relative;z-index:10;background:radial-gradient(80% 45% at 50% -8%,rgba(14,117,72,.06),transparent 66%),var(--bg)}
+      #x97-v2-root{display:none;min-height:100vh;color:var(--tx);font-family:var(--fu);padding:18px 16px calc(var(--x97-nav-h, 67px) + 65px + env(safe-area-inset-bottom));position:relative;z-index:10;background:radial-gradient(80% 45% at 50% -8%,rgba(14,117,72,.06),transparent 66%),var(--bg)}
       #x97-v2-root.on{display:block}
       .x97-page{max-width:1000px;margin:0 auto;animation:x97-in .32s cubic-bezier(.22,1,.36,1) both}
       @keyframes x97-in{from{opacity:.3;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -1532,8 +1532,8 @@
       .x97-field{margin-bottom:14px}.x97-field label{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--tx2);font-weight:800;margin:0 0 6px}.x97-input,.x97-select,.x97-textarea{width:100%;min-height:44px;border:1px solid var(--line2);border-radius:12px;background:var(--card);color:var(--tx);padding:10px 12px;font-size:13px;outline:0}.x97-textarea{min-height:82px;resize:vertical}.x97-input:focus,.x97-select:focus,.x97-textarea:focus{border-color:var(--pos);box-shadow:var(--ring)}.x97-fields-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.x97-help{font-size:10.5px;color:var(--tx3);line-height:1.5;margin-top:5px}.x97-checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.x97-check{display:flex;gap:8px;align-items:center;padding:10px;background:var(--card);border:1px solid var(--line);border-radius:11px;font-size:12px;font-weight:700}.x97-check input{accent-color:var(--pos)}
       .x97-preview{background:var(--card2);border:1px solid var(--line);border-radius:14px;padding:13px;margin-top:8px}.x97-preview-row{display:flex;justify-content:space-between;gap:12px;padding:5px 0;font-size:12px}.x97-preview-row span{color:var(--tx3)}.x97-preview-row b{font-variant-numeric:tabular-nums}.x97-preview-row.total{border-top:1px solid var(--line);margin-top:6px;padding-top:10px;font-size:14px}
       .x97-toast-wrap{position:fixed;z-index:2000;left:50%;bottom:calc(142px + env(safe-area-inset-bottom));transform:translateX(-50%);width:min(430px,calc(100% - 28px));pointer-events:none}.x97-toast{background:#171B12;color:#fff;border-radius:13px;padding:11px 13px;font-size:12px;font-weight:700;box-shadow:0 15px 35px rgba(23,27,18,.28);animation:x97-toast .25s ease both}.x97-toast.success{background:#0B6740}.x97-toast.error{background:#9E2D27}@keyframes x97-toast{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-      @media(min-width:760px){#x97-v2-root{padding:26px 24px 110px}.x97-grid-2{grid-template-columns:1fr 1fr}.x97-summary-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.x97-dashboard-main>section:not(.x97-dashboard-wide) .x97-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.x97-pipeline{grid-template-columns:repeat(3,minmax(0,1fr))}.x97-dashboard-main{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(300px,.85fr);gap:18px;align-items:start}.x97-dashboard-wide{grid-column:1/-1}.x97-sheet{border-radius:26px;margin:20px}.x97-back{align-items:center;padding:16px}.x97-fab{right:max(24px,calc(50% - 488px))}.x97-hero{padding:28px 26px 24px}.x97-hero-meta{max-width:520px}}
-      @media(min-width:1040px){#x97-v2-root{padding:34px 28px 120px}.x97-title{font-size:34px}.x97-hero-value{font-size:56px}.x97-section{margin-top:24px}.x97-dashboard-main{gap:20px}.x97-pad{padding:20px}}
+      @media(min-width:760px){#x97-v2-root{padding:26px 24px calc(var(--x97-nav-h, 67px) + 43px + env(safe-area-inset-bottom))}.x97-grid-2{grid-template-columns:1fr 1fr}.x97-summary-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.x97-dashboard-main>section:not(.x97-dashboard-wide) .x97-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.x97-pipeline{grid-template-columns:repeat(3,minmax(0,1fr))}.x97-dashboard-main{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(300px,.85fr);gap:18px;align-items:start}.x97-dashboard-wide{grid-column:1/-1}.x97-sheet{border-radius:26px;margin:20px}.x97-back{align-items:center;padding:16px}.x97-fab{right:max(24px,calc(50% - 488px))}.x97-hero{padding:28px 26px 24px}.x97-hero-meta{max-width:520px}}
+      @media(min-width:1040px){#x97-v2-root{padding:34px 28px calc(var(--x97-nav-h, 67px) + 53px + env(safe-area-inset-bottom))}.x97-title{font-size:34px}.x97-hero-value{font-size:56px}.x97-section{margin-top:24px}.x97-dashboard-main{gap:20px}.x97-pad{padding:20px}}
       @media(max-width:560px){.x97-top{align-items:center;margin:4px 0 16px}.x97-title{font-size:25px}.x97-cloud{padding:7px 9px}.x97-cloud span{display:none}.x97-hero{padding:20px 18px}.x97-hero-value{font-size:clamp(34px,10.5vw,42px);margin:12px 0 16px}.x97-fields-2{grid-template-columns:1fr}.x97-checks{grid-template-columns:1fr 1fr}.x97-fab{right:16px}.x97-item-actions{width:100%;margin-left:0}.x97-item-actions .x97-mini{flex:1}.x97-summary{min-height:88px;padding:13px 12px}.x97-summary .v{font-size:21px}.x97-section{margin-top:17px}}
 
       /* ===== Provider brand logos (MTN / Airtel / Equity) ===== */
@@ -2484,6 +2484,7 @@
 
   function activeFilterCount() {
     var f = state.upcoming, count = 0;
+    if (f.month !== "all") count++;
     if (f.statuses.length) count++;
     if (f.currencies.length) count++;
     if (f.categories.length) count++;
@@ -2660,7 +2661,42 @@
     return '<button class="ic-quick' + (on ? " on" : "") + (danger ? " danger" : "") + '" data-x97-action="quick-filter" data-value="' + attr(value) + '">' + esc(label) + (count != null ? ' <b>' + count + '</b>' : '') + '</button>';
   }
 
-  function icHeroHTML(stats) {
+  // "Retainer" is a real category value in use today (not a hypothetical
+  // generic filter) — a dedicated one-tap chip beats making someone open the
+  // filter sheet and multi-select a category by hand. It rides the same
+  // state.upcoming.categories array the filter sheet itself writes to, so it
+  // stays in sync with "Category" there rather than being a second system.
+  function icRetainerChip(doc) {
+    var count = (doc.followups || []).filter(function (x) { return String(x.category || "").trim() === "Retainer"; }).length;
+    if (!count) return "";
+    var on = state.upcoming.categories.length === 1 && state.upcoming.categories[0] === "Retainer";
+    return '<button class="ic-quick retainer' + (on ? " on" : "") + '" data-x97-action="filter-retainer">Retainers <b>' + count + '</b></button>';
+  }
+
+  // One pill per month that actually has a deal in it, each labelled with
+  // how many — picking a month is picking with information, not blind.
+  // Reuses state.upcoming.month, which followupMatches already filters on;
+  // this only adds the control that was missing to set it from Incoming
+  // itself (previously reachable only by tapping a month card on Dashboard).
+  function icMonthChipsHTML(doc) {
+    var counts = {}, total = 0;
+    (doc.followups || []).forEach(function (item) {
+      var t = timing(item, doc), next = t.next, expectedBy = next ? next.dueDate : item.expectedBy;
+      if (!expectedBy) return;
+      var k = monthKey(expectedBy);
+      counts[k] = (counts[k] || 0) + 1; total++;
+    });
+    var months = Object.keys(counts).sort();
+    if (!months.length) return "";
+    var current = state.upcoming.month;
+    var chips = '<button type="button" class="ic-month-chip' + (current === "all" ? " on" : "") + '" data-x97-action="month-filter" data-month="all">All months<b>' + total + '</b></button>' +
+      months.map(function (key) {
+        return '<button type="button" class="ic-month-chip' + (current === key ? " on" : "") + '" data-x97-action="month-filter" data-month="' + attr(key) + '">' + esc(monthLabel(key, true)) + '<b>' + counts[key] + '</b></button>';
+      }).join("");
+    return '<div class="ic-month-row" role="tablist" aria-label="Filter by month">' + chips + '</div>';
+  }
+
+  function icHeroHTML(doc, stats) {
     var headline = stats.overdue.length
       ? stats.overdue.length + " payment" + (stats.overdue.length === 1 ? "" : "s") + " overdue"
       : stats.due7.length
@@ -2674,9 +2710,12 @@
         icQuickChip("overdue", "Overdue", stats.overdue.length, true) +
         icQuickChip("next7", "Next 7 days", stats.due7.length) +
         icQuickChip("unscheduled", "No date", stats.unscheduled.length) +
+        icRetainerChip(doc) +
         icQuickChip("paid", "Paid") +
         icQuickChip("all", "Everything") +
-      '</div></section>';
+      '</div>' +
+      icMonthChipsHTML(doc) +
+    '</section>';
   }
 
   function icToolbarHTML() {
@@ -2788,7 +2827,7 @@
 
     root.innerHTML = '<div class="ic-shell" id="ic-shell">' +
       pageHeader("Collections", "Incoming", "", '<button class="x97-icon-btn x97-add-primary" data-x97-action="add-upcoming" title="Add incoming deal">' + icon("plus") + '<span>Add deal</span></button>') +
-      icHeroHTML(stats) +
+      icHeroHTML(doc, stats) +
       (icBulk.on ? icBulkBarHTML() : icToolbarHTML()) +
       (activeFilterCount() ? '<div class="ic-filterchips">' + filterTagHTML() + '</div>' : "") +
       '<div class="ic-gridwrap"><div class="ic-listwrap" id="ic-listwrap">' +
@@ -4630,6 +4669,8 @@
     if(action==="delete-upcoming"){var targetDoc=readDoc(),targetItem=targetDoc&&(targetDoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(targetItem&&dealHasRecordedMoney(targetItem)){toast("A deal with recorded money cannot be deleted","error");return;}if(confirm("Delete this upcoming payment?")){updateDoc(function(doc){doc.followups=doc.followups.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"upcoming-delete");closeSheet();}return;}
     if(action==="quick-date"){var value=btn.dataset.value==="month-end"?dateISO(endOfMonth(todayDate())):dateISO(addDays(todayDate(),num(btn.dataset.days))),changed=[];var input=document.querySelector("#x97-upcoming-form [name=expectedBy]"),start=document.querySelector("#x97-upcoming-form [name=startDate]"),first=document.querySelector("#x97-upcoming-form [name=firstDue]"),depositDue=document.querySelector("#x97-upcoming-form [name=depositDue]");if(input){input.value=value;changed.push(input);}if(start){start.value=value;changed.push(start);}if(first){first.value=value;changed.push(first);}if(depositDue){depositDue.value=value;changed.push(depositDue);}var second=document.querySelector("#x97-upcoming-form [name=secondDue]"),balanceDue=document.querySelector("#x97-upcoming-form [name=balanceDue]"),dealTypeInput=document.querySelector("#x97-upcoming-form [name=dealType]");if(second&&dealTypeInput&&(dealTypeInput.value==="split"||dealTypeInput.value==="deposit")&&!second.value){second.value=value;changed.push(second);}if(balanceDue&&dealTypeInput&&dealTypeInput.value==="deposit"&&!balanceDue.value){balanceDue.value=value;changed.push(balanceDue);}changed.forEach(function(el){try{el.dispatchEvent(new Event("input",{bubbles:true}));}catch(_){}});return;}
     if(action==="quick-filter"){state.upcoming.quick=btn.dataset.value;savePrefs();scheduleRender(0);return;}
+    if(action==="month-filter"){state.upcoming.month=btn.dataset.month;savePrefs();scheduleRender(0);return;}
+    if(action==="filter-retainer"){var wasOn=state.upcoming.categories.length===1&&state.upcoming.categories[0]==="Retainer";state.upcoming.categories=wasOn?[]:["Retainer"];savePrefs();scheduleRender(0);return;}
     if(action==="open-month"){state.upcoming.month=btn.dataset.month;state.upcoming.quick="open";savePrefs();var item=findNavItem("upcoming");if(item&&!item.classList.contains("on"))item.click();else scheduleRender(0);return;}
     if(action==="clear-filter"){var k=btn.dataset.filter;if(k==="month")state.upcoming.month="all";else if(k==="statuses")state.upcoming.statuses=[];else if(k==="currencies")state.upcoming.currencies=[];else if(k==="categories")state.upcoming.categories=[];else if(k==="dates"){state.upcoming.from="";state.upcoming.to="";}else if(k==="amount"){state.upcoming.minAmount="";state.upcoming.maxAmount="";}else if(k==="sort")state.upcoming.sort="urgency";savePrefs();scheduleRender(0);return;}
     if(action==="clear-all-filters"){state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.sort="urgency";state.upcoming.month="all";state.upcoming.quick="all";savePrefs();scheduleRender(0);return;}

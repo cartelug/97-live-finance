@@ -49,6 +49,33 @@
   font-display: swap;
 }
 
+/* Display face: an editorial serif reserved for page titles only — the
+   numbers stay on IBM Plex Mono above, which is the right choice for
+   tabular figures. One accent, spent in one place. */
+@font-face {
+  font-family: "Fraunces";
+  src: url("./fonts/fraunces-500.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Fraunces";
+  src: url("./fonts/fraunces-600.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Fraunces";
+  src: url("./fonts/fraunces-700.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
 :root {
   --v2-ink: #10221a;
   --v2-ink-soft: #53665c;
@@ -80,6 +107,7 @@
   --fd: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --fnum: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
   --fmeta: "Geist Mono", "SFMono-Regular", Consolas, monospace;
+  --fdisp: "Fraunces", Georgia, "Iowan Old Style", serif;
   --bg: var(--v2-paper);
   --bg2: var(--v2-paper-2);
   --card: var(--v2-surface-solid);
@@ -303,10 +331,11 @@ body.x97-v2-mode .navin {
 }
 
 .x97-title {
+  font-family: var(--fdisp) !important;
   font-size: clamp(31px, 5.5vw, 50px) !important;
-  font-weight: 720 !important;
+  font-weight: 600 !important;
   line-height: 0.98 !important;
-  letter-spacing: -0.065em !important;
+  letter-spacing: -0.03em !important;
 }
 
 .x97-sub {
@@ -1923,33 +1952,69 @@ body > .x97-fab.x97-fab-viewport,
 .ic-shell .x97-add-primary { height: 34px !important; min-height: 0 !important; border-radius: 9px !important; }
 .ic-shell .x97-eyebrow, .ic-shell .x97-sub { display: none; }
 
-/* ── The hero: what you are owed, stated once and large ─────────────────── */
+/* ── The hero: what you are owed, stated once and large ───────────────────
+   Same dark command-surface language as the Dashboard's "Available cash"
+   card, so Incoming reads as the same product instead of a ledger bolted
+   onto it. Colours are fixed (not theme tokens) on purpose — this is the
+   app's one brand surface, and it looks the same whichever theme you're in,
+   exactly like the Dashboard hero it's matching. */
 .ic-hero {
-  flex: 0 0 auto; padding: 10px var(--ig-gut) 12px; border-bottom: 1px solid var(--ig-line);
-  background: var(--ig-surface2);
-  transition: max-height 160ms ease, opacity 120ms ease, padding 160ms ease;
+  position: relative; isolation: isolate; overflow: hidden;
+  flex: 0 0 auto; padding: 16px var(--ig-gut) 14px; border-bottom: 0;
+  background:
+    radial-gradient(28rem 20rem at 100% -30%, rgba(217, 255, 102, 0.16), transparent 62%),
+    linear-gradient(150deg, #0a5038 0%, #062d21 58%, #031c14 100%);
+  border-radius: 0 0 22px 22px;
+  box-shadow: 0 20px 44px -30px rgba(3, 27, 19, 0.75);
+  transition: max-height 160ms ease, opacity 120ms ease, padding 160ms ease, border-radius 160ms ease;
 }
 .ic-hero-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.ic-hero-label { font-size: 10px; font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .06em; }
-.ic-hero-value { font-size: clamp(21px, 4vw, 27px); font-weight: 800; color: var(--tx); letter-spacing: -.025em; margin-top: 1px; }
-.ic-hero-usd { font-size: 0.62em; font-weight: 700; color: var(--usd); }
-.ic-hero-headline { font-size: 11.5px; font-weight: 650; color: var(--tx2); }
+.ic-hero-label {
+  font-size: 10px; font-weight: 800; color: #d9ff66; text-transform: uppercase; letter-spacing: .1em;
+  font-family: var(--fmeta);
+}
+.ic-hero-value { font-family: var(--fnum); font-size: clamp(23px, 4.4vw, 29px); font-weight: 700; color: #fff; letter-spacing: -.02em; margin-top: 3px; text-shadow: 0 10px 26px rgba(0,0,0,.28); }
+.ic-hero-usd { font-size: 0.6em; font-weight: 700; color: #a9f0e0; }
+.ic-hero-headline { font-size: 11.5px; font-weight: 650; color: rgba(255,255,255,.68); }
 .ic-hero-chips {
-  display: flex; gap: 6px; margin-top: 10px; overflow-x: auto; scrollbar-width: none;
+  display: flex; gap: 6px; margin-top: 12px; overflow-x: auto; scrollbar-width: none;
   -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 22px), transparent 100%);
   mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 22px), transparent 100%);
 }
 .ic-hero-chips::-webkit-scrollbar { display: none; }
 .ic-quick {
   flex: 0 0 auto; white-space: nowrap; height: 30px; padding: 0 12px; border-radius: 999px;
-  border: 1px solid var(--ig-line); background: var(--card); color: var(--tx2); font-size: 11.5px; font-weight: 750;
+  border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.08); backdrop-filter: blur(10px);
+  color: rgba(255,255,255,.82); font-size: 11.5px; font-weight: 750;
   display: inline-flex; align-items: center; gap: 5px;
 }
-.ic-quick b { font-weight: 800; color: var(--tx3); }
-.ic-quick.on { background: var(--ig-selected); border-color: var(--ig-selected-line); color: var(--tx); }
-.ic-quick.on b { color: var(--tx); }
-.ic-quick.danger.on { background: var(--negdim); border-color: color-mix(in srgb, var(--neg) 40%, transparent); color: var(--neg); }
-.ic-quick.danger.on b { color: var(--neg); }
+.ic-quick b { font-weight: 800; color: rgba(255,255,255,.55); }
+.ic-quick.on { background: #fff; border-color: transparent; color: #0a3524; }
+.ic-quick.on b { color: #0a5038; }
+.ic-quick.danger.on { background: #f7b4ae; border-color: transparent; color: #7a1f1a; }
+.ic-quick.danger.on b { color: #7a1f1a; }
+.ic-quick.retainer { border-color: rgba(169, 240, 224, 0.35); color: #a9f0e0; }
+.ic-quick.retainer.on { background: #a9f0e0; color: #063b32; }
+.ic-quick.retainer.on b { color: #063b32; }
+
+/* ── Month row: a second, quieter chip rail directly under the quick
+   filters — same glass treatment, smaller footprint, so "what's due
+   overall" (quick chips) and "what's due in one month" (this row) read as
+   related but distinct controls. ─────────────────────────────────────── */
+.ic-month-row {
+  display: flex; gap: 5px; margin-top: 7px; overflow-x: auto; scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 22px), transparent 100%);
+}
+.ic-month-row::-webkit-scrollbar { display: none; }
+.ic-month-chip {
+  flex: 0 0 auto; white-space: nowrap; height: 25px; padding: 0 10px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.09); background: transparent; color: rgba(255,255,255,.6);
+  font-size: 10.5px; font-weight: 650; display: inline-flex; align-items: center; gap: 5px;
+}
+.ic-month-chip b { font-weight: 800; color: rgba(255,255,255,.4); }
+.ic-month-chip.on { background: rgba(217,255,102,.16); border-color: rgba(217,255,102,.4); color: #d9ff66; }
+.ic-month-chip.on b { color: #d9ff66; }
 
 /* ── Toolbar: search, filter, select, more ───────────────────────────────── */
 .ic-toolbar { display: flex; align-items: center; gap: 6px; padding: 7px var(--ig-gut); flex: 0 0 auto; border-bottom: 1px solid var(--ig-line); }
@@ -2076,13 +2141,16 @@ body > .x97-fab.x97-fab-viewport,
 .ic-statusbar { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px var(--ig-gut); font-size: 10.5px; color: var(--tx3); border-top: 1px solid var(--ig-line); background: var(--ig-surface2); padding-bottom: max(5px, env(safe-area-inset-bottom)); }
 
 /* ── Filter sheet ─────────────────────────────────────────────────────────── */
-.ic-filter-sheet { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.ic-filter-sheet { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
 .ic-filter-section > *, .ic-filter-sheet .x97-field { min-width: 0; }
 .ic-filter-sheet input, .ic-filter-sheet select { max-width: 100%; box-sizing: border-box; }
-.ic-filter-section label { display: block; font-size: 11px; font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .03em; margin-bottom: 8px; }
+.ic-filter-section label { display: block; font-size: 11px; font-weight: 800; color: var(--tx3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 10px; }
 .ic-filter-chiprow { display: flex; flex-wrap: wrap; gap: 7px; }
 .ic-filter-chip { height: 34px; padding: 0 13px; border-radius: 999px; border: 1px solid var(--line2); background: var(--card); color: var(--tx2); font-size: 12px; font-weight: 750; }
-.ic-filter-chip.on { background: var(--ig-selected, var(--card2)); border-color: var(--ig-selected-line, var(--line2)); color: var(--tx); }
+/* Brand-green selected state, matching the .x97-chip.on language used
+   everywhere else in the app — the sheet used to mark "on" with a flat
+   grey tint that read as barely different from "off". */
+.ic-filter-chip.on { background: var(--posdim); border-color: color-mix(in srgb, var(--pos) 32%, transparent); color: var(--pos); }
 
 /* ── More sheet ───────────────────────────────────────────────────────────── */
 .ic-more-list { display: flex; flex-direction: column; gap: 8px; }
@@ -2140,10 +2208,14 @@ body > .x97-fab.x97-fab-viewport,
   .ic-row-head { display: none; }
   .ic-list > .ic-group { top: 0; }
 
+  /* Deliberately denser than the desktop row: a phone trades a little
+     vertical breathing room for seeing more of the ledger without
+     scrolling, which is the whole point of a list over a card-per-deal
+     view. Padding is the lever, not type size — text stays readable. */
   .ic-row {
     grid-template-columns: 26px 1fr auto;
     grid-template-areas: "lead client balance" "lead status due";
-    row-gap: 3px; min-height: 0; padding: 10px var(--ig-gut);
+    row-gap: 2px; min-height: 0; padding: 7px var(--ig-gut);
   }
   .ic-c-structure, .ic-c-total, .ic-c-paid, .ic-c-cur, .ic-quickacts { display: none; }
   .ic-c-balance { align-self: start; font-size: 13.5px; }
@@ -2166,8 +2238,11 @@ body > .x97-fab.x97-fab-viewport,
 }
 
 @media (max-width: 420px) {
+  .ic-hero { padding: 7px var(--ig-gut) 9px; }
   .ic-hero-chips { margin-top: 8px; }
   .ic-quick { height: 28px; padding: 0 10px; font-size: 11px; }
+  .ic-month-row { margin-top: 6px; }
+  .ic-month-chip { height: 22px; padding: 0 8px; font-size: 10px; }
 }
 
 /* ── Short viewports (landscape phones) ──────────────────────────────────── */
