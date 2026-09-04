@@ -1958,6 +1958,14 @@ body > .x97-fab.x97-fab-viewport,
   --ig-usd-cell: color-mix(in srgb, var(--usd) 16%, var(--card));
   background: var(--card);
 }
+/* Dashboard and Credit wrap their content in .x97-page, which rises in
+   (x97-in, defined once in experience-v2.js) on every render. Incoming
+   is structurally its own full-bleed shell rather than .x97-page, so it
+   never got that arrival motion — .ic-entering is added for exactly one
+   render, only when the tab itself was just switched to (see
+   screenEntering in experience-v2.js), reusing the same keyframe and
+   timing so all three tabs arrive the same way. */
+.ic-shell.ic-entering { animation: x97-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both; }
 .ic-shell .x97-top { padding: max(6px, env(safe-area-inset-top)) var(--ig-gut) 4px; flex: 0 0 auto; }
 .ic-shell .x97-title { font-size: clamp(16px, 2vw, 20px) !important; line-height: 1.15 !important; letter-spacing: -.03em !important; }
 .ic-shell .x97-cloud { min-height: 0 !important; padding: 5px 10px !important; font-size: 9.5px !important; box-shadow: none !important; }

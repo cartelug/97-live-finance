@@ -18,6 +18,12 @@
   var wrap = null;
   var hiddenChildren = [];
   var currentScreen = null;
+  // Set true for exactly one render whenever the active tab actually
+  // changes (see syncMode) — Incoming's own arrival animation reads and
+  // clears it, so switching tabs rises in like Dashboard/Credit always
+  // have, without replaying that animation on every filter click, which
+  // re-renders the same screen far more often than a tab switch happens.
+  var screenEntering = false;
   var lastRaw = "";
   var lastCloudStatus = "";
   var renderTimer = null;
@@ -2215,7 +2221,7 @@
     var screen = activeScreen();
     if (screen && MANAGED[screen]) {
       enterManagedMode();
-      if (screen !== currentScreen) { currentScreen = screen; window.scrollTo(0, 0); }
+      if (screen !== currentScreen) { currentScreen = screen; screenEntering = true; window.scrollTo(0, 0); }
       scheduleRender(0);
     } else exitManagedMode();
   }
@@ -2729,7 +2735,7 @@
     var outUSD = scoped ? scoped.usd : stats.outstandingUSD;
     var heroLabel = scoped ? "Outstanding · " + monthLabel(selectedMonth, true) : "Outstanding";
     return '<section class="ic-hero">' +
-      '<div class="ic-hero-top"><div><div class="ic-hero-label">' + esc(heroLabel) + '</div><div class="ic-hero-value tabnum">' + money(outUGX, "UGX", true) + (outUSD ? ' <span class="ic-hero-usd">+ ' + money(outUSD, "USD", true) + '</span>' : '') + '</div></div><div class="ic-hero-headline">' + esc(headline) + '</div></div>' +
+      '<div class="ic-hero-top"><div><div class="ic-hero-label">' + esc(heroLabel) + '</div><div class="ic-hero-value tabnum"><span class="ic-hero-value-main">' + money(outUGX, "UGX", true) + '</span>' + (outUSD ? ' <span class="ic-hero-usd">+ ' + money(outUSD, "USD", true) + '</span>' : '') + '</div></div><div class="ic-hero-headline">' + esc(headline) + '</div></div>' +
       '<div class="ic-hero-chips">' +
         icQuickChip("overdue", "Overdue", stats.overdue.length, true) +
         icQuickChip("next7", "Next 7 days", stats.due7.length) +
@@ -2848,8 +2854,9 @@
          icGroupHTML("No date", groups.unscheduled, doc), icGroupHTML("Later", groups.later, doc), icGroupHTML("Paid", groups.paid, doc), icGroupHTML("Cancelled", groups.cancelled, doc)].join("")
       : filtered.map(function (item) { return icRowHTML(item, doc); }).join("");
     var empty = filtered.length ? "" : '<div class="ic-empty">' + icon("search", 26) + '<strong>No deals in this view</strong><p>Clear filters or add one to get started.</p><button class="x97-btn primary" style="margin-top:12px" data-x97-action="add-upcoming">' + icon("plus") + ' Add incoming deal</button></div>';
+    var entering = screenEntering; screenEntering = false;
 
-    root.innerHTML = '<div class="ic-shell" id="ic-shell">' +
+    root.innerHTML = '<div class="ic-shell' + (entering ? " ic-entering" : "") + '" id="ic-shell">' +
       pageHeader("Collections", "Incoming", "", '<button class="x97-icon-btn x97-add-primary" data-x97-action="add-upcoming" title="Add incoming deal">' + icon("plus") + '<span>Add deal</span></button>') +
       icHeroHTML(doc, stats) +
       (icBulk.on ? icBulkBarHTML() : icToolbarHTML()) +

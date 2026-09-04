@@ -248,7 +248,7 @@
   }
 
   function animateNumbers() {
-    document.querySelectorAll(".x97-hero-value,.x97-summary .v,.x97-collection-total").forEach(countNumber);
+    document.querySelectorAll(".x97-hero-value,.x97-summary .v,.x97-collection-total,.ic-hero-value-main").forEach(countNumber);
   }
 
   function sliderKey(rail) {
