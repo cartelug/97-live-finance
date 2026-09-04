@@ -562,12 +562,27 @@
       dates.push(raw);
     }
     if (type === "split") {
-      dates[0] = String(values && values.firstDue || dates[0]);
+      dates[0] = String(values && values.startDate || dates[0]);
       dates[1] = String(values && values.secondDue || dates[1] || dates[0]);
     }
     if (type === "deposit") {
-      dates[0] = String(values && (values.depositDue || values.firstDue) || dates[0]);
+      dates[0] = String(values && (values.depositDue || values.startDate) || dates[0]);
       dates[1] = String(values && (values.balanceDue || values.secondDue) || dates[1] || dates[0]);
+    }
+    // Monthly/per-part deals have one visible date field — "First / next due
+    // date" — for a whole chain the form otherwise generates from a start
+    // date and an interval. On an existing deal that chain is already fixed
+    // per instalment (the fallback above always prefers it), so this field
+    // used to have no effect at all past creation. It now retargets whichever
+    // instalment is actually next — the one the field's own label promises —
+    // never a payment already marked paid.
+    if ((type === "monthly" || type === "part") && values && values.startDate) {
+      var existingParts = (item && item.parts) || [];
+      var editableIndex = 0;
+      for (var k = 0; k < existingParts.length; k++) {
+        if (num(existingParts[k].paid) < num(existingParts[k].amount) - 0.5) { editableIndex = k; break; }
+      }
+      if (editableIndex < count) dates[editableIndex] = String(values.startDate);
     }
     var parts = [];
     for (var j = 0; j < count; j++) {
@@ -619,7 +634,11 @@
     for (var i = 0; i < Math.max(1, Math.min(24, Math.round(num(count) || 1))); i++) {
       var previous = item && item.parts && item.parts[i] ? item.parts[i] : {};
       var due = previous.dueDate || dateISO(addDays(start || todayISO(), i * 7));
-      rows.push('<div class="x97-custom-row"><span class="x97-custom-index">' + (i + 1) + '</span><div class="x97-custom-fields"><input class="x97-input" name="partLabel_' + i + '" value="' + attr(previous.label || "Payment " + (i + 1)) + '" placeholder="What is this payment for?"' + (locked ? " disabled" : "") + '><div class="x97-fields-2"><input class="x97-input" name="partAmount_' + i + '" type="number" min="0" step="1" value="' + attr(previous.amount || "") + '" placeholder="Amount"' + (locked ? " disabled" : "") + '><input class="x97-input" name="partDate_' + i + '" type="date" value="' + attr(due) + '"' + (locked ? " disabled" : "") + '></div></div></div>');
+      // Label and amount stay locked with the rest of the deal's structure,
+      // but a date is a date: a not-yet-paid instalment can always be moved,
+      // and one already paid can't be rescheduled regardless of lock state.
+      var partPaid = num(previous.paid) > 0 && num(previous.paid) >= num(previous.amount) - 0.5;
+      rows.push('<div class="x97-custom-row"><span class="x97-custom-index">' + (i + 1) + '</span><div class="x97-custom-fields"><input class="x97-input" name="partLabel_' + i + '" value="' + attr(previous.label || "Payment " + (i + 1)) + '" placeholder="What is this payment for?"' + (locked ? " disabled" : "") + '><div class="x97-fields-2"><input class="x97-input" name="partAmount_' + i + '" type="number" min="0" step="1" value="' + attr(previous.amount || "") + '" placeholder="Amount"' + (locked ? " disabled" : "") + '><input class="x97-input" name="partDate_' + i + '" type="date" value="' + attr(due) + '"' + (partPaid ? " disabled" : "") + '></div></div></div>');
     }
     return rows.join("");
   }
@@ -2435,7 +2454,7 @@
         '<section class="x97-card x97-hero x97-hero-command" data-v2-hero><div class="x97-hero-topline"><div class="x97-hero-label">Available cash</div><span class="x97-hero-live">Live position</span></div><div class="x97-hero-value x97-money">' + money(a.cash, "UGX") + '</div><div class="x97-hero-caption">Real account balances only. Client promises and unused credit stay outside this number.</div><div class="x97-hero-meta"><div class="x97-stat"><span>After active debt</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
         '<section class="x97-command-actions x97-dashboard-wide"><button class="x97-command-action primary" data-x97-action="record-payment"><span class="x97-command-icon">' + icon("wallet", 17) + '</span><span><b>Record payment</b><small>Update money received</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="add-upcoming"><span class="x97-command-icon teal">' + icon("plus", 17) + '</span><span><b>Add incoming deal</b><small>Build a payment schedule</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="go-expenses"><span class="x97-command-icon warn">' + icon("trend", 17) + '</span><span><b>Add expense</b><small>Keep cash position honest</small></span>' + icon("chevron", 14) + '</button></section>' +
         dealSummaryHTML(doc) +
-        '<section class="x97-section x97-glance-section x97-dashboard-wide">' + sectionHead("Finance pulse") + '<div class="x97-summary-grid x97-finance-pulse" data-v2-slider="pulse"><div class="x97-card x97-summary"><div class="k">Collected this month</div><div class="v x97-money x97-green">' + money(collectedThisMonth, "UGX", true) + '</div><div class="s">Actual money received</div></div><div class="x97-card x97-summary"><div class="k">Due next 7 days</div><div class="v x97-money x97-teal">' + money(in7, "UGX", true) + '</div><div class="s">' + (in7USD ? '<span class="x97-teal">' + money(in7USD, "USD", true) + '</span> · ' : '') + 'Scheduled incoming</div></div><div class="x97-card x97-summary"><div class="k">Outstanding</div><div class="v x97-money x97-amber">' + money(outstandingUGX, "UGX", true) + '</div><div class="s">' + (outstandingUSD ? '<span class="x97-teal">' + money(outstandingUSD, "USD", true) + '</span> · ' : '') + 'Still owed by clients</div></div><div class="x97-card x97-summary"><div class="k">Actual spending</div><div class="v x97-money x97-red">' + money(actualSpend, "UGX", true) + '</div><div class="s">This month</div></div></div></section>' +
+        '<section class="x97-section x97-glance-section x97-dashboard-wide">' + sectionHead("Finance pulse") + '<div class="x97-summary-grid x97-finance-pulse"><div class="x97-card x97-summary"><div class="k">Collected this month</div><div class="v x97-money x97-green">' + money(collectedThisMonth, "UGX", true) + '</div><div class="s">Actual money received</div></div><div class="x97-card x97-summary"><div class="k">Due next 7 days</div><div class="v x97-money x97-teal">' + money(in7, "UGX", true) + '</div><div class="s">' + (in7USD ? '<span class="x97-teal">' + money(in7USD, "USD", true) + '</span> · ' : '') + 'Scheduled incoming</div></div><div class="x97-card x97-summary"><div class="k">Outstanding</div><div class="v x97-money x97-amber">' + money(outstandingUGX, "UGX", true) + '</div><div class="s">' + (outstandingUSD ? '<span class="x97-teal">' + money(outstandingUSD, "USD", true) + '</span> · ' : '') + 'Still owed by clients</div></div><div class="x97-card x97-summary"><div class="k">Actual spending</div><div class="v x97-money x97-red">' + money(actualSpend, "UGX", true) + '</div><div class="s">This month</div></div></div></section>' +
         '<section class="x97-section">' + sectionHead("Financial signals", "View Incoming", "go-upcoming") + '<div class="x97-card x97-pad">' + attentionRows + '</div></section>' +
         (function(){var s=messagingSummary(doc);var pillOd=s.overdue?'<span class="x97-pill bad">'+s.overdue+' overdue</span>':(s.dueSoon?'<span class="x97-pill warn">'+s.dueSoon+' due soon</span>':'<span class="x97-pill good">'+icon("check",11)+'All clear</span>');return '<section class="x97-section">' + sectionHead("Messaging", "Open", "open-messaging") + '<button class="x97-msg-card" data-x97-action="open-messaging"><div class="x97-msg-icon">' + icon("send") + '</div><div class="x97-msg-body"><div class="x97-msg-title">WhatsApp reminders &amp; campaigns</div><div class="x97-msg-sub">' + s.contacts + ' contacts · ' + s.campaigns + ' campaigns' + (remindExt.ready?' · sender connected':'') + '</div><div class="x97-msg-pills">' + pillOd + '</div></div>' + icon("chevron") + '</button></section>';})() +
         '<section class="x97-section">' + sectionHead("Next 7 days") + '<div class="x97-card x97-pad"><div class="x97-hero-meta" style="margin-bottom:4px"><div class="x97-stat x97-stat-in"><span>Expected in</span><b class="x97-green">' + money(in7, "UGX") + '</b></div><div class="x97-stat x97-stat-out"><span>Expected out</span><b class="x97-red">' + money(out7, "UGX") + '</b></div></div>' + timelineRows + '</div></section>' +
@@ -3022,7 +3041,13 @@
     var locked = !!(existing && dealHasRecordedMoney(item));
     var partLabel = item.partLabel || (type === "monthly" ? "months" : "parts");
     var partCount = item.partCount || (item.parts && item.parts.length) || (type === "split" || type === "deposit" ? 2 : 1);
-    var firstDue = (item.parts && item.parts[0] && item.parts[0].dueDate) || item.expectedBy || todayISO();
+    // The field is labelled "next due date" and has to mean it: once a deal
+    // has parts, the payment that field should show — and reschedule — is
+    // whichever one hasn't been paid yet, not always the first. Editing it
+    // used to be silently inert for every existing multi-part deal, because
+    // dealPartsFor always preferred the stored date over anything typed here.
+    var nextUnpaidPart = item.parts && item.parts.filter(function (p) { return num(p.paid) < num(p.amount) - 0.5; })[0];
+    var firstDue = (nextUnpaidPart && nextUnpaidPart.dueDate) || (item.parts && item.parts[0] && item.parts[0].dueDate) || item.expectedBy || todayISO();
     var secondDue = (item.parts && item.parts[1] && item.parts[1].dueDate) || dateISO(addDays(firstDue, item.partEvery || 7));
     var depositAmount = item.parts && item.parts[0] ? item.parts[0].amount : "";
     var amountValue = existing ? (type === "monthly" || type === "part" ? dealPartAmount(item) : grossOf(item)) : "";
@@ -3043,10 +3068,10 @@
       '<div class="x97-fields-2"><div>' + fieldWithLabelId("x97-deal-amount-label", dealAmountLabel(type, partLabel), '<input class="x97-input x97-deal-control" name="amount" inputmode="decimal" type="number" min="0" step="1" value="' + attr(amountValue) + '" placeholder="0"' + (locked ? " disabled" : "") + '>', locked ? "Structure is locked because money has already been recorded." : (type === "monthly" || type === "part" ? "This is the amount for each scheduled " + dealLabelSingular({ partLabel: partLabel }) + "." : type === "custom" ? "Enter the full deal total; the rows below must add up to it." : "The app calculates the schedule from this total.")) + '</div><div>' + field("Currency", '<select class="x97-select x97-deal-control" name="currency"' + (locked ? " disabled" : "") + '>' + option("UGX", "UGX", item.currency) + option("USD", "USD", item.currency) + '</select>') + '</div></div>' +
       '<div class="x97-fields-2"><div class="x97-deal-label-field">' + field("Part label", '<select class="x97-select x97-deal-control" name="partLabel"' + (locked ? " disabled" : "") + '>' + labelOptions + '</select>') + '</div><div class="x97-deal-count-field">' + field("Number of parts", '<input class="x97-input x97-deal-control" name="partCount" type="number" min="1" max="24" step="1" value="' + attr(partCount) + '"' + (locked ? " disabled" : "") + '>') + '</div></div>' +
       '<div class="x97-fields-2"><div class="x97-deal-interval-field">' + field("Days between parts", '<input class="x97-input x97-deal-control" name="partEvery" type="number" min="1" max="365" step="1" value="' + attr(item.partEvery || 7) + '"' + (locked ? " disabled" : "") + '>') + '</div><div class="x97-deposit-field">' + field("Deposit amount", '<input class="x97-input x97-deal-control" name="depositAmount" type="number" min="1" step="1" value="' + attr(depositAmount) + '"' + (locked ? " disabled" : "") + '>', "The balance is full total minus deposit.") + '</div></div>' +
-      '<div class="x97-fields-2"><div class="x97-deal-start-field">' + field("First / next due date", '<input class="x97-input x97-deal-control" name="startDate" type="date" value="' + attr(firstDue) + '"' + (locked ? " disabled" : "") + '>') + '</div><div class="x97-deal-second-field">' + field("Second payment due", '<input class="x97-input x97-deal-control" name="secondDue" type="date" value="' + attr(secondDue) + '"' + (locked ? " disabled" : "") + '>') + '</div></div>' +
-      '<div class="x97-deposit-dates x97-fields-2"><div>' + field("Deposit due", '<input class="x97-input x97-deal-control" name="depositDue" type="date" value="' + attr(firstDue) + '"' + (locked ? " disabled" : "") + '>') + '</div><div>' + field("Balance due", '<input class="x97-input x97-deal-control" name="balanceDue" type="date" value="' + attr(secondDue) + '"' + (locked ? " disabled" : "") + '>') + '</div></div>' +
+      '<div class="x97-fields-2"><div class="x97-deal-start-field">' + field("First / next due date", '<input class="x97-input x97-deal-control" name="startDate" type="date" value="' + attr(firstDue) + '">') + '</div><div class="x97-deal-second-field">' + field("Second payment due", '<input class="x97-input x97-deal-control" name="secondDue" type="date" value="' + attr(secondDue) + '">') + '</div></div>' +
+      '<div class="x97-deposit-dates x97-fields-2"><div>' + field("Deposit due", '<input class="x97-input x97-deal-control" name="depositDue" type="date" value="' + attr(firstDue) + '">') + '</div><div>' + field("Balance due", '<input class="x97-input x97-deal-control" name="balanceDue" type="date" value="' + attr(secondDue) + '">') + '</div></div>' +
       '<div class="x97-custom-editor" id="x97-custom-editor">' + (customRows ? '<div class="x97-custom-editor-head"><div><b>Custom schedule</b><span>Each row is a real promised payment.</span></div><span class="x97-pill">Amounts must equal total</span></div>' + customRows : "") + '</div>' +
-      '<div id="x97-deal-hint" class="x97-deal-type-hint"></div><div id="x97-deal-glance" class="x97-deal-glance"></div><div class="x97-deal-schedule-heading"><div><b>Review the schedule</b><span>Every payment remains visible after saving.</span></div><span class="x97-deal-schedule-dot">●</span></div><div id="x97-deal-preview" class="x97-deal-preview"></div>' + (locked ? '<div class="x97-deal-lock-note">Money has already been recorded. Dates and financial structure are locked; you can still update the client, category, contact and note.</div>' : '') + '</div>';
+      '<div id="x97-deal-hint" class="x97-deal-type-hint"></div><div id="x97-deal-glance" class="x97-deal-glance"></div><div class="x97-deal-schedule-heading"><div><b>Review the schedule</b><span>Every payment remains visible after saving.</span></div><span class="x97-deal-schedule-dot">●</span></div><div id="x97-deal-preview" class="x97-deal-preview"></div>' + (locked ? '<div class="x97-deal-lock-note">Money has already been recorded, so the total, currency and number of payments are locked. Due dates on anything not yet paid are still yours to reschedule.</div>' : '') + '</div>';
     var body = '<form id="x97-upcoming-form" data-x97-form="upcoming"><input type="hidden" name="id" value="' + attr(item.id) + '"><input type="hidden" name="expectedBy" value="' + attr(firstDue) + '">' +
       field("Client / project", '<input class="x97-input" name="client" required maxlength="160" placeholder="e.g. Apollo Studios" value="' + attr(item.client) + '">') +
       field("WhatsApp number", '<input class="x97-input" name="phone" inputmode="tel" value="' + attr(item.phone || "") + '" placeholder="e.g. 0772 123 456">' +
@@ -3248,13 +3273,15 @@
   function submitUpcoming(form) {
     var v = formValues(form), id = v.id || uid("fu"), type = normalizeDealType(v.dealType || "one"), oldSnapshot = readDoc(), old = oldSnapshot && (oldSnapshot.followups || []).find(function (x) { return String(x.id) === String(id); });
     if (!String(v.client || "").trim()) { toast("Add a client or project name", "error"); return; }
-    if (old && dealHasRecordedMoney(old)) {
-      updateDoc(function (doc) {
-        var i = doc.followups.findIndex(function (x) { return String(x.id) === String(id); });
-        if (i >= 0) doc.followups[i] = Object.assign({}, doc.followups[i], { client: String(v.client || "").trim(), category: v.category, phone: String(v.phone || "").trim(), note: String(v.note || "").trim() });
-      }, "upcoming-meta-save");
-      closeSheet(); if (remindState.open) refreshRemind(); return;
-    }
+    // A deal with money already recorded disables the amount/currency/count/
+    // interval/label inputs in the form, but formValues() reads a disabled
+    // field's value like any other — so those fields round-trip unchanged
+    // below regardless, while the due-date fields (never disabled — see
+    // openUpcomingForm) carry through whatever was actually rescheduled.
+    // There used to be a separate branch here that saved only client/
+    // category/phone/note and quietly dropped every date edit on a deal
+    // with money recorded — exactly the "I changed it and it stayed the
+    // same" bug.
     var parts = type === "one" ? [] : dealPartsFor(old || {}, v), gross = type === "one" ? roundMoney(v.amount) : roundMoney(parts.reduce(function (sum, p) { return sum + num(p.amount); }, 0));
     if (gross <= 0) { toast("Enter the deal total", "error"); return; }
     if (type === "deposit") {
@@ -4211,9 +4238,61 @@
     }).catch(function () { toast("Could not load Google sign-in — check your connection", "error"); });
   }
 
+  // Keeps the contacts directory itself current — not a campaign list, just
+  // name+phone — so a contact added in Google shows up here the next time
+  // the app is opened, without anyone having to press "Connect" again.
+  // Only ever runs once a Client ID has been set up at least once, and only
+  // ever silently: prompt:"" asks Google for a token without any visible
+  // sign-in UI, which succeeds when the browser still holds a granted
+  // session for this app and does nothing at all — no popup, no error —
+  // when it doesn't. Either way nothing here is allowed to interrupt boot.
+  function mergeContactsQuiet(contacts) {
+    var added = 0;
+    updateDoc(function (d) {
+      d.waContacts = d.waContacts || [];
+      var byPhone = {};
+      d.waContacts.forEach(function (c) { var k = waNumber(c.phone, d); if (k) byPhone[k] = c; });
+      contacts.forEach(function (c) {
+        var norm = waNumber(c.phone, d);
+        if (norm.length < 10) return;
+        var name = (c.name || "").trim() || c.phone;
+        var existing = byPhone[norm];
+        if (existing) { if (!existing.name || existing.name === existing.phone) existing.name = name; }
+        else { var nc = { id: uid("ct"), name: name, phone: c.phone, fields: {}, lists: [] }; d.waContacts.push(nc); byPhone[norm] = nc; added++; }
+      });
+      d.settings.googleContactsLastSync = new Date().toISOString();
+    }, "google-contacts-sync", true);
+    return added;
+  }
+
+  function syncGoogleContactsQuietly() {
+    var doc = readDoc();
+    var clientId = doc && doc.settings && doc.settings.googleClientId;
+    if (!clientId) return;
+    loadGIS().then(function () {
+      var client = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: GOOGLE_SCOPE,
+        callback: function (resp) {
+          if (!resp || resp.error || !resp.access_token) return;
+          fetchGoogleContacts(resp.access_token).then(function (contacts) {
+            if (!contacts.length) return;
+            var added = mergeContactsQuiet(contacts);
+            if (added) {
+              toast(added + " new Google contact" + (added === 1 ? "" : "s") + " synced", "");
+              refreshMsgHub();
+              if (campaignState.open) refreshCamp();
+            }
+          }).catch(function () {});
+        }
+      });
+      client.requestAccessToken({ prompt: "" });
+    }).catch(function () {});
+  }
+
   function openGoogleSetup() {
     var doc = readDoc();
-    var body = '<div class="x97-help" style="margin-bottom:12px">Connects your real Google Contacts (name + phone) into a list here. This needs a free, one-time <b>Google API Client ID</b> for your own copy of the app. See the setup guide, then paste the Client ID below.</div>' +
+    var body = '<div class="x97-help" style="margin-bottom:12px">Connects your real Google Contacts (name + phone) into a list here. This needs a free, one-time <b>Google API Client ID</b> for your own copy of the app. See the setup guide, then paste the Client ID below. Once connected, the app quietly checks for anyone new every time you open it — no need to reconnect.</div>' +
       '<form id="x97-google-form" data-x97-form="google-setup">' +
       field("Google OAuth Client ID", '<input class="x97-input" name="clientId" value="' + attr((doc.settings && doc.settings.googleClientId) || "") + '" placeholder="xxxxxxxxxxxx.apps.googleusercontent.com">', "Ends in .apps.googleusercontent.com — from Google Cloud Console → Credentials.") +
       '</form>';
@@ -4610,7 +4689,7 @@
   function boot() {
     try { localStorage.removeItem("ns97-ai-cfg-v1"); } catch (_) {}
     applyTheme(loadTheme());
-    injectCSS();injectMsgCSS();injectFeatureCSS();injectProCSS();injectRevampCSS();injectV2CSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
+    injectCSS();injectMsgCSS();injectFeatureCSS();injectProCSS();injectRevampCSS();injectV2CSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();syncGoogleContactsQuietly();
     var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
     var observer=new MutationObserver(function(mutations){
       var relevant=mutations.some(function(m){

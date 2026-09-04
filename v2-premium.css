@@ -1090,6 +1090,173 @@ body.v2-private [data-v2-privacy-exempt] {
 }
 
 /* --------------------------------------------------------------------------
+   MOBILE DASHBOARD — peak-bank redesign
+   Same markup as desktop; below 760px the command centre reflows into the
+   patterns a premium banking app uses on a phone — a tap-first row of
+   circular quick actions instead of a swipeable button carousel, a fully
+   visible 2x2 grid for the four numbers that matter every day instead of a
+   scroller, and a "this month" call-out on the pipeline rail.
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 759px) {
+  /* Quick actions: three big circular taps, always all visible together —
+     the first thing under the balance in a real banking app. */
+  .x97-command-actions {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+    margin-inline: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+  }
+
+  .x97-command-action {
+    flex: none !important;
+    scroll-snap-align: none !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 9px !important;
+    min-height: 92px !important;
+    padding: 16px 4px 12px !important;
+    text-align: center !important;
+    border-radius: 20px !important;
+  }
+
+  .x97-command-action > svg:last-child {
+    display: none !important;
+  }
+
+  .x97-command-action > span:last-of-type {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 1px;
+  }
+
+  .x97-command-action b {
+    font-size: 11px !important;
+    font-weight: 750 !important;
+    line-height: 1.22 !important;
+    white-space: normal !important;
+  }
+
+  .x97-command-action small {
+    display: none !important;
+  }
+
+  .x97-command-icon {
+    width: 44px !important;
+    height: 44px !important;
+    border-radius: 50% !important;
+  }
+
+  /* Finance pulse: the four daily numbers, all on screen at once as a tight
+     2x2 grid — no swiping to compare what came in against what's owed. */
+  .x97-finance-pulse {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 9px !important;
+    margin-inline: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    scroll-snap-type: none !important;
+  }
+
+  .x97-finance-pulse > * {
+    flex: none !important;
+    scroll-snap-align: none !important;
+  }
+
+  .x97-finance-pulse .x97-summary {
+    min-height: 100px !important;
+    padding: 14px 13px !important;
+    border-radius: 18px !important;
+  }
+
+  .x97-finance-pulse .x97-summary .v {
+    font-size: 18px !important;
+    margin-top: 8px !important;
+  }
+
+  .x97-finance-pulse .x97-summary .k {
+    font-size: 9px !important;
+  }
+
+  /* Credit position tiles match the pulse grid's density. */
+  .x97-credit-preview .x97-summary-grid {
+    gap: 9px !important;
+  }
+
+  .x97-credit-preview .x97-summary {
+    padding: 13px 12px !important;
+  }
+
+  /* Account cards: a thin brand-green top edge, like a physical card.
+     Below 420px a separate rule turns generic .x97-row into a wrapping,
+     value-flush-right layout for full-width lists (attention, timeline) —
+     wrong for these fixed-width cards, where it starves the account name
+     down to a couple of characters. Opt these cards back out of it. */
+  .x97-account-rail > .x97-row {
+    position: relative;
+    overflow: hidden;
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+  }
+
+  .x97-account-rail > .x97-row .x97-row-value {
+    max-width: none !important;
+    margin-left: 0 !important;
+    white-space: nowrap !important;
+    overflow: visible !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+  }
+
+  .x97-account-rail > .x97-row::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--pos), #17a468 60%, transparent);
+    opacity: 0.85;
+  }
+
+  /* Pipeline: the current month is always first — call it out against the
+     two that follow so "now" reads before any number does. */
+  .x97-month-rail > *:first-child {
+    border-color: color-mix(in srgb, var(--pos) 32%, var(--line2)) !important;
+    background: linear-gradient(160deg, color-mix(in srgb, var(--pos) 8%, var(--card)), var(--card)) !important;
+  }
+
+  .x97-month-rail > *:first-child::before {
+    content: "This month";
+    display: inline-block;
+    margin-bottom: 6px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: var(--posdim);
+    color: var(--pos);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  /* Alert and account rows pick up a soft accent bar keyed to their icon's
+     tone, so urgency sorts before the eye reaches a word. */
+  .x97-row:has(.x97-row-icon.bad) {
+    box-shadow: inset 3px 0 0 var(--neg);
+  }
+
+  .x97-row:has(.x97-row-icon.warn) {
+    box-shadow: inset 3px 0 0 var(--warn);
+  }
+}
+
+/* --------------------------------------------------------------------------
    V3 PROFESSIONAL SYSTEM
    Unifies the original React screens with the command-centre experience.
    -------------------------------------------------------------------------- */
