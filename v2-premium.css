@@ -2253,6 +2253,105 @@ body > .x97-fab.x97-fab-viewport,
   .ic-statusbar { padding: 2px var(--ig-gut); padding-bottom: max(2px, env(safe-area-inset-bottom)); font-size: 9.5px; }
 }
 
+/* --------------------------------------------------------------------------
+   MOTION — smooth, mobile-first interaction feedback
+   Two things, applied consistently across the app rather than piecemeal:
+   1) every tappable surface eases its color/border/shadow instead of
+      snapping, and visibly compresses on press (touch has no hover, so
+      press is the only feedback a thumb ever gets);
+   2) a list arriving after a filter/tab change rises in with a short
+      stagger instead of just appearing, capped to the rows a phone can
+      actually see so a long list never turns into a slow cascade.
+   prefers-reduced-motion is already handled globally (index.html's
+   `*{animation:none!important;transition:none!important}`), which wins
+   over everything below since nothing here uses !important.
+   -------------------------------------------------------------------------- */
+
+.ic-quick,
+.ic-month-chip,
+.ic-filter-chip,
+.ic-tbtn,
+.ic-quickact,
+.ic-check,
+.x97-command-action,
+.x97-link,
+.x97-btn,
+.x97-icon-btn,
+.x97-chip,
+.x97-pill,
+.x97-mini,
+.v2-slider-dot {
+  transition: transform 150ms var(--v2-ease, cubic-bezier(.22, 1, .36, 1)), background-color 180ms ease, border-color 180ms ease, box-shadow 200ms ease, color 150ms ease;
+}
+
+.ic-row,
+.x97-row,
+.x97-item,
+.x97-month-card,
+.x97-tl-row,
+.x97-msg-card,
+.x97-card.x97-summary,
+.x97-deal-metric-card {
+  transition: transform 150ms var(--v2-ease, cubic-bezier(.22, 1, .36, 1)), border-color 180ms ease, box-shadow 200ms ease;
+}
+
+.ic-quick:active,
+.ic-month-chip:active,
+.ic-filter-chip:active,
+.ic-tbtn:active,
+.ic-quickact:active,
+.ic-check:active,
+.x97-command-action:active,
+.x97-link:active,
+.x97-icon-btn:active,
+.x97-chip:active,
+.x97-pill:active,
+.x97-mini:active {
+  transform: scale(0.94);
+}
+
+.ic-row:active { transform: scale(0.988); }
+.x97-row:active,
+.x97-item:active,
+.x97-month-card:active,
+.x97-tl-row:active,
+.x97-msg-card:active,
+.x97-card.x97-summary:active,
+.x97-deal-metric-card:active {
+  transform: scale(0.98);
+}
+
+.x97-fab {
+  transition: transform 150ms var(--v2-ease, cubic-bezier(.22, 1, .36, 1)), box-shadow 200ms ease;
+}
+.x97-fab:active { transform: scale(0.9); }
+
+/* Chip toggle states already change background/border on click — the
+   transition rule above is what turns that swap from a snap into a fade. */
+
+/* List arrival: capped stagger so opening a filtered view always feels
+   the same regardless of how many rows are actually in it. */
+@keyframes ic-row-in {
+  from { opacity: 0; transform: translate3d(0, 8px, 0); }
+  to { opacity: 1; transform: none; }
+}
+.ic-row { animation: ic-row-in 320ms var(--v2-ease, cubic-bezier(.22, 1, .36, 1)) both; }
+.ic-row:nth-child(1) { animation-delay: 0ms; }
+.ic-row:nth-child(2) { animation-delay: 16ms; }
+.ic-row:nth-child(3) { animation-delay: 32ms; }
+.ic-row:nth-child(4) { animation-delay: 48ms; }
+.ic-row:nth-child(5) { animation-delay: 64ms; }
+.ic-row:nth-child(6) { animation-delay: 80ms; }
+.ic-row:nth-child(7) { animation-delay: 96ms; }
+.ic-row:nth-child(8) { animation-delay: 112ms; }
+.ic-row:nth-child(9) { animation-delay: 128ms; }
+.ic-row:nth-child(10) { animation-delay: 144ms; }
+.ic-row:nth-child(n+11) { animation-delay: 160ms; }
+
+/* Dashboard's own section rise (v2-rise) and Incoming's hero/toolbar
+   scroll-collapse already exist elsewhere in this file — this section
+   only adds what was missing: press feedback and the list's own arrival. */
+
 @media (prefers-reduced-motion: reduce) {
   .ic-hero, .ic-toolbar, .ic-collapse-btn { transition: none !important; }
 }
