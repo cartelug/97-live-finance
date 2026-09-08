@@ -739,7 +739,7 @@
     else document.documentElement.removeAttribute("data-v2-theme");
     // The browser's own chrome (status bar, address bar) follows too.
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", dark ? "#050B08" : "#FFFFFF");
+    if (meta) meta.setAttribute("content", dark ? "#0B1220" : "#F2F5FA");
     try { localStorage.setItem(THEME_KEY, dark ? "dark" : "light"); } catch (_) {}
   }
   function setTheme(mode) {
@@ -1915,7 +1915,7 @@
       /* Sheets and their backdrops still refuse to pan the page behind them,
          but two fingers must always be able to zoom — every surface in the
          app is pinchable, not just the sheet. */
-      .x97-back{padding-top:env(safe-area-inset-top);touch-action:pinch-zoom}
+      .x97-back{padding-top:env(safe-area-inset-top);touch-action:auto}
       .x97-sheet,.sheet,.x97-remind-panel,.s97-cloud-modal{
         min-height:0;max-height:calc(100vh - env(safe-area-inset-top));
         max-height:calc(100svh - env(safe-area-inset-top));max-height:calc(100dvh - env(safe-area-inset-top));
@@ -1923,7 +1923,7 @@
       .x97-sheet{touch-action:pan-y pinch-zoom}
       .x97-sheet-body,.x97-rm-list{min-height:0;flex:1 1 auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
       .x97-sheet-foot{flex:0 0 auto}
-      .x97-remind-overlay{padding-top:env(safe-area-inset-top);touch-action:pinch-zoom}
+      .x97-remind-overlay{padding-top:env(safe-area-inset-top);touch-action:auto}
       .x97-remind-panel{touch-action:pan-y pinch-zoom}
 
       /* Motion is composited only. Backwards fill avoids leaving a transformed parent around fixed UI. */
@@ -2703,7 +2703,7 @@
       months.map(function (key) {
         return '<button type="button" class="ic-month-chip' + (current === key ? " on" : "") + '" data-x97-action="month-filter" data-month="' + attr(key) + '">' + esc(monthLabel(key, true)) + '<b>' + counts[key] + '</b></button>';
       }).join("");
-    return '<div class="ic-month-row" role="tablist" aria-label="Filter by month">' + chips + '</div>';
+    return '<div class="ic-month-row" role="group" aria-label="Filter by month">' + chips + '</div>';
   }
 
   // Outstanding for one month only — the same expectedBy derivation
@@ -2751,7 +2751,7 @@
   function icToolbarHTML() {
     var f = state.upcoming, count = activeFilterCount();
     return '<div class="ic-toolbar">' +
-      '<div class="ic-search">' + icon("search", 16) + '<input id="ic-search" autocomplete="off" placeholder="Search client, category, note…" value="' + attr(f.search) + '"></div>' +
+      '<div class="ic-search">' + icon("search", 16) + '<input id="ic-search" type="search" aria-label="Search incoming deals" enterkeyhint="search" autocomplete="off" placeholder="Search deals…" value="' + attr(f.search) + '"></div>' +
       '<button class="ic-tbtn" data-x97-action="open-incoming-filters" title="Filter">' + icon("filter", 16) + (count ? '<b class="ic-tbadge">' + count + '</b>' : '') + '</button>' +
       '<button class="ic-tbtn' + (icBulk.on ? " on" : "") + '" data-x97-action="incoming-bulk-toggle" title="Select rows">' + icon("rows", 16) + '</button>' +
       '<button class="ic-tbtn" data-x97-action="open-incoming-more" title="More">' + icon("dots", 16) + '</button>' +
@@ -2770,7 +2770,7 @@
   // The header row desktop shows above the list — mobile drops it, since a
   // two-line stacked row already labels itself.
   function icHeadHTML() {
-    return '<div class="ic-row ic-row-head" role="row">' +
+    return '<div class="ic-row ic-row-head" aria-hidden="true">' +
       '<span class="ic-c-edge" aria-hidden="true"></span>' +
       '<span class="ic-c-client">Client</span>' +
       '<span class="ic-c-structure">Structure</span>' +
@@ -2790,7 +2790,7 @@
     var cur = String(parent.currency || "UGX").toUpperCase();
     var cls = settled ? "good" : due && parseLocalDate(due) < todayDate() ? "bad" : due && monthKey(due) === monthKey(todayDate()) ? "warn" : "";
     var statusText = settled ? "Paid" : paid > 0 ? "Part paid" : "Pending";
-    return '<article class="ic-row ic-row-part is-' + cls + '" role="row" data-cur="' + attr(cur) + '" data-x97-action="edit-upcoming" data-id="' + attr(parent.id) + '">' +
+    return '<article class="ic-row ic-row-part is-' + cls + '" role="listitem" tabindex="0" data-part-index="' + index + '" data-cur="' + attr(cur) + '" data-x97-action="edit-upcoming" data-id="' + attr(parent.id) + '">' +
       '<span class="ic-c-edge"></span>' +
       '<span class="ic-c-client"><span class="ic-part-label">' + esc(part.label || ("Payment " + (index + 1))) + '</span><small>' + esc(index + 1) + ' of ' + count + '</small></span>' +
       '<span class="ic-c-structure ic-muted">—</span>' +
@@ -2822,7 +2822,7 @@
         (hasWa(item, doc) ? '<button type="button" class="ic-quickact" data-x97-action="chase-one" data-id="' + attr(item.id) + '" title="WhatsApp">' + icon("message", 15) + '</button>' : '')
       : '';
     var rowAction = icBulk.on ? "incoming-bulk-row" : "edit-upcoming";
-    return '<article class="ic-row is-' + esc(t.key) + (bulked ? " is-bulked" : "") + '" role="row" data-cur="' + attr(cur) + '" data-x97-action="' + rowAction + '" data-id="' + attr(item.id) + '">' +
+    return '<article class="ic-row is-' + esc(t.key) + (bulked ? " is-bulked" : "") + '" role="listitem" tabindex="0" data-cur="' + attr(cur) + '" data-x97-action="' + rowAction + '" data-id="' + attr(item.id) + '">' +
       leading +
       '<span class="ic-c-client"><b>' + esc(item.client || "Untitled") + '</b><small>' + esc(item.category || "Incoming") + '</small></span>' +
       '<span class="ic-c-structure">' + esc(structure) + '</span>' +
@@ -2856,33 +2856,84 @@
     var empty = filtered.length ? "" : '<div class="ic-empty">' + icon("search", 26) + '<strong>No deals in this view</strong><p>Clear filters or add one to get started.</p><button class="x97-btn primary" style="margin-top:12px" data-x97-action="add-upcoming">' + icon("plus") + ' Add incoming deal</button></div>';
     var entering = screenEntering; screenEntering = false;
 
-    root.innerHTML = '<div class="ic-shell' + (entering ? " ic-entering" : "") + '" id="ic-shell">' +
-      pageHeader("Collections", "Incoming", "", '<button class="x97-icon-btn x97-add-primary" data-x97-action="add-upcoming" title="Add incoming deal">' + icon("plus") + '<span>Add deal</span></button>') +
-      icHeroHTML(doc, stats) +
-      (icBulk.on ? icBulkBarHTML() : icToolbarHTML()) +
-      (activeFilterCount() ? '<div class="ic-filterchips">' + filterTagHTML() + '</div>' : "") +
-      '<div class="ic-gridwrap"><div class="ic-listwrap" id="ic-listwrap">' +
-        (filtered.length ? icHeadHTML() : "") +
-        '<div class="ic-list" id="ic-list" role="table" aria-label="Incoming receivables">' + body + '</div>' +
-        empty +
-      '</div></div>' +
-      '<div class="ic-statusbar"><span>' + filtered.length + ' of ' + all.length + ' shown</span><span>Sorted by ' + esc(sortLabel(state.upcoming.sort)) + '</span></div>' +
-      '<button class="x97-fab" data-x97-action="add-upcoming" aria-label="Add incoming deal">' + icon("plus", 25) + '</button>' +
-    '</div>';
+    // Keep the shell, search input and scroll containers mounted. Replacing
+    // root.innerHTML on every keystroke dismisses mobile keyboards and resets
+    // scroll momentum. Only replace regions whose actual content changed.
+    var shell = document.getElementById("ic-shell");
+    if (!shell || entering) {
+      root.innerHTML = '<div class="ic-shell" id="ic-shell">' +
+        pageHeader("97 LIVE / Collections", "Incoming", "", '<button class="x97-icon-btn x97-add-primary" data-x97-action="add-upcoming" aria-label="Add incoming deal">' + icon("plus") + '<span>Add deal</span></button>') +
+        '<div id="ic-summary"></div><div id="ic-controls"></div><div class="ic-filterchips" id="ic-active-filters"></div>' +
+        '<div class="ic-gridwrap"><div class="ic-listwrap" id="ic-listwrap"></div></div>' +
+        '<div class="ic-statusbar" id="ic-statusbar" role="status" aria-live="polite"></div>' +
+      '</div>';
+      shell = document.getElementById("ic-shell");
+    }
+    var pageY = window.scrollY;
+    var sheetOpen = document.body.classList.contains("x97-sheet-open");
+    var anchor = !entering && !sheetOpen && Array.from(shell.querySelectorAll('.ic-list > article[data-id]')).find(function (row) {
+      return row.getBoundingClientRect().bottom > 0;
+    });
+    var anchorTop = anchor ? anchor.getBoundingClientRect().top : 0;
+    var anchorId = anchor ? anchor.dataset.id : null;
+    var anchorPart = anchor ? anchor.dataset.partIndex : null;
 
+    icPatchRegion(document.getElementById("ic-summary"), icHeroHTML(doc, stats));
+    var controls = document.getElementById("ic-controls");
+    var controlMode = icBulk.on ? "bulk" : "search";
+    if (controls.dataset.mode !== controlMode || icBulk.on) {
+      icPatchRegion(controls, icBulk.on ? icBulkBarHTML() : icToolbarHTML());
+      controls.dataset.mode = controlMode;
+    } else {
+      var filterButton = controls.querySelector('[data-x97-action="open-incoming-filters"]');
+      var filterCount = activeFilterCount();
+      filterButton.innerHTML = icon("filter", 16) + (filterCount ? '<b class="ic-tbadge">' + filterCount + '</b>' : '');
+      var currentInput = document.getElementById("ic-search");
+      if (currentInput && document.activeElement !== currentInput) currentInput.value = state.upcoming.search;
+    }
+    icPatchRegion(document.getElementById("ic-active-filters"), activeFilterCount() ? filterTagHTML() : "");
+    icPatchRegion(document.getElementById("ic-listwrap"), (filtered.length ? icHeadHTML() : "") +
+      '<div class="ic-list" id="ic-list" role="list" aria-label="Incoming receivables">' + body + '</div>' + empty);
+    icPatchRegion(document.getElementById("ic-statusbar"), '<span>' + filtered.length + ' of ' + all.length + ' deals</span><span>' + esc(sortLabel(state.upcoming.sort)) + '</span>');
+
+    if (anchorId && !sheetOpen) {
+      var nextAnchor = Array.from(shell.querySelectorAll('.ic-list > article[data-id]')).find(function (row) {
+        return row.dataset.id === anchorId && row.dataset.partIndex === anchorPart;
+      });
+      // A disappearing filter result should not fling the user back to the
+      // top. Keep the previous position, naturally clamped to the new page.
+      var targetY = nextAnchor ? pageY + nextAnchor.getBoundingClientRect().top - anchorTop : pageY;
+      if (Math.abs(window.scrollY - targetY) > 1) window.scrollTo({ top: targetY, behavior: "instant" });
+    }
     var searchInput = document.getElementById("ic-search");
-    if (searchInput) {
-      searchInput.addEventListener("input", function () {
+    if (searchInput && !searchInput.dataset.bound) {
+      searchInput.dataset.bound = "true";
+      searchInput.addEventListener("input", function (event) {
+        state.upcoming.search = searchInput.value; savePrefs();
+        if (!event.isComposing) scheduleRender(180);
+      });
+      searchInput.addEventListener("compositionend", function () {
         state.upcoming.search = searchInput.value; savePrefs(); scheduleRender(180);
       });
     }
-    var listwrap = document.getElementById("ic-listwrap");
-    if (listwrap) {
-      listwrap.addEventListener("scroll", function () {
-        var shell = document.getElementById("ic-shell");
-        if (shell) shell.classList.toggle("ic-scrolled", listwrap.scrollTop > 4);
-      }, { passive: true });
+  }
+
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (event.target.matches('.ic-list > article[data-x97-action]')) {
+      event.preventDefault(); event.target.click();
     }
+  });
+
+  function icPatchRegion(element, html) {
+    if (element._icHTML === html) return;
+    var rails = Array.from(element.querySelectorAll(".ic-hero-chips,.ic-month-row"));
+    var positions = rails.map(function (rail) { return rail.scrollLeft; });
+    element.innerHTML = html;
+    element._icHTML = html;
+    element.querySelectorAll(".ic-hero-chips,.ic-month-row").forEach(function (rail, index) {
+      rail.scrollLeft = positions[index] || 0;
+    });
   }
 
   function openIncomingFilters(doc) {
@@ -3071,14 +3122,6 @@
     lockSheetScroll();
     scheduleViewportFab();
     back.addEventListener("mousedown", function (e) { if (e.target === back) closeSheet(); });
-    back.addEventListener("focusin", function (e) {
-      var target = e.target;
-      if (!target || !target.matches || !target.matches("input,select,textarea")) return;
-      setTimeout(function () {
-        if (document.activeElement !== target) return;
-        target.scrollIntoView({ block: "center", inline: "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
-      }, 180);
-    });
     if (options && options.afterOpen) setTimeout(function(){ options.afterOpen(back); },0);
     var first = back.querySelector("input:not([type=hidden]),select,textarea"); if (first && window.innerWidth > 700) setTimeout(function(){first.focus();},80);
   }

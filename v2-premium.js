@@ -145,11 +145,13 @@
     var hidden = privacyOn();
     var themeButton = deck.querySelector('[data-v2-tool="theme"]');
     var privacyButton = deck.querySelector('[data-v2-tool="privacy"]');
-    if (themeButton) {
+    if (themeButton && themeButton.dataset.theme !== String(dark)) {
+      themeButton.dataset.theme = String(dark);
       themeButton.innerHTML = icon(dark ? "sun" : "moon");
       themeButton.setAttribute("aria-label", dark ? "Use light theme" : "Use dark theme");
     }
-    if (privacyButton) {
+    if (privacyButton && privacyButton.dataset.hidden !== String(hidden)) {
+      privacyButton.dataset.hidden = String(hidden);
       privacyButton.innerHTML = icon(hidden ? "eye" : "eyeoff");
       privacyButton.setAttribute("aria-label", hidden ? "Show financial amounts" : "Hide financial amounts");
       privacyButton.setAttribute("aria-pressed", hidden ? "true" : "false");
@@ -210,6 +212,8 @@
 
   function countNumber(element) {
     if (!element || element.dataset.v2Counted === "1") return;
+    // Receivables should be readable immediately, including after filters.
+    if (element.closest(".ic-shell")) return;
     element.dataset.v2Counted = "1";
     element.classList.add("v2-number-enter");
     if (reduceMotion || privacyOn()) return;
@@ -364,7 +368,12 @@
     document.addEventListener("click", function (event) {
       if (event.target.closest("button,.press,.navitem,.x97-card-action")) haptic(5);
     }, true);
-    new MutationObserver(function () {
+    new MutationObserver(function (mutations) {
+      // Counting animations change text every frame; they do not add UI that
+      // needs enhancing. Avoid rescanning the entire app during those frames.
+      if (mutations.every(function (mutation) {
+        return mutation.target.nodeType === 1 && mutation.target.closest(".v2-number-enter");
+      })) return;
       if (!frame) frame = requestAnimationFrame(enhance);
     }).observe(document.documentElement, { childList: true, subtree: true });
     window.addEventListener("resize", function () {
