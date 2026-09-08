@@ -92,6 +92,7 @@
       statuses: [],
       currencies: [],
       categories: [],
+      retainers: "all",
       from: "",
       to: "",
       minAmount: "",
@@ -246,7 +247,7 @@
     // document. This keeps old records compatible while making the derived
     // amount/status/next-date fields agree with the payment ledger.
     doc.followups.forEach(function (item) {
-      if (Array.isArray(item.parts) || paymentsFor(doc, item.id).length) rebuildDealParts(doc, item);
+      if (Array.isArray(item.parts) || allPaymentsFor(doc, item.id).length) rebuildDealParts(doc, item);
     });
     return doc;
   }
@@ -340,8 +341,15 @@
   function projectSchedule(doc, item) {
     var rows = scheduleRowsFor(item);
     var payments = orderedPayments(doc, item);
-    if (payments.length) rows.forEach(function (row) { row.paid = 0; row.paidOn = ""; row.status = "Pending"; });
-    if (!payments.length && paidOf(item) > 0) {
+    var hasLedger = allPaymentsFor(doc, item.id).length > 0;
+    if (hasLedger) {
+      rows.forEach(function (row) { row.paid = 0; row.paidOn = ""; row.status = "Pending"; });
+      // Preserve receipts recorded before this app had a payment ledger.
+      (item.paymentOpeningParts || []).forEach(function (opening) {
+        applyAllocationToRows(rows, opening.partId, opening.amount, opening.date);
+      });
+    }
+    if (!hasLedger && paidOf(item) > 0) {
       var seeded = rows.reduce(function (sum, row) { return sum + num(row.paid); }, 0);
       applyAllocationToRows(rows, null, Math.max(0, paidOf(item) - seeded), item.paidOn || todayISO());
     }
@@ -383,12 +391,11 @@
     if (!item) return;
     var schedule = projectSchedule(doc, item);
     var gross = schedule.reduce(function (sum, row) { return sum + num(row.amount); }, 0);
-    var ledger = paymentsFor(doc, item.id);
-    var paid = ledger.length
-      ? ledger.reduce(function (sum, payment) { return sum + num(payment.amount); }, 0)
-      : Math.max(num(item.paid), schedule.reduce(function (sum, row) { return sum + num(row.paid); }, 0));
+    var hasLedger = allPaymentsFor(doc, item.id).length > 0;
+    var scheduledPaid = schedule.reduce(function (sum, row) { return sum + num(row.paid); }, 0);
+    var paid = hasLedger ? scheduledPaid : Math.max(num(item.paid), scheduledPaid);
     item.gross = roundMoney(gross || item.gross || item.amount);
-    item.paid = roundMoney(paid || (paymentsFor(doc, item.id).length ? 0 : num(item.paid)));
+    item.paid = roundMoney(paid);
     item.amount = roundMoney(Math.max(0, item.gross - item.paid));
     if (!isCancelled(item.status)) item.status = item.paid >= item.gross - 0.5 ? "Paid" : item.paid > 0 ? "Part Paid" : "Pending";
     var next = schedule.find(function (row) { return num(row.paid) < num(row.amount) - 0.5; });
@@ -426,6 +433,11 @@
       allocations: allocationPlan.allocations,
       createdAt: new Date().toISOString()
     };
+    if (!allPaymentsFor(doc, item.id).length && !Array.isArray(item.paymentOpeningParts)) {
+      item.paymentOpeningParts = projectSchedule(doc, item).filter(function (row) { return num(row.paid) > 0; }).map(function (row) {
+        return { partId: row.id, amount: num(row.paid), date: row.paidOn || item.paidOn || "" };
+      });
+    }
     item.gross = gross;
     item.paid = paidOf(item) + received;
     item.paidOn = payment.date;
@@ -512,6 +524,9 @@
     return "Enter one total amount and one due date.";
   }
 
+  function isRetainerCategory(value) { return /^(monthly\s+)?retainers?$/i.test(String(value || "").trim()); }
+  function isRetainer(item) { return !!item && (normalizeDealType(item.dealType) === "monthly" || isRetainerCategory(item.category)); }
+
   function isDeal(item) { return !!(item && normalizeDealType(item.dealType) !== "one" && Array.isArray(item.parts)); }
 
   function dealLabel(item) {
@@ -553,7 +568,7 @@
   function dealPartsFor(item, values) {
     var type = normalizeDealType(values && values.dealType || item && item.dealType || "one");
     var count = Math.max(1, Math.round(num(values && (values.partCount || values.scheduleCount) || item && item.partCount || ((type === "split" || type === "deposit") ? 2 : 1))));
-    var label = String(values && values.partLabel || item && item.partLabel || (type === "monthly" ? "months" : "parts")).trim().toLowerCase() || "parts";
+    var label = type === "monthly" ? "months" : String(values && values.partLabel || item && item.partLabel || "parts").trim().toLowerCase() || "parts";
     var start = String(values && (values.startDate || values.expectedBy) || item && item.expectedBy || todayISO());
     var totalInput = roundMoney(values && values.amount != null ? values.amount : grossOf(item));
     var unit = type === "monthly" || type === "part" ? totalInput : (type === "split" ? Math.floor(totalInput / 2) : totalInput);
@@ -618,10 +633,10 @@
     return parts;
   }
 
-  function dealScheduleHTML(item, editable) {
+  function dealScheduleHTML(item, editable, fullSchedule) {
     if (!item || !Array.isArray(item.parts) || (!isDeal(item) && !editable)) return "";
     var parts = item.parts || [], label = dealLabel(item), paidCount = dealPaidPartCount(item);
-    var visible = editable ? parts : parts.slice(0, 5);
+    var visible = editable || fullSchedule ? parts : parts.slice(0, 5);
     var rows = visible.map(function (p, i) {
       var paid = num(p.paid) >= num(p.amount) - 0.5;
       var partial = !paid && num(p.paid) > 0;
@@ -719,6 +734,10 @@
         });
       }
     } catch (_) {}
+    if (["all", "only", "exclude"].indexOf(state.upcoming.retainers) < 0) state.upcoming.retainers = "all";
+    if (state.upcoming.categories.length === 1 && isRetainerCategory(state.upcoming.categories[0]) && state.upcoming.retainers === "all") {
+      state.upcoming.categories = []; state.upcoming.retainers = "only";
+    }
   }
 
   /* Light and dark. The palette for both has been in the stylesheet all
@@ -2494,25 +2513,39 @@
     if (f.statuses.length) count++;
     if (f.currencies.length) count++;
     if (f.categories.length) count++;
+    if (f.retainers !== "all") count++;
     if (f.from || f.to) count++;
     if (f.minAmount || f.maxAmount) count++;
     if (f.sort !== "urgency") count++;
     return count;
   }
 
-  function followupMatches(item, doc) {
-    var f = state.upcoming;
+  // Apply period filters to individual scheduled payments. A six-month deal
+  // belongs to six months, even while its first instalment is still unpaid.
+  function incomingPeriodMatches(row, f) {
+    var due = row.dueDate || "";
+    if (f.month === "unscheduled" && due) return false;
+    if (f.month !== "all" && f.month !== "unscheduled" && monthKey(due) !== f.month) return false;
+    if (f.from && (!due || due < f.from)) return false;
+    if (f.to && (!due || due > f.to)) return false;
+    return true;
+  }
+
+  function followupMatches(item, doc, filters) {
+    var f = filters || state.upcoming;
     var q = String(f.search || "").trim().toLowerCase();
-    var scheduleText = projectSchedule(doc, item).map(function (row) { return [row.label, row.dueDate].join(" "); }).join(" ");
+    var schedule = projectSchedule(doc, item);
+    var scheduleText = schedule.map(function (row) { return [row.label, row.dueDate].join(" "); }).join(" ");
     if (q && [item.client, item.category, item.note, item.currency, item.status, scheduleText].join(" ").toLowerCase().indexOf(q) < 0) return false;
     var t = timing(item, doc), next = t.next, expectedBy = next ? next.dueDate : item.expectedBy;
-    if (f.month === "unscheduled" && expectedBy) return false;
-    if (f.month !== "all" && f.month !== "unscheduled" && monthKey(expectedBy) !== f.month) return false;
+    if (!schedule.some(function (row) { return incomingPeriodMatches(row, f); })) return false;
     if (f.statuses.length && f.statuses.indexOf(normalizeStatus(item.status)) < 0) return false;
     if (f.currencies.length && f.currencies.indexOf(String(item.currency || "UGX").toUpperCase()) < 0) return false;
-    if (f.categories.length && f.categories.indexOf(String(item.category || "")) < 0) return false;
-    if (f.from && (!expectedBy || expectedBy < f.from)) return false;
-    if (f.to && (!expectedBy || expectedBy > f.to)) return false;
+    if (f.categories.length && !f.categories.some(function (category) {
+      return isRetainerCategory(category) ? isRetainer(item) : String(category).trim().toLowerCase() === String(item.category || "").trim().toLowerCase();
+    })) return false;
+    if (f.retainers === "only" && !isRetainer(item)) return false;
+    if (f.retainers === "exclude" && isRetainer(item)) return false;
     if (f.minAmount !== "" && outstandingOf(item) < num(f.minAmount)) return false;
     if (f.maxAmount !== "" && outstandingOf(item) > num(f.maxAmount)) return false;
     var today = todayDate(), nowMonth = monthKey(today), nextMonthDate = new Date(startOfMonth(today)); nextMonthDate.setMonth(nextMonthDate.getMonth() + 1);
@@ -2522,8 +2555,8 @@
     if (f.quick === "today" && t.key !== "today") return false;
     if (f.quick === "next7" && !(isOpenFollowup(item) && t.days != null && t.days >= 0 && t.days <= 7)) return false;
     if (f.quick === "next30" && !(isOpenFollowup(item) && t.days != null && t.days >= 0 && t.days <= 30)) return false;
-    if (f.quick === "thisMonth" && monthKey(expectedBy) !== nowMonth) return false;
-    if (f.quick === "nextMonth" && monthKey(expectedBy) !== monthKey(nextMonthDate)) return false;
+    if (f.quick === "thisMonth" && !schedule.some(function (row) { return monthKey(row.dueDate) === nowMonth && incomingPeriodMatches(row, f); })) return false;
+    if (f.quick === "nextMonth" && !schedule.some(function (row) { return monthKey(row.dueDate) === monthKey(nextMonthDate) && incomingPeriodMatches(row, f); })) return false;
     if (f.quick === "unscheduled" && expectedBy) return false;
     if (f.quick === "paid" && !isPaid(item.status)) return false;
     return true;
@@ -2562,6 +2595,7 @@
     // The chip says what the sort does, not what the code calls it.
     if (f.statuses.length) tags.push({ label: f.statuses.join(", "), key: "statuses" });
     if (f.currencies.length) tags.push({ label: f.currencies.join(" + "), key: "currencies" });
+    if (f.retainers !== "all") tags.push({ label: f.retainers === "only" ? "Retainers only" : "Retainers excluded", key: "retainers" });
     if (f.categories.length) tags.push({ label: f.categories.length + " categories", key: "categories" });
     if (f.from || f.to) tags.push({ label: (f.from ? formatDate(f.from, true) : "Any") + " – " + (f.to ? formatDate(f.to, true) : "Any"), key: "dates" });
     if (f.minAmount || f.maxAmount) tags.push({ label: "Amount " + (f.minAmount || "0") + "–" + (f.maxAmount || "∞"), key: "amount" });
@@ -2667,38 +2701,31 @@
     return '<button class="ic-quick' + (on ? " on" : "") + (danger ? " danger" : "") + '" data-x97-action="quick-filter" data-value="' + attr(value) + '">' + esc(label) + (count != null ? ' <b>' + count + '</b>' : '') + '</button>';
   }
 
-  // "Retainer" is a real category value in use today (not a hypothetical
-  // generic filter) — a dedicated one-tap chip beats making someone open the
-  // filter sheet and multi-select a category by hand. It rides the same
-  // state.upcoming.categories array the filter sheet itself writes to, so it
-  // stays in sync with "Category" there rather than being a second system.
-  // The count below is every retainer deal regardless of status — turning
-  // the chip on also sets quick to "all" (see the filter-retainer action),
-  // so a paid or cancelled retainer isn't silently dropped by the default
-  // "open deals only" view while its own badge still counted it.
   function icRetainerChip(doc) {
-    var count = (doc.followups || []).filter(function (x) { return String(x.category || "").trim() === "Retainer"; }).length;
-    if (!count) return "";
-    var on = state.upcoming.categories.length === 1 && state.upcoming.categories[0] === "Retainer";
-    return '<button class="ic-quick retainer' + (on ? " on" : "") + '" data-x97-action="filter-retainer">Retainers <b>' + count + '</b></button>';
+    var count = (doc.followups || []).filter(isRetainer).length;
+    var on = state.upcoming.retainers === "only";
+    return '<button class="ic-quick retainer' + (on ? " on" : "") + '" aria-pressed="' + on + '" data-x97-action="filter-retainer">Retainers <b>' + count + '</b></button>';
   }
 
-  // One pill per month that actually has a deal in it, each labelled with
-  // how many — picking a month is picking with information, not blind.
-  // Reuses state.upcoming.month, which followupMatches already filters on;
-  // this only adds the control that was missing to set it from Incoming
-  // itself (previously reachable only by tapping a month card on Dashboard).
+  // Count distinct deals per month; a parent is counted only once even when
+  // it has several scheduled payments in the same month.
   function icMonthChipsHTML(doc) {
     var counts = {}, total = 0;
+    var filters = Object.assign({}, state.upcoming, { month: "all" });
     (doc.followups || []).forEach(function (item) {
-      var t = timing(item, doc), next = t.next, expectedBy = next ? next.dueDate : item.expectedBy;
-      if (!expectedBy) return;
-      var k = monthKey(expectedBy);
-      counts[k] = (counts[k] || 0) + 1; total++;
+      if (!followupMatches(item, doc, filters)) return;
+      var seen = {};
+      projectSchedule(doc, item).forEach(function (row) {
+        var key = monthKey(row.dueDate);
+        if (key && incomingPeriodMatches(row, filters)) seen[key] = true;
+      });
+      Object.keys(seen).forEach(function (key) { counts[key] = (counts[key] || 0) + 1; });
+      total++;
     });
+    var current = state.upcoming.month;
+    if (current !== "all" && current !== "unscheduled" && !counts[current]) counts[current] = 0;
     var months = Object.keys(counts).sort();
     if (!months.length) return "";
-    var current = state.upcoming.month;
     var chips = '<button type="button" class="ic-month-chip' + (current === "all" ? " on" : "") + '" data-x97-action="month-filter" data-month="all">All months<b>' + total + '</b></button>' +
       months.map(function (key) {
         return '<button type="button" class="ic-month-chip' + (current === key ? " on" : "") + '" data-x97-action="month-filter" data-month="' + attr(key) + '">' + esc(monthLabel(key, true)) + '<b>' + counts[key] + '</b></button>';
@@ -2706,19 +2733,18 @@
     return '<div class="ic-month-row" role="group" aria-label="Filter by month">' + chips + '</div>';
   }
 
-  // Outstanding for one month only — the same expectedBy derivation
-  // icMonthChipsHTML counts by, so the number on a chip and the total that
-  // appears when you tap it always agree.
   function icOutstandingForMonth(doc, key) {
-    var ugx = 0, usd = 0;
+    var totals = { ugx: 0, usd: 0 };
+    var filters = Object.assign({}, state.upcoming, { month: key });
     (doc.followups || []).forEach(function (item) {
-      if (!isOpenFollowup(item)) return;
-      var t = timing(item, doc), next = t.next, expectedBy = next ? next.dueDate : item.expectedBy;
-      if (!expectedBy || monthKey(expectedBy) !== key) return;
-      if (String(item.currency || "UGX").toUpperCase() === "USD") usd += outstandingOf(item);
-      else ugx += outstandingOf(item);
+      if (!isOpenFollowup(item) || !followupMatches(item, doc, filters)) return;
+      var currency = String(item.currency || "UGX").toLowerCase();
+      if (!(currency in totals)) return;
+      projectSchedule(doc, item).forEach(function (row) {
+        if (incomingPeriodMatches(row, filters)) totals[currency] += Math.max(0, num(row.amount) - num(row.paid));
+      });
     });
-    return { ugx: ugx, usd: usd };
+    return totals;
   }
 
   function icHeroHTML(doc, stats) {
@@ -2730,10 +2756,9 @@
           ? stats.unscheduled.length + " open deal" + (stats.unscheduled.length === 1 ? "" : "s") + " need" + (stats.unscheduled.length === 1 ? "s" : "") + " a date"
           : "Nothing needs chasing right now";
     var selectedMonth = state.upcoming.month;
-    var scoped = selectedMonth !== "all" && selectedMonth !== "unscheduled" ? icOutstandingForMonth(doc, selectedMonth) : null;
-    var outUGX = scoped ? scoped.ugx : stats.outstandingUGX;
-    var outUSD = scoped ? scoped.usd : stats.outstandingUSD;
-    var heroLabel = scoped ? "Outstanding · " + monthLabel(selectedMonth, true) : "Outstanding";
+    var scoped = icOutstandingForMonth(doc, selectedMonth);
+    var outUGX = scoped.ugx, outUSD = scoped.usd;
+    var heroLabel = "Outstanding" + (state.upcoming.retainers === "only" ? " · Retainers" : state.upcoming.retainers === "exclude" ? " · Excluding retainers" : "") + (selectedMonth !== "all" ? " · " + monthLabel(selectedMonth, true) : "");
     return '<section class="ic-hero">' +
       '<div class="ic-hero-top"><div><div class="ic-hero-label">' + esc(heroLabel) + '</div><div class="ic-hero-value tabnum"><span class="ic-hero-value-main">' + money(outUGX, "UGX", true) + '</span>' + (outUSD ? ' <span class="ic-hero-usd">+ ' + money(outUSD, "USD", true) + '</span>' : '') + '</div></div><div class="ic-hero-headline">' + esc(headline) + '</div></div>' +
       '</section><div class="ic-filter-deck"><div class="ic-hero-chips" role="group" aria-label="Filter incoming deals">' +
@@ -2834,7 +2859,7 @@
       '<span class="ic-c-due"><b>' + esc(dueText) + '</b><small>' + esc(subLine) + '</small></span>' +
       (quick ? '<span class="ic-quickacts">' + quick + '</span>' : '') +
     '</article>' +
-    (deal && !collapsed ? parts.map(function (p, i) { return icPartRowHTML(item, p, i, parts.length, doc); }).join("") : "");
+    (deal && !collapsed ? parts.map(function (p, i) { return incomingPeriodMatches(p, state.upcoming) ? icPartRowHTML(item, p, i, parts.length, doc) : ""; }).join("") : "");
   }
 
   function icGroupHTML(label, items, doc) {
@@ -2938,13 +2963,14 @@
 
   function openIncomingFilters(doc) {
     var f = state.upcoming;
-    var categories = Array.from(new Set((doc.followups || []).map(function (x) { return x.category; }).filter(Boolean))).sort();
+    var categories = Array.from(new Set((doc.followups || []).map(function (x) { return isRetainerCategory(x.category) ? "Retainer" : x.category; }).concat((doc.followups || []).some(isRetainer) ? ["Retainer"] : []).filter(Boolean))).sort();
     function chipRow(name, options, selected) {
       return '<div class="ic-filter-chiprow" data-filter-group="' + attr(name) + '">' + options.map(function (o) {
         return '<button type="button" class="ic-filter-chip' + (selected.indexOf(o) >= 0 ? " on" : "") + '" data-value="' + attr(o) + '">' + esc(o) + '</button>';
       }).join("") + '</div>';
     }
     var body = '<div class="ic-filter-sheet">' +
+      '<div class="ic-filter-section"><label>Retainers</label><select id="ic-f-retainers" class="x97-select">' + option("all", "Include everything", f.retainers) + option("only", "Retainers only", f.retainers) + option("exclude", "Exclude retainers", f.retainers) + '</select></div>' +
       '<div class="ic-filter-section"><label>Status</label>' + chipRow("statuses", ["Pending", "Part Paid", "Paid", "Cancelled"], f.statuses) + '</div>' +
       '<div class="ic-filter-section"><label>Currency</label>' + chipRow("currencies", ["UGX", "USD"], f.currencies) + '</div>' +
       (categories.length ? '<div class="ic-filter-section"><label>Category</label>' + chipRow("categories", categories, f.categories) + '</div>' : "") +
@@ -2973,11 +2999,12 @@
         });
       });
       back.querySelector('[data-x97-action="incoming-filters-reset"]').addEventListener("click", function () {
-        state.upcoming.statuses = []; state.upcoming.currencies = []; state.upcoming.categories = [];
+        state.upcoming.statuses = []; state.upcoming.currencies = []; state.upcoming.categories = []; state.upcoming.retainers = "all";
         state.upcoming.from = ""; state.upcoming.to = ""; state.upcoming.minAmount = ""; state.upcoming.maxAmount = ""; state.upcoming.sort = "urgency";
         savePrefs(); closeSheet(); scheduleRender(0);
       });
       back.querySelector('[data-x97-action="incoming-filters-apply"]').addEventListener("click", function () {
+        state.upcoming.retainers = back.querySelector("#ic-f-retainers").value;
         state.upcoming.statuses = draft.statuses; state.upcoming.currencies = draft.currencies; state.upcoming.categories = draft.categories; state.upcoming.sort = draft.sort;
         state.upcoming.from = back.querySelector("#ic-f-from").value; state.upcoming.to = back.querySelector("#ic-f-to").value;
         state.upcoming.minAmount = back.querySelector("#ic-f-min").value; state.upcoming.maxAmount = back.querySelector("#ic-f-max").value;
@@ -3229,7 +3256,7 @@
         if (hint) hint.textContent = dealTypeHint(normalizedType, draft.partLabel);
         if (amountLabelEl) amountLabelEl.textContent = dealAmountLabel(normalizedType, draft.partLabel);
         if (glance) glance.innerHTML = '<div><span>Structure</span><b>' + esc(DEAL_TYPES[normalizedType]) + '</b></div><div><span>Payments</span><b>' + draft.parts.length + '</b></div><div><span>Total value</span><b>' + money(total, draft.currency) + '</b></div>';
-        var previewHTML = normalizedType === "one" ? '<div class="x97-single-preview"><span>One payment' + (nextDraft && nextDraft.dueDate ? ' · due ' + esc(formatDate(nextDraft.dueDate, true)) : "") + '</span><strong>' + money(total, draft.currency) + '</strong></div>' : dealScheduleHTML(draft, false);
+        var previewHTML = normalizedType === "one" ? '<div class="x97-single-preview"><span>One payment' + (nextDraft && nextDraft.dueDate ? ' · due ' + esc(formatDate(nextDraft.dueDate, true)) : "") + '</span><strong>' + money(total, draft.currency) + '</strong></div>' : dealScheduleHTML(draft, false, true);
         preview.innerHTML = previewHTML + '<div class="x97-deal-total"><span>Deal total</span><b>' + money(total, draft.currency) + '</b></div>';
       }
       function toggleDealFields() {
@@ -3237,11 +3264,18 @@
         Array.prototype.slice.call(back.querySelectorAll(".x97-deal-mode")).forEach(function (button) { var on = button.dataset.dealMode === value; button.classList.toggle("on", on); button.setAttribute("aria-pressed", on ? "true" : "false"); });
         var count = back.querySelector(".x97-deal-count-field"), interval = back.querySelector(".x97-deal-interval-field"), second = back.querySelector(".x97-deal-second-field"), deposit = back.querySelector(".x97-deposit-field"), depositDates = back.querySelector(".x97-deposit-dates"), label = back.querySelector(".x97-deal-label-field"), start = back.querySelector(".x97-deal-start-field");
         if (count) count.style.display = value === "one" || value === "split" || value === "deposit" ? "none" : "block";
-        if (interval) interval.style.display = value === "monthly" || value === "part" ? "block" : "none";
+        if (interval) interval.style.display = value === "part" ? "block" : "none";
         if (second) second.style.display = value === "split" ? "block" : "none";
         if (deposit) deposit.style.display = value === "deposit" ? "block" : "none";
         if (depositDates) depositDates.style.display = value === "deposit" ? "grid" : "none";
-        if (label) label.style.display = value === "monthly" || value === "part" ? "block" : "none";
+        if (label) label.style.display = value === "part" ? "block" : "none";
+        if (count && count.querySelector("label")) count.querySelector("label").textContent = value === "monthly" ? "Number of months" : "Number of parts";
+        var categoryInput = back.querySelector('[name="category"]');
+        if (value === "monthly") {
+          if (categoryInput) categoryInput.value = "Retainer";
+          back.querySelector('[name="partLabel"]').value = "months";
+        }
+        if (categoryInput) categoryInput.disabled = value === "monthly";
         if (start) start.style.display = value === "custom" ? "none" : "block";
         if (customEditor) customEditor.style.display = value === "custom" ? "block" : "none";
         if (customEditor && value === "custom" && !customEditor.querySelector("[name^=partAmount_]")) renderCustomEditor(draftValues());
@@ -3386,6 +3420,11 @@
   function submitUpcoming(form) {
     var v = formValues(form), id = v.id || uid("fu"), type = normalizeDealType(v.dealType || "one"), oldSnapshot = readDoc(), old = oldSnapshot && (oldSnapshot.followups || []).find(function (x) { return String(x.id) === String(id); });
     if (!String(v.client || "").trim()) { toast("Add a client or project name", "error"); return; }
+    if (type === "monthly") {
+      if (!Number.isInteger(num(v.partCount)) || num(v.partCount) < 1 || num(v.partCount) > 24) { toast("Enter between 1 and 24 months", "error"); return; }
+      if (!parseLocalDate(v.startDate)) { toast("Choose the first or next monthly due date", "error"); return; }
+      v.category = "Retainer"; v.partLabel = "months";
+    }
     // A deal with money already recorded disables the amount/currency/count/
     // interval/label inputs in the form, but formValues() reads a disabled
     // field's value like any other — so those fields round-trip unchanged
@@ -4744,10 +4783,10 @@
     if(action==="quick-date"){var value=btn.dataset.value==="month-end"?dateISO(endOfMonth(todayDate())):dateISO(addDays(todayDate(),num(btn.dataset.days))),changed=[];var input=document.querySelector("#x97-upcoming-form [name=expectedBy]"),start=document.querySelector("#x97-upcoming-form [name=startDate]"),first=document.querySelector("#x97-upcoming-form [name=firstDue]"),depositDue=document.querySelector("#x97-upcoming-form [name=depositDue]");if(input){input.value=value;changed.push(input);}if(start){start.value=value;changed.push(start);}if(first){first.value=value;changed.push(first);}if(depositDue){depositDue.value=value;changed.push(depositDue);}var second=document.querySelector("#x97-upcoming-form [name=secondDue]"),balanceDue=document.querySelector("#x97-upcoming-form [name=balanceDue]"),dealTypeInput=document.querySelector("#x97-upcoming-form [name=dealType]");if(second&&dealTypeInput&&(dealTypeInput.value==="split"||dealTypeInput.value==="deposit")&&!second.value){second.value=value;changed.push(second);}if(balanceDue&&dealTypeInput&&dealTypeInput.value==="deposit"&&!balanceDue.value){balanceDue.value=value;changed.push(balanceDue);}changed.forEach(function(el){try{el.dispatchEvent(new Event("input",{bubbles:true}));}catch(_){}});return;}
     if(action==="quick-filter"){state.upcoming.quick=btn.dataset.value;savePrefs();scheduleRender(0);return;}
     if(action==="month-filter"){state.upcoming.month=btn.dataset.month;savePrefs();scheduleRender(0);return;}
-    if(action==="filter-retainer"){var wasOn=state.upcoming.categories.length===1&&state.upcoming.categories[0]==="Retainer";if(wasOn){state.upcoming.categories=[];state.upcoming.quick="open";}else{state.upcoming.categories=["Retainer"];state.upcoming.quick="all";}savePrefs();scheduleRender(0);return;}
+    if(action==="filter-retainer"){var wasOn=state.upcoming.retainers==="only";state.upcoming.retainers=wasOn?"all":"only";state.upcoming.categories=[];state.upcoming.quick=wasOn?"open":"all";savePrefs();scheduleRender(0);return;}
     if(action==="open-month"){state.upcoming.month=btn.dataset.month;state.upcoming.quick="open";savePrefs();var item=findNavItem("upcoming");if(item&&!item.classList.contains("on"))item.click();else scheduleRender(0);return;}
-    if(action==="clear-filter"){var k=btn.dataset.filter;if(k==="month")state.upcoming.month="all";else if(k==="statuses")state.upcoming.statuses=[];else if(k==="currencies")state.upcoming.currencies=[];else if(k==="categories")state.upcoming.categories=[];else if(k==="dates"){state.upcoming.from="";state.upcoming.to="";}else if(k==="amount"){state.upcoming.minAmount="";state.upcoming.maxAmount="";}else if(k==="sort")state.upcoming.sort="urgency";savePrefs();scheduleRender(0);return;}
-    if(action==="clear-all-filters"){state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.sort="urgency";state.upcoming.month="all";state.upcoming.quick="all";savePrefs();scheduleRender(0);return;}
+    if(action==="clear-filter"){var k=btn.dataset.filter;if(k==="month")state.upcoming.month="all";else if(k==="statuses")state.upcoming.statuses=[];else if(k==="currencies")state.upcoming.currencies=[];else if(k==="categories")state.upcoming.categories=[];else if(k==="retainers")state.upcoming.retainers="all";else if(k==="dates"){state.upcoming.from="";state.upcoming.to="";}else if(k==="amount"){state.upcoming.minAmount="";state.upcoming.maxAmount="";}else if(k==="sort")state.upcoming.sort="urgency";savePrefs();scheduleRender(0);return;}
+    if(action==="clear-all-filters"){state.upcoming.retainers="all";state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.sort="urgency";state.upcoming.month="all";state.upcoming.quick="all";savePrefs();scheduleRender(0);return;}
     if(action==="go-upcoming"||action==="go-upcoming-months"){var up=findNavItem("upcoming");if(up)up.click();return;}
     if(action==="record-payment"){var current=readDoc(), summary=current&&analytics(current), target=summary&&(summary.overdue[0]||summary.next7[0]);if(target)openPaymentForm(target.itemId);else {var firstOpen=current&&(current.followups||[]).find(isOpenFollowup);if(firstOpen)openPaymentForm(firstOpen.id);else toast("Add an incoming deal first","error");}return;}
     if(action==="go-expenses"){var expenses=findNavItem("expenses");if(expenses)expenses.click();return;}
