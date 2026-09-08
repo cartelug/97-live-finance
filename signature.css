@@ -37,7 +37,47 @@ button:disabled { cursor: default; opacity: .5; }
 .x97-title, .s97-page-heading h1 { font-family: var(--fdisp) !important; font-weight: 500 !important; font-size: clamp(2.1rem, 4vw, 3rem) !important; line-height: 1.12 !important; letter-spacing: -.045em !important; }
 .x97-sub, .s97-page-heading p { margin: 8px 0 0; font: 400 14px/1.55 var(--fu) !important; color: var(--tx2); }
 .x97-brand-mark { background: var(--s97-green); border: 0; border-radius: 12px; }
-.x97-brand-word { letter-spacing: .18em; }
+/* Keep the original 97 artwork at its natural aspect ratio and make the
+   whole lockup one brand object. The previous nested rounded square made the
+   mark look like a tiny app icon with unrelated text squeezed beside it. */
+.x97-brand-lockup {
+  width: max-content;
+  min-height: 58px;
+  gap: 11px !important;
+  padding: 6px 15px 6px 9px;
+  color: #fff;
+  background: var(--s97-green);
+  border: 1px solid #285c43;
+  border-radius: 15px;
+}
+.x97-brand-lockup > .x97-brand-mark {
+  width: 58px;
+  height: 50px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.x97-brand-lockup > .x97-brand-mark img {
+  display: block;
+  width: 58px;
+  height: 50px;
+  object-fit: contain;
+}
+.x97-brand-word {
+  color: #fff !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  letter-spacing: .16em;
+}
+.x97-brand-word small {
+  margin-top: 6px !important;
+  color: #b9d1c1 !important;
+  font-size: 8px !important;
+  font-weight: 550 !important;
+  letter-spacing: .2em !important;
+}
 .v2-tool { border-radius: 50%; background: var(--card); border: 1px solid var(--line); color: var(--tx2); box-shadow: none; }
 .x97-cloud { padding-inline: 8px !important; }
 .x97-cloud i { width: 6px; height: 6px; box-shadow: none !important; }
@@ -215,7 +255,8 @@ textarea.x97-textarea { min-height: 100px !important; }
 @media (min-width: 1360px) {
   body { padding-left: 208px; }
   .nav { top: 18px !important; bottom: 18px !important; left: 18px !important; width: 172px !important; height: calc(100dvh - 36px) !important; max-height: 1000px; transform: none !important; background: var(--s97-green) !important; border: 1px solid #21543d !important; border-radius: 20px !important; padding: 124px 10px 14px !important; box-shadow: none !important; }
-  .nav::before { display: block !important; content: ""; top: 24px; left: 47px; width: 76px; height: 66px; background: url('./icons/mark-97.png') center/contain no-repeat; }
+  .nav::before { display: block !important; content: ""; top: 22px; left: 47px; width: 76px; height: 66px; background: url('./icons/mark-97.png') center/contain no-repeat; }
+  .nav::after { position: absolute; display: block; content: "LIVE  ·  FINANCE"; top: 94px; left: 10px; width: 150px; color: #c5d9ca; font: 600 8px/1 var(--fu); letter-spacing: .18em; text-align: center; }
   .navin { display: flex !important; flex-direction: column; gap: 8px; padding: 0 !important; }
   .navitem { display: flex !important; flex-direction: row !important; align-items: center; justify-content: flex-start; gap: 12px; padding: 14px !important; height: 52px; min-height: 52px !important; font-size: 14px !important; color: #c5d9ca !important; border-radius: 11px; }
   .navitem.on { background: var(--s97-lime) !important; color: var(--s97-green) !important; }
@@ -227,7 +268,11 @@ textarea.x97-textarea { min-height: 100px !important; }
   .x97-top { gap: 14px 8px !important; padding-bottom: 18px; }
   .x97-top .x97-top-copy { padding-top: 14px; }
   .x97-title, .ic-shell .x97-title, .s97-page-heading h1 { font-size: 2rem !important; }
-  .x97-brand-word small { letter-spacing: .12em; }
+  .x97-brand-lockup { min-height: 50px; gap: 8px !important; padding: 5px 11px 5px 7px; border-radius: 13px; }
+  .x97-brand-lockup > .x97-brand-mark,
+  .x97-brand-lockup > .x97-brand-mark img { width: 48px; height: 41px; }
+  .x97-brand-word { font-size: 13px !important; letter-spacing: .14em; }
+  .x97-brand-word small { margin-top: 5px !important; font-size: 7px !important; letter-spacing: .16em !important; }
   .x97-top .x97-top-actions { max-width: 160px; }
   #x97-v2-root[data-screen="dashboard"] .x97-top-actions { max-width: 174px; }
   .x97-hero-command.x97-card { padding: 22px 20px !important; }
@@ -301,8 +346,10 @@ textarea.x97-textarea { min-height: 100px !important; }
 }
 @media (max-width: 359px) {
   :root { --s97-space: 12px; }
-  .x97-brand-lockup { gap: 7px; }
-  .x97-brand-word { font-size: 12px; }
+  .x97-brand-lockup { gap: 7px !important; padding-right: 9px; }
+  .x97-brand-lockup > .x97-brand-mark,
+  .x97-brand-lockup > .x97-brand-mark img { width: 43px; height: 37px; }
+  .x97-brand-word { font-size: 12px !important; }
   .s97-budget-card { padding-inline: 10px !important; }
   .s97-budget-card > .disp { font-size: 22px !important; }
   .x97-finance-pulse .v { font-size: 20px !important; }
@@ -314,8 +361,8 @@ textarea.x97-textarea { min-height: 100px !important; }
 /* Sign-in and startup use the same 97 identity as the signed-in workspace. */
 .s97-cloud-gate { background: var(--bg) !important; color: var(--tx) !important; font-family: var(--fu) !important; padding: max(24px,env(safe-area-inset-top)) 20px max(24px,env(safe-area-inset-bottom)) !important; }
 .s97-cloud-card { max-width: 440px; background: var(--card) !important; border: 1px solid var(--line) !important; padding: 30px !important; border-radius: 24px !important; box-shadow: 0 20px 70px #062d2110 !important; }
-.s97-cloud-brand { font-family: var(--fu) !important; font-size: 22px !important; font-weight: 600 !important; letter-spacing: .15em !important; color: var(--tx) !important; gap: 14px !important; }
-.s97-cloud-brand .s97-brand-mark { width: 64px !important; height: 58px !important; padding: 7px; object-fit: contain; border-radius: 13px; background: var(--s97-green); }
+.s97-cloud-brand { width: max-content; min-height: 62px; padding: 6px 16px 6px 9px; font-family: var(--fu) !important; font-size: 17px !important; font-weight: 700 !important; letter-spacing: .16em !important; color: #fff !important; gap: 12px !important; background: var(--s97-green); border: 1px solid #285c43; border-radius: 16px; }
+.s97-cloud-brand .s97-brand-mark { width: 60px !important; height: 52px !important; padding: 0; object-fit: contain; border: 0; border-radius: 0; background: transparent; }
 .s97-cloud-sub { font-size: 14px !important; line-height: 1.65 !important; color: var(--tx2) !important; margin: 22px 0 !important; }
 .s97-cloud-label { color: var(--tx) !important; font-size: 14px !important; font-weight: 550 !important; margin: 18px 0 8px !important; }
 .s97-cloud-input { font-family: var(--fu) !important; min-height: 50px !important; font-size: 16px !important; color: var(--tx) !important; background: var(--bg2) !important; border: 1px solid var(--line2) !important; border-radius: 11px !important; }
