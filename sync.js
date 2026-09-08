@@ -577,7 +577,7 @@
     var gate = document.createElement("div");
     gate.id = "s97-cloud-gate";
     gate.className = "s97-cloud-gate";
-    gate.innerHTML = '<div class="s97-cloud-card"><h1 class="s97-cloud-brand"><img src="./icons/favicon.svg" alt="97" class="s97-brand-mark">LIVE</h1><div class="s97-cloud-sub">Your live finance sheet is private. Sign in with the same account on your phone and computer; both devices will use one cloud copy.</div><label class="s97-cloud-label">Email</label><input id="s97-cloud-email" class="s97-cloud-input" type="email" autocomplete="email" placeholder="you@example.com"><label class="s97-cloud-label">Password</label><input id="s97-cloud-password" class="s97-cloud-input" type="password" autocomplete="current-password" placeholder="At least 6 characters"><div class="s97-cloud-actions"><button class="s97-cloud-btn primary" data-cloud-action="signin">Sign in</button><button class="s97-cloud-btn" data-cloud-action="signup">Create account</button></div><div id="s97-cloud-gate-msg" class="s97-cloud-msg"></div><div class="s97-cloud-fine">The public Supabase key in this website cannot read your data by itself. Database Row Level Security requires your signed-in user ID for every read and write.</div></div>';
+    gate.innerHTML = '<div class="s97-cloud-card"><h1 class="s97-cloud-brand"><img src="./icons/mark-97.png" alt="97" class="s97-brand-mark">LIVE</h1><div class="s97-cloud-sub">Your live finance sheet is private. Sign in with the same account on your phone and computer; both devices will use one cloud copy.</div><label class="s97-cloud-label" for="s97-cloud-email">Email</label><input id="s97-cloud-email" class="s97-cloud-input" type="email" autocomplete="email" placeholder="you@example.com"><label class="s97-cloud-label" for="s97-cloud-password">Password</label><input id="s97-cloud-password" class="s97-cloud-input" type="password" autocomplete="current-password" placeholder="At least 6 characters"><div class="s97-cloud-actions"><button class="s97-cloud-btn primary" data-cloud-action="signin">Sign in</button><button class="s97-cloud-btn" data-cloud-action="signup">Create account</button></div><div id="s97-cloud-gate-msg" class="s97-cloud-msg"></div><div class="s97-cloud-fine">Use the same account on every device to keep your workspace in sync.</div></div>';
     document.body.appendChild(gate);
     gate.addEventListener("click", function (e) {
       var b = e.target.closest("[data-cloud-action]");
@@ -717,7 +717,7 @@
   function loadExperienceV2() {
     if (document.querySelector('script[data-s97-experience-v2]')) return;
     var script = document.createElement('script');
-    script.src = './experience-v2.js?v=15';
+    script.src = './experience-v2.js?v=16';
     script.defer = true;
     script.dataset.s97ExperienceV2 = '1';
     script.onerror = function () { console.error('97 LIVE V2 Premium experience could not load'); };

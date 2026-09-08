@@ -333,8 +333,16 @@
   }
 
   function ensureStyleLast() {
-    var link = document.querySelector('link[data-v2-premium="true"]');
-    if (link && link !== document.head.lastElementChild) document.head.appendChild(link);
+    var base = document.querySelector('link[data-v2-premium="true"]');
+    var signature = document.querySelector('link[data-97-signature="true"]');
+    // Move the pair only when out of order; otherwise the observer would
+    // schedule itself forever as each link fought to be the last child.
+    if (signature) {
+      if (signature !== document.head.lastElementChild || (base && base.nextElementSibling !== signature)) {
+        if (base) document.head.appendChild(base);
+        document.head.appendChild(signature);
+      }
+    } else if (base && base !== document.head.lastElementChild) document.head.appendChild(base);
   }
 
   function enhance() {
