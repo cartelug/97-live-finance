@@ -2376,22 +2376,22 @@ body > .x97-fab.x97-fab-viewport,
 /* September 2026 — mobile-first finance workspace.
    Native document scrolling; no height changes driven by a scroll event. */
 :root {
-  --v2-ink: #17243b;
-  --v2-ink-soft: #526079;
-  --v2-ink-faint: #647188;
-  --v2-paper: #f2f5fa;
-  --v2-paper-2: #f8faff;
+  --v2-ink: #172c22;
+  --v2-ink-soft: #51655a;
+  --v2-ink-faint: #637569;
+  --v2-paper: #f3f6f2;
+  --v2-paper-2: #fafcf9;
   --v2-surface: #fff;
   --v2-surface-solid: #fff;
-  --v2-surface-muted: #eaf0f8;
-  --v2-line: #dfe6f0;
-  --v2-line-strong: #c5d0e0;
-  --v2-forest: #101f3b;
-  --v2-forest-2: #1c3860;
-  --v2-lime: #b7d3ff;
+  --v2-surface-muted: #e9f0e8;
+  --v2-line: #dce6db;
+  --v2-line-strong: #bdcebf;
+  --v2-forest: #062d21;
+  --v2-forest-2: #0a4a35;
+  --v2-lime: #d9ff66;
   --v2-emerald: #08794e;
   --v2-emerald-soft: #e0f5ec;
-  --v2-cyan: #1764c0;
+  --v2-cyan: #0f7890;
   --v2-amber: #996008;
   --v2-coral: #bb3549;
   --v2-shadow-sm: 0 2px 8px #15294b06;
@@ -2400,38 +2400,38 @@ body > .x97-fab.x97-fab-viewport,
   --v2-radius-lg: 20px;
   --v2-radius-xl: 24px;
   --fdisp: var(--fu);
-  --card3: #dfe7f2;
-  --accent: #245de0;
-  --accent-soft: #e8efff;
+  --card3: #dce7dc;
+  --accent: #0d8053;
+  --accent-soft: #e0f1e6;
   --v4-nav-height: 72px;
   --v4-nav-gap: 0px;
   --v4-mobile-reserve: calc(110px + env(safe-area-inset-bottom));
 }
 html[data-v2-theme="dark"] {
-  --v2-ink: #edf3ff;
-  --v2-ink-soft: #b9c7dc;
-  --v2-ink-faint: #94a7c3;
-  --v2-paper: #0b1220;
-  --v2-paper-2: #101b2d;
-  --v2-surface: #142137;
-  --v2-surface-solid: #142137;
-  --v2-surface-muted: #1b2b45;
-  --v2-line: #283954;
-  --v2-line-strong: #3b5272;
-  --v2-forest: #101f3b;
-  --v2-forest-2: #1c3860;
-  --v2-lime: #b7d3ff;
+  --v2-ink: #edf7f0;
+  --v2-ink-soft: #b7cabe;
+  --v2-ink-faint: #95ac9d;
+  --v2-paper: #081710;
+  --v2-paper-2: #0c2017;
+  --v2-surface: #10281c;
+  --v2-surface-solid: #10281c;
+  --v2-surface-muted: #193425;
+  --v2-line: #2a4433;
+  --v2-line-strong: #3f614a;
+  --v2-forest: #062d21;
+  --v2-forest-2: #0a4a35;
+  --v2-lime: #d9ff66;
   --v2-emerald: #66dfa9;
-  --v2-cyan: #8cbcff;
+  --v2-cyan: #85d4cb;
   --v2-amber: #f4c46b;
   --v2-coral: #ff9cab;
-  --card3: #253955;
-  --accent: #94b9ff;
-  --accent-soft: #223a60;
+  --card3: #254532;
+  --accent: #76dda6;
+  --accent-soft: #193e2a;
   --posdim: #183c30;
   --negdim: #412733;
   --warndim: #3b3224;
-  --usddim: #233a5a;
+  --usddim: #173f38;
 }
 html { scroll-behavior: auto; scroll-padding-bottom: 110px; }
 body, html[data-v2-theme="dark"] body, .app { background: var(--bg) !important; }
@@ -2448,14 +2448,14 @@ body.x97-v2-mode .wrap { padding-bottom: 0; }
 .x97-page, .x97-page > *, .x97-card, .v3-screen, .v3-screen > * { animation: none !important; }
 .x97-card, .card { background: var(--card) !important; border-color: var(--line) !important; box-shadow: var(--v2-shadow-sm) !important; border-radius: 18px !important; }
 .x97-hero-command.x97-card, .ic-hero {
-  background: #101f3b !important; border: 1px solid #263a59 !important;
+  background: #062d21 !important; border: 1px solid #1e543a !important;
   border-radius: 22px !important; box-shadow: none !important; color: #fff;
 }
 .x97-hero-command.x97-card { padding: 26px !important; }
 .x97-hero-command::before, .x97-hero-command::after { display: none !important; }
-.x97-hero-label, .x97-hero-live { color: #b7d3ff !important; font-size: 12px !important; }
+.x97-hero-label, .x97-hero-live { color: #d9ff66 !important; font-size: 12px !important; }
 .x97-hero-value { font-size: clamp(28px, 6vw, 52px) !important; letter-spacing: -.04em !important; overflow-wrap: anywhere; }
-.x97-hero-caption, .x97-hero-command .x97-stat span { color: #bed0e8 !important; font-size: 14px !important; }
+.x97-hero-caption, .x97-hero-command .x97-stat span { color: #bcd4c2 !important; font-size: 14px !important; }
 .x97-summary .k, .x97-section-title { font-size: 14px !important; }
 .x97-summary .s, .x97-row-sub { font-size: 13px !important; }
 .x97-summary .v { font-size: clamp(19px, 4.5vw, 28px) !important; overflow-wrap: anywhere; }
@@ -2465,7 +2465,7 @@ body.x97-v2-mode .wrap { padding-bottom: 0; }
 .x97-icon-btn, .x97-close { min-width: 44px !important; }
 .x97-btn.primary, .x97-add-primary, .x97-command-action.primary { background: var(--accent) !important; border-color: transparent !important; color: #fff !important; }
 html[data-v2-theme="dark"] .x97-btn.primary, html[data-v2-theme="dark"] .x97-add-primary,
-html[data-v2-theme="dark"] .x97-command-action.primary { color: #0b1c35 !important; }
+html[data-v2-theme="dark"] .x97-command-action.primary { color: #092417 !important; }
 .x97-input, .inp, .x97-select, .x97-textarea, .ic-search input { font-size: 16px !important; min-width: 0; }
 .x97-field > label, .ic-filter-section label { font-size: 14px !important; text-transform: none; letter-spacing: 0; }
 .x97-sheet-body { padding-bottom: 24px !important; }
@@ -2492,21 +2492,21 @@ html[data-v2-theme="dark"] .x97-command-action.primary { color: #0b1c35 !importa
 .ic-shell .x97-cloud { padding: 7px 10px !important; font-size: 12px !important; }
 .ic-shell .x97-add-primary { height: 44px !important; min-height: 44px !important; border-radius: 12px !important; }
 .ic-hero { display: block; padding: 24px !important; overflow: visible; transition: none; }
-.ic-hero-label { color: #b7d3ff; font-family: var(--fu); font-size: 13px; letter-spacing: .04em; text-transform: none; }
+.ic-hero-label { color: #d9ff66; font-family: var(--fu); font-size: 13px; letter-spacing: .04em; text-transform: none; }
 .ic-hero-value { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; font-size: clamp(28px, 5vw, 40px) !important; margin-top: 8px; line-height: 1.25; text-shadow: none; transition: none; }
 .ic-hero-value-main { overflow-wrap: anywhere; min-width: 0; }
-.ic-hero-usd { color: #b7d3ff; font-size: 18px; }
-.ic-hero-headline { display: block; color: #c6d4e8; font-size: 14px; }
+.ic-hero-usd { color: #d9ff66; font-size: 18px; }
+.ic-hero-headline { display: block; color: #c4d8ca; font-size: 14px; }
 .ic-hero-chips, .ic-month-row { flex-wrap: wrap; overflow: visible; max-height: none; mask-image: none; -webkit-mask-image: none; gap: 8px; }
 .ic-hero-chips { margin-top: 20px; }
-.ic-quick { height: auto; min-height: 44px; padding: 10px 13px; border-radius: 10px; font-size: 14px; backdrop-filter: none; color: #e0e9f8; }
-.ic-quick b { color: #b9cbe5; }
-.ic-quick.on, .ic-quick.on b { color: #101f3b; }
+.ic-quick { height: auto; min-height: 44px; padding: 10px 13px; border-radius: 10px; font-size: 14px; backdrop-filter: none; color: #e0eee3; }
+.ic-quick b { color: #bad1bf; }
+.ic-quick.on, .ic-quick.on b { color: #062d21; }
 .ic-month-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid #ffffff26; }
-.ic-month-chip { min-height: 44px; height: auto; padding: 9px 12px; font-size: 14px; color: #c6d4e8; border-radius: 9px; }
-.ic-month-chip b { color: #adbfda; }
-.ic-month-chip.on { color: #fff; border-color: #7fabf5; background: #26466f; }
-.ic-month-chip.on b { color: #d2e3ff; }
+.ic-month-chip { min-height: 44px; height: auto; padding: 9px 12px; font-size: 14px; color: #c4d8ca; border-radius: 9px; }
+.ic-month-chip b { color: #acc6b3; }
+.ic-month-chip.on { color: #fff; border-color: #97c7a6; background: #245738; }
+.ic-month-chip.on b { color: #d6ecd9; }
 #ic-controls { margin: 18px 0 12px; }
 .ic-toolbar { padding: 0; gap: 8px; border: 0; transition: none; }
 .ic-search { height: 48px; background: var(--card); border-color: var(--line-strong, var(--line2)); border-radius: 12px; }
@@ -2633,4 +2633,132 @@ html[data-v2-theme="dark"] .x97-command-action.primary { color: #0b1c35 !importa
   .x97-title { overflow-wrap: anywhere; }
   .v2-tool { width: 44px; height: 44px; }
   .ic-shell .x97-eyebrow { max-width: 12ch; line-height: 1.5; }
+}
+
+/* 97 signature: an editorial heading, quiet interface text, stable figures.
+   Existing local font files keep the typography available offline. */
+:root {
+  --fdisp: "Fraunces", Georgia, serif;
+  --fnum: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --fmeta: "Geist Mono", Consolas, monospace;
+}
+.x97-title, .ic-shell .x97-title {
+  font-family: var(--fdisp) !important; font-weight: 500 !important;
+  font-size: clamp(1.85rem, 3.5vw, 2.75rem) !important;
+  letter-spacing: -.035em !important; line-height: 1.12 !important;
+}
+.x97-money, .tabnum { font-variant-numeric: tabular-nums lining-nums; font-weight: 550 !important; letter-spacing: -.035em !important; }
+.ic-num { font-family: var(--fmeta) !important; font-weight: 500 !important; letter-spacing: -.025em !important; }
+.x97-section-title { font-family: var(--fu) !important; font-size: 1rem !important; font-weight: 650 !important; letter-spacing: -.02em !important; }
+.x97-section-head { margin-bottom: 12px !important; align-items: center; }
+.x97-link { min-height: 44px; font-size: 14px !important; }
+
+/* A real brand lockup, separate from the page title and display controls. */
+.x97-top, .ic-shell .x97-top {
+  display: grid !important; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center !important; gap: 18px 12px !important; padding: 0 0 24px;
+}
+.x97-brand-lockup { display: flex; align-items: center; gap: 10px; grid-column: 1; grid-row: 1; }
+.x97-brand-mark { width: 58px; height: 54px; display: grid; place-items: center; background: #062d21; border: 1px solid #295c42; border-radius: 13px; flex: 0 0 auto; }
+.x97-brand-mark img { display: block; width: 48px; height: 42px; object-fit: contain; }
+.x97-brand-word { font: 650 15px/1.15 var(--fu); letter-spacing: .13em; color: var(--tx); }
+.x97-brand-word small { display: block; font: 500 10px/1 var(--fu); letter-spacing: .16em; margin-top: 6px; color: var(--tx3); }
+.x97-top .x97-top-copy { grid-row: 2; grid-column: 1 / -1; max-width: none; }
+.x97-top .x97-top-actions { grid-row: 1; grid-column: 2; max-width: none; gap: 6px; flex-wrap: wrap; }
+.x97-top .x97-title { margin: 0 !important; }
+.x97-cloud { background: transparent !important; border-color: transparent !important; }
+.ic-hero-value { font-size: clamp(1.8rem, 7vw, 2.7rem) !important; }
+.ic-hero-value-main { font-weight: 550; }
+.ic-hero-headline { font-size: 13px; }
+.ic-quick.on { background: #d9ff66; color: #062d21; }
+.ic-quick.on b { color: #062d21; }
+
+/* Dashboard: cash and accounts form the first desktop row. On a phone,
+   the source order is cash, actions, summary, accounts and decisions. */
+#x97-v2-root[data-screen="dashboard"] .x97-dashboard-main {
+  display: grid !important; grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
+  gap: 20px !important; align-items: start;
+}
+#x97-v2-root[data-screen="dashboard"] .x97-dashboard-main > section { grid-column: span 6; margin: 0 !important; min-width: 0; }
+#x97-v2-root[data-screen="dashboard"] .x97-dashboard-main > .x97-dashboard-wide { grid-column: 1 / -1; }
+#x97-v2-root[data-screen="dashboard"] .x97-dashboard-main > .x97-hero-command { grid-column: 1 / 8; grid-row: 1; }
+#x97-v2-root[data-screen="dashboard"] .x97-dashboard-main > .x97-dashboard-accounts { grid-column: 8 / -1; grid-row: 1; }
+.x97-hero-command.x97-card { background: #062d21 !important; border-color: #24583d !important; padding: 28px !important; border-radius: 22px !important; }
+.x97-hero-command .x97-hero-topline { align-items: center; gap: 12px; }
+.x97-hero-command .x97-hero-label { font-size: 14px !important; color: #e4f0e5 !important; font-weight: 550; text-transform: none; letter-spacing: .015em; }
+.x97-hero-command .x97-hero-live { font-size: 12px !important; color: #d9ff66 !important; }
+.x97-hero-command .x97-hero-live::before { display: none; }
+.x97-hero-command .x97-hero-value { font-size: clamp(2rem, 4.6vw, 3.7rem) !important; font-weight: 500 !important; line-height: 1.12; margin: 20px 0 10px; text-shadow: none !important; }
+.x97-hero-command .x97-hero-caption { font-size: 13px !important; line-height: 1.5; max-width: 36ch; }
+.x97-hero-command .x97-hero-meta { margin-top: 24px !important; padding-top: 18px; border-top: 1px solid #ffffff26; gap: 20px !important; }
+.x97-hero-command .x97-stat { padding: 0 !important; border: 0 !important; background: transparent !important; border-radius: 0 !important; box-shadow: none !important; }
+.x97-hero-command .x97-stat span { font-size: 12px !important; }
+.x97-hero-command .x97-stat b { font-family: var(--fnum) !important; font-size: 20px !important; font-weight: 550; margin-top: 6px; overflow-wrap: anywhere; }
+.x97-command-actions { gap: 10px !important; }
+.x97-command-action { padding: 16px !important; border: 1px solid var(--line) !important; background: var(--card); border-radius: 16px !important; min-height: 78px !important; box-shadow: none !important; }
+.x97-command-action .x97-command-icon { width: 40px; height: 40px; border-radius: 12px; color: var(--pos); background: var(--posdim); }
+.x97-command-action.primary .x97-command-icon { color: inherit; background: #ffffff24; }
+.x97-command-action.primary small { color: inherit !important; opacity: .86; }
+.x97-finance-pulse .x97-summary { min-height: 114px !important; padding: 18px !important; border-radius: 16px !important; }
+.x97-finance-pulse .k { font-size: 13px !important; font-weight: 500; }
+.x97-finance-pulse .v { margin-top: 10px !important; font-size: clamp(1.4rem, 2.8vw, 1.8rem) !important; font-weight: 600 !important; }
+.x97-finance-pulse .s { font-size: 12px !important; margin-top: 6px; }
+.x97-dashboard-accounts .x97-account-rail { display: flex !important; flex-direction: column; gap: 0 !important; padding: 4px 16px !important; overflow: visible !important; scroll-snap-type: none !important; }
+.x97-dashboard-accounts .x97-account-rail > .x97-row { display: flex !important; flex: 0 1 auto !important; width: 100% !important; min-width: 0 !important; padding: 16px 0 !important; border-radius: 0 !important; border: 0 !important; border-bottom: 1px solid var(--line) !important; box-shadow: none !important; min-height: 76px; }
+.x97-dashboard-accounts .x97-account-rail > .x97-row:last-child { border-bottom: 0 !important; }
+.x97-dashboard-accounts .x97-row::before { display: none !important; }
+.x97-dashboard-accounts .x97-row-value { font-size: 17px !important; white-space: normal !important; overflow-wrap: anywhere; flex: 0 1 45%; }
+.x97-dashboard-accounts .x97-row-title { font-size: 14px !important; }
+.x97-dashboard-accounts .x97-row-sub { font-size: 12px !important; }
+.x97-tl-title { white-space: normal !important; font-size: 14px !important; }
+.x97-tl-amt { font-size: 15px !important; overflow-wrap: anywhere; }
+.x97-tl-row { padding-block: 14px !important; }
+
+@media (max-width: 759px) {
+  #x97-v2-root, #x97-v2-root[data-screen="upcoming"] { padding-top: max(16px, env(safe-area-inset-top)) !important; }
+  .x97-top, .ic-shell .x97-top { gap: 16px 8px !important; padding-bottom: 20px; }
+  .x97-brand-mark { width: 48px; height: 46px; border-radius: 11px; }
+  .x97-brand-mark img { width: 40px; height: 35px; }
+  .x97-brand-word { font-size: 13px; }
+  .x97-brand-word small { font-size: 10px; }
+  .x97-top .x97-top-actions { max-width: 158px; }
+  .x97-title, .ic-shell .x97-title { font-size: 2rem !important; }
+  #x97-v2-root[data-screen="dashboard"] .x97-dashboard-main { grid-template-columns: minmax(0, 1fr) !important; gap: 20px !important; }
+  #x97-v2-root[data-screen="dashboard"] .x97-dashboard-main > section { grid-column: 1 / -1 !important; grid-row: auto !important; }
+  .x97-hero-command.x97-card { padding: 22px 20px !important; border-radius: 20px !important; }
+  .x97-hero-command .x97-hero-value { font-size: clamp(1.85rem, 8vw, 2.7rem) !important; margin-top: 16px; }
+  .x97-hero-command .x97-hero-meta { margin-top: 18px !important; padding-top: 14px; gap: 12px !important; }
+  .x97-hero-command .x97-stat b { font-size: clamp(1rem, 4.6vw, 1.25rem) !important; }
+  .x97-command-actions { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 8px !important; }
+  .x97-command-action { display: flex !important; flex-direction: column; justify-content: flex-start; align-items: center; text-align: center; gap: 8px; padding: 12px 6px !important; min-height: 98px !important; }
+  .x97-command-action > svg, .x97-command-action small { display: none; }
+  .x97-command-action b { font-size: 13px !important; line-height: 1.25; white-space: normal; }
+  .x97-command-action .x97-command-icon { width: 34px; height: 34px; border-radius: 10px; }
+  .x97-finance-pulse { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
+  .x97-finance-pulse .x97-summary { min-height: 108px !important; padding: 14px 12px !important; border-radius: 15px !important; }
+  .x97-finance-pulse .k { font-size: 13px !important; line-height: 1.4; }
+  .x97-finance-pulse .v { font-size: clamp(1.2rem, 5.2vw, 1.5rem) !important; margin-top: 8px !important; }
+  .x97-finance-pulse .s { line-height: 1.4; }
+  .x97-dashboard-accounts .x97-account-rail > .x97-row { min-height: 70px; padding: 13px 0 !important; gap: 10px !important; }
+  .x97-month-card { padding: 16px !important; min-height: 130px !important; }
+  .ic-row { padding: 12px; gap: 6px 8px; min-height: 116px; margin-bottom: 8px; border-radius: 14px; }
+  .ic-c-client { gap: 2px; }
+  .ic-c-client b { font-size: 15px; }
+  .ic-c-balance { font-size: 14px; }
+  .ic-c-balance::before { margin-bottom: 3px; }
+  .ic-c-structure { font-size: 12px; }
+  .ic-c-due small { font-size: 12px; }
+  .ic-row-part { min-height: 76px; padding: 11px 12px; margin-left: 12px; }
+  .ic-hero { padding: 18px 16px !important; border-radius: 18px !important; }
+  .ic-hero-chips { margin-top: 14px; gap: 6px; }
+  .ic-month-row { margin-top: 10px; padding-top: 8px; }
+}
+/* Match the same logo treatment on the original Expenses and Settings pages. */
+.v3-appbar-inner { flex-wrap: wrap; }
+.v3-appbar-inner > div:first-child { min-width: 0; flex: 1 1 140px; }
+.v3-appbar-inner div:has(> img[src="./icons/mark-97.png"]) { width: 48px !important; height: 46px !important; flex-shrink: 0; background: #062d21 !important; border: 1px solid #295c42; border-radius: 11px !important; }
+.v3-appbar-inner img[src="./icons/mark-97.png"] { width: 40px !important; height: 35px !important; }
+.v3-appbar-inner .disp { font-family: var(--fdisp) !important; font-size: 23px !important; font-weight: 500 !important; }
+@media (max-width: 759px) {
+  #x97-v2-root[data-screen="dashboard"] .x97-top-actions { max-width: 174px; }
 }
