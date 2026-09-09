@@ -29,12 +29,28 @@
     return classic && classic.dataset.v3Page ? classic.dataset.v3Page : "home";
   }
 
+  /* Already on screen? Reveal synchronously rather than hiding it and
+     waiting for the observer's async first callback. That callback has to
+     survive until the next frame, and experience-v2.js re-renders whole
+     screens by replacing innerHTML — so an element decorated just before a
+     re-render is destroyed with its reveal still pending, and the fresh
+     copy that replaces it can lose the same race again. Anything above the
+     fold is visible immediately; only content the user has yet to reach is
+     handed to the observer, which is the only place the scroll choreography
+     was ever meant to apply. */
+  function onScreen(element) {
+    var rect = element.getBoundingClientRect();
+    if (!rect.width && !rect.height) return false;
+    var viewport = window.innerHeight || document.documentElement.clientHeight;
+    return rect.top < viewport && rect.bottom > 0;
+  }
+
   function motion(element, variant, order) {
     if (!element || seen.has(element)) return;
     seen.add(element);
     element.dataset.s97Motion = variant;
     element.style.setProperty("--s97-order", String(order || 0));
-    if (reduced || !observer) element.classList.add("is-inview");
+    if (reduced || !observer || onScreen(element)) element.classList.add("is-inview");
     else observer.observe(element);
   }
 

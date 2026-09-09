@@ -874,7 +874,24 @@ body.x97-v2-mode .navin { max-width: none !important; }
     clip-path .76s var(--apx-ease) var(--s97-delay) !important;
   will-change: opacity, transform;
 }
-.s97-motion-ready [data-s97-motion]:not(.is-inview) { opacity: 0; }
+/* Failsafe: the pre-reveal state must never be able to outlive a short
+   window. is-inview arrives from an IntersectionObserver, and an observer
+   can lose its race with a re-render (experience-v2.js replaces whole
+   screens via innerHTML), leaving elements observed-but-detached and their
+   replacements hidden for good. That shipped as real invisible content on
+   the dashboard: the page title, the theme/privacy deck and the third
+   quick action sat at opacity 0 inside the viewport, permanently. The
+   animation below force-reveals anything still hidden after 4s, so a
+   dropped signal costs a late reveal instead of content nobody can see.
+   Once is-inview lands this selector stops matching and the failsafe is
+   discarded, so it never fights the real reveal. */
+.s97-motion-ready [data-s97-motion]:not(.is-inview) {
+  opacity: 0;
+  animation: s97-motion-failsafe .001s linear 4s forwards !important;
+}
+@keyframes s97-motion-failsafe {
+  to { opacity: 1; transform: none; filter: none; clip-path: none; }
+}
 .s97-motion-ready [data-s97-motion="rise"]:not(.is-inview),
 .s97-motion-ready [data-s97-motion="cascade"]:not(.is-inview) { transform: translate3d(0, 28px, 0); }
 .s97-motion-ready [data-s97-motion="left"]:not(.is-inview) { transform: translate3d(-34px, 0, 0); }
@@ -893,6 +910,33 @@ body.x97-v2-mode .navin { max-width: none !important; }
 .s97-motion-ready [data-s97-motion="metric"]:not(.is-inview) { transform: translate3d(0, 20px, 0) scale(.98); filter: saturate(.6); }
 .s97-motion-ready [data-s97-motion="spotlight"]:not(.is-inview) { filter: brightness(.86) saturate(.6); transform: scale(.97); }
 .s97-motion-ready [data-s97-motion].is-inview { opacity: 1; transform: none; filter: none; clip-path: inset(0 0 0 0 round 0); will-change: auto; }
+
+/* A press has to answer instantly. The reveal transition above runs
+   transform for .72s with up to .34s of stagger delay and carries
+   !important, so it also governs the press-scale on anything that is both
+   a motion target and a control — a quick action card took nearly a second
+   to acknowledge a tap. Collapsing the duration for the pressed state only
+   keeps the reveal choreography untouched while making touch feel direct. */
+.s97-motion-ready [data-s97-motion].is-inview:active {
+  transition-duration: .1s !important;
+  transition-delay: 0s !important;
+}
+
+/* Touch targets: WCAG 2.5.5 and the iOS HIG both want 44px. Section links
+   ("View Incoming", "Add account", "Open Credit") sat at 34px, and the
+   carousel dots at 6px were effectively unhittable. The dots keep their
+   6px look — the padding grows the hit area, background-clip keeps the
+   paint on the content box. */
+@media (pointer: coarse) {
+  .x97-link { min-height: 44px !important; }
+  /* box-sizing is border-box here, so the padding sets the hit area
+     outright: 22px top and bottom lands the target at exactly 44px. */
+  .v2-slider-dot {
+    padding: 22px 10px !important;
+    background-clip: content-box !important;
+    background-origin: content-box;
+  }
+}
 
 .s97-page-enter { animation: apx-page-open .58s var(--apx-ease) both !important; }
 .is-inview[data-s97-motion="brand"] { animation: apx-brand-spring .72s var(--apx-ease) both !important; }
