@@ -994,3 +994,173 @@ body.x97-v2-mode .navin { max-width: none !important; }
 #ldr .ldr-word { color: var(--apx-lime) !important; }
 #ldr .ldr-bar i { background: linear-gradient(90deg,var(--apx-lime),var(--apx-mint)) !important; animation: apx-meter-fill .7s var(--apx-ease) both !important; }
 
+
+/* ══════════════════════════════════════════════════════════════════════════
+   POLISH — chrome recedes, money leads.
+
+   The layers above grew the interface's furniture faster than its data:
+   section headers, action pills and filter boxes ended up louder than the
+   amounts they frame. A finance product should read the other way round —
+   the figures carry the page and everything else is quiet scaffolding that
+   stays out of their way. These rules restore that order. Nothing here
+   changes what is on screen, only how much of your attention it takes.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Section actions read as links, not buttons. A filled mint pill next to a
+   heading competes with the card beneath it for the eye; "View Incoming"
+   is a way out of the section, never the point of it. The 44px touch
+   target is kept as padding, so the target stays honest while the paint
+   recedes to the word itself. */
+.x97-link {
+  padding: 8px 2px 8px 10px !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: -.005em;
+  opacity: .82;
+}
+.x97-link svg { opacity: .75; transition: transform .22s var(--apx-ease); }
+@media (hover: hover) {
+  .x97-link:hover { background: var(--posdim) !important; opacity: 1; }
+  .x97-link:hover svg { transform: translateX(2px); }
+}
+.x97-link:active { background: var(--posdim) !important; opacity: 1; }
+
+/* The heading and its rule share one baseline. A hairline that runs from
+   the end of the label to the action ties the pair together and gives the
+   eye a line to travel, instead of two objects floating apart. */
+.x97-section-head { gap: 12px !important; }
+.x97-section-head::after {
+  content: "";
+  order: 1;
+  flex: 1 1 auto;
+  height: 1px;
+  min-width: 12px;
+  background: linear-gradient(90deg, var(--line), transparent);
+}
+.x97-section-head > .x97-link,
+.x97-section-head > button:last-child { order: 2; flex: 0 0 auto; }
+.x97-section-head > *:first-child { flex: 0 1 auto; }
+/* Headers carrying a subtitle stack instead, so the rule never cuts
+   between a title and the line explaining it. */
+.x97-section-head:has(.x97-row-sub)::after { display: none; }
+
+/* Money never touches an edge. Right-aligned values sat flush against the
+   card wall, which reads as clipped rather than aligned. */
+.x97-row-value, .ic-c-balance, .x97-item-amount { padding-right: 2px; }
+
+/* Vertical rhythm: the page was spending more height on the gaps between
+   sections than on several of the sections themselves. */
+@media (max-width: 759px) {
+  .x97-dashboard-main { gap: 20px !important; }
+  .x97-section-head { min-height: 36px !important; margin-bottom: 9px !important; }
+  .x97-pad { padding: 15px !important; }
+}
+
+/* The top row is one row. Brand, controls and the primary action sat on
+   three different baselines at phone width because the actions wrap — the
+   sync pill would drop underneath the add button and orphan itself. The
+   brand block gives up the width instead, since it is the one element
+   whose meaning survives being smaller. */
+@media (max-width: 480px) {
+  .x97-top .x97-top-actions { flex-wrap: nowrap !important; gap: 5px !important; }
+  .x97-brand-lockup {
+    min-width: 0;
+    min-height: 52px !important;
+    padding: 5px 12px 5px 6px !important;
+    gap: 8px !important;
+    border-radius: 15px;
+  }
+  .x97-brand-lockup > .x97-brand-mark,
+  .x97-brand-lockup > .x97-brand-mark img { width: 46px !important; height: 39px !important; }
+  .x97-brand-word { font-size: 12.5px !important; letter-spacing: .13em !important; }
+  .x97-brand-word small { font-size: 7.5px !important; }
+  .v2-control-deck { padding: 3px; border-radius: 12px; }
+  .v2-tool { width: 36px; height: 36px; min-width: 36px; border-radius: 9px; }
+  .x97-cloud { min-height: 36px !important; padding: 0 9px !important; }
+}
+
+/* Incoming's filters are chips again. Six full-width boxes in a grid read
+   as a settings form — they took a third of the first screen before a
+   single deal appeared. Chips wrap to as few lines as the words need and
+   put the ledger back above the fold. */
+@media (max-width: 759px) {
+  .ic-hero-chips {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+  .ic-quick {
+    flex: 0 0 auto;
+    min-height: 38px !important;
+    padding: 0 12px !important;
+    border-radius: 999px !important;
+    justify-content: flex-start !important;
+    gap: 6px;
+    white-space: nowrap !important;
+    font-size: 12.5px !important;
+    line-height: 1 !important;
+  }
+  .ic-quick b { font-weight: 700; opacity: .62; }
+  .ic-month-chip { min-height: 34px !important; padding: 0 11px !important; border-radius: 999px !important; }
+  .ic-filter-deck { padding: 11px !important; }
+  .ic-month-row { margin-top: 10px !important; padding-top: 10px !important; }
+}
+
+/* A horizontal rail should say it continues. The month row clipped its
+   last chip mid-word with no signal there was more; a mask fades the cut
+   edge so it reads as scrollable rather than broken. */
+.ic-month-row {
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%);
+}
+
+/* Cards earn their weight by role. Everything carrying the same border,
+   radius and shadow flattens the hierarchy — the summary tiles should sit
+   a step behind the surfaces that hold real records. */
+.x97-summary { box-shadow: var(--apx-shadow-1) !important; }
+
+/* Incoming's hero was holding a 212px floor on phones while its content
+   needed about 150px, so a third of the card was empty green, and the
+   oversized "IN" watermark was being clipped mid-glyph against that void
+   — it read as a rendering fault rather than a mark. Let the card fit its
+   content and let the mark sit fully inside it. */
+@media (max-width: 759px) {
+  .ic-hero { min-height: 0 !important; padding: 18px 18px 20px !important; }
+  .ic-hero::after { right: 10px; bottom: -18px; font-size: 84px; opacity: .55; }
+  .ic-hero-top { grid-template-columns: minmax(0, 1fr) !important; gap: 14px !important; align-items: start !important; }
+  .ic-hero-value { margin-top: 10px !important; }
+  .ic-hero-headline { justify-self: start; padding: 9px 13px !important; font-size: 13px !important; }
+}
+
+/* The toolbar's filter control stretched a full 1fr column to hold one
+   16px icon, and search sat alone on its own row — two rows of chrome for
+   three controls. Search takes the width it needs and the icon buttons sit
+   beside it on the same line, which is a row of height back for the
+   ledger. (The bulk-select button is deliberately display:none on phones,
+   so the row is search + filter + more.) */
+@media (max-width: 759px) {
+  .ic-toolbar {
+    display: flex !important;
+    align-items: center;
+    gap: 7px !important;
+  }
+  .ic-search { flex: 1 1 auto; min-width: 0; height: 44px !important; }
+  .ic-tbtn { flex: 0 0 auto; width: 44px !important; height: 44px !important; }
+}
+
+/* The messaging card carried a 160px floor and a 140px decorative disc
+   parked half-outside its bottom-right corner, so on a phone the title
+   broke across two lines around a chevron while a clipped mint arc filled
+   the space underneath. The card fits its content, the disc shrinks back
+   behind the text where a flourish belongs, and the title stays on one
+   line at phone width. */
+@media (max-width: 759px) {
+  .x97-msg-card { min-height: 0 !important; padding: 15px !important; gap: 13px; align-items: center; }
+  .x97-msg-card::after { width: 96px; height: 96px; right: -44px; bottom: -50px; opacity: .55; }
+  .x97-msg-icon { width: 42px !important; height: 42px !important; border-radius: 13px !important; flex: 0 0 auto; }
+  .x97-msg-title { font-size: 14px !important; line-height: 1.3 !important; }
+  .x97-msg-sub { font-size: 12px !important; }
+}

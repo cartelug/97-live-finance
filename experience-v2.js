@@ -2067,7 +2067,12 @@
       .x97-stat{backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.1)!important}
       .x97-summary{border-radius:18px!important;min-height:118px!important;background:linear-gradient(145deg,color-mix(in srgb,var(--card) 92%,var(--posdim)),var(--bg2))!important}
       .x97-summary .v{font-size:clamp(22px,2.3vw,30px)!important;letter-spacing:-.055em!important}
-      .x97-section-title{letter-spacing:.18em!important}
+      /* No tracking override here: .18em was set back when section titles
+         were uppercase micro-labels. They are sentence case now, and this
+         block is injected after the linked stylesheets, so an !important
+         here outranked every later design layer — every heading in the app
+         rendered sentence case with uppercase spacing. Tracking belongs to
+         whichever layer owns the current type scale (apex.css). */
       .x97-section-title::before{border-radius:999px;box-shadow:0 0 0 4px var(--posdim)}
       .x97-command-action{border-radius:16px!important;min-height:72px;border-color:var(--line)!important;background:color-mix(in srgb,var(--card) 86%,var(--posdim))!important}
       .x97-command-action.primary{background:linear-gradient(135deg,var(--pos),var(--pos2))!important;box-shadow:0 14px 28px -18px var(--pos2)!important}

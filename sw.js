@@ -2,14 +2,14 @@
    Network-first for the app shell so new versions actually reach every device;
    stale-while-revalidate for static assets; cache is the offline fallback only.
    Cross-origin requests (Supabase and live rates) are never intercepted. */
-const CACHE = "ns97-live-v12-apex";
+const CACHE = "ns97-live-v13-apex";
 const ASSETS = [
   "./",
   "./index.html",
-  "./experience-v2.js?v=17",
+  "./experience-v2.js?v=18",
   "./v2-premium.css?v=7",
   "./signature.css?v=2",
-  "./apex.css?v=2",
+  "./apex.css?v=3",
   "./v2-premium.js?v=6",
   "./apex-motion.js?v=2",
   "./fonts/geist-sans.woff2",
