@@ -2393,18 +2393,81 @@
     return { cash: cash, loans: loans, activeLoans: activeLoans, debt: debt, open: open, events: events, overdue: overdue, next7: next7, ugxMonth: ugxMonth, usdMonth: usdMonth, creditAvailable: creditAvailable, expenses: expenseStats(doc) };
   }
 
+  // What a row of scheduled events is worth, per currency.
+  function attentionAmount(events) {
+    var ugx = 0, usd = 0;
+    (events || []).forEach(function (event) {
+      if (String(event.currency || "UGX").toUpperCase() === "USD") usd += num(event.amount);
+      else ugx += num(event.amount);
+    });
+    var parts = [];
+    if (ugx) parts.push(money(ugx, "UGX", true));
+    if (usd) parts.push(money(usd, "USD", true));
+    return parts.join(" + ");
+  }
+
+  // How far past due the worst one is — the number that decides which
+  // overdue pile you open first.
+  function attentionOldest(events) {
+    var worst = 0;
+    (events || []).forEach(function (event) {
+      var days = daysBetween(todayDate(), parseLocalDate(event.date));
+      if (days != null && days < 0) worst = Math.max(worst, -days);
+    });
+    return worst;
+  }
+
+  function attentionMeta() {
+    return Array.prototype.slice.call(arguments).filter(Boolean).join(" · ");
+  }
+
+  /* Each alert carries its count apart from its wording, so the count can be
+     typeset as the figure it is rather than buried mid-sentence, and a meta
+     line that says what is actually at stake. The second line used to read
+     "Open Incoming to follow up" on every row — an instruction the chevron
+     already gives, spending a whole line to say nothing. Money and dates go
+     there instead. */
   function dashboardAttention(doc, a) {
     var items = [];
-    if (a.overdue.length) items.push({ type: "bad", title: a.overdue.length + " overdue incoming payment" + (a.overdue.length === 1 ? "" : "s"), sub: "Open Incoming to follow up", nav: "upcoming" });
+    if (a.overdue.length) {
+      var oldest = attentionOldest(a.overdue);
+      items.push({
+        type: "bad", count: a.overdue.length, nav: "upcoming",
+        label: "overdue incoming payment" + (a.overdue.length === 1 ? "" : "s"),
+        meta: attentionMeta(attentionAmount(a.overdue), oldest ? "oldest " + oldest + " day" + (oldest === 1 ? "" : "s") : "")
+      });
+    }
     var overdueLoans = a.activeLoans.filter(function (l) { return daysBetween(todayDate(), parseLocalDate(dueDateForLoan(l))) < 0; });
-    if (overdueLoans.length) items.push({ type: "bad", title: overdueLoans.length + " overdue credit repayment" + (overdueLoans.length === 1 ? "" : "s"), sub: "Review active borrowing", nav: "credit" });
+    if (overdueLoans.length) items.push({
+      type: "bad", count: overdueLoans.length, nav: "credit",
+      label: "overdue credit repayment" + (overdueLoans.length === 1 ? "" : "s"),
+      meta: attentionMeta(money(a.debt, "UGX", true) + " due", "earliest " + nextLoanDue(overdueLoans))
+    });
     var soonLoans = a.activeLoans.filter(function (l) { var d = daysBetween(todayDate(), parseLocalDate(dueDateForLoan(l))); return d >= 0 && d <= 4; });
-    if (soonLoans.length) items.push({ type: "warn", title: soonLoans.length + " repayment" + (soonLoans.length === 1 ? "" : "s") + " due soon", sub: "Due within four days", nav: "credit" });
-    if (a.next7.length) items.push({ type: "warn", title: a.next7.length + " incoming payment" + (a.next7.length === 1 ? "" : "s") + " due in 7 days", sub: "Review dates and clients", nav: "upcoming" });
-    if (a.expenses.personalSafe < 0) items.push({ type: "bad", title: "Personal budget is overcommitted", sub: money(Math.abs(a.expenses.personalSafe), "UGX") + " above the safe amount", nav: "expenses" });
-    if (a.expenses.businessSafe < 0) items.push({ type: "bad", title: "Business budget is overcommitted", sub: money(Math.abs(a.expenses.businessSafe), "UGX") + " above the safe amount", nav: "expenses" });
-    var unscheduled = a.open.filter(function (x) { var next = nextScheduledPayment(doc, x); return !next || !next.dueDate; }).length;
-    if (unscheduled) items.push({ type: "warn", title: unscheduled + " incoming item" + (unscheduled === 1 ? " needs" : "s need") + " a date", sub: "Set an expected payment date", nav: "upcoming" });
+    if (soonLoans.length) items.push({
+      type: "warn", count: soonLoans.length, nav: "credit",
+      label: "repayment" + (soonLoans.length === 1 ? "" : "s") + " due soon",
+      meta: attentionMeta("within four days", "earliest " + nextLoanDue(soonLoans))
+    });
+    if (a.next7.length) items.push({
+      type: "warn", count: a.next7.length, nav: "upcoming",
+      label: "incoming payment" + (a.next7.length === 1 ? "" : "s") + " due in 7 days",
+      meta: attentionAmount(a.next7)
+    });
+    if (a.expenses.personalSafe < 0) items.push({
+      type: "bad", nav: "expenses", label: "Personal budget is overcommitted",
+      meta: money(Math.abs(a.expenses.personalSafe), "UGX", true) + " above the safe amount"
+    });
+    if (a.expenses.businessSafe < 0) items.push({
+      type: "bad", nav: "expenses", label: "Business budget is overcommitted",
+      meta: money(Math.abs(a.expenses.businessSafe), "UGX", true) + " above the safe amount"
+    });
+    var unscheduled = a.open.filter(function (x) { var next = nextScheduledPayment(doc, x); return !next || !next.dueDate; });
+    if (unscheduled.length) items.push({
+      type: "warn", count: unscheduled.length, nav: "upcoming",
+      label: "incoming item" + (unscheduled.length === 1 ? " needs" : "s need") + " a date",
+      meta: attentionMeta(attentionAmount(unscheduled.map(function (x) { return { amount: outstandingOf(x), currency: x.currency }; })), "not scheduled")
+    });
     return items.slice(0, 4);
   }
 
@@ -2457,9 +2520,18 @@
     }).map(function (b) {
       return '<button class="x97-row" style="width:100%;border-left:0;border-right:0;border-top:0;background:transparent;text-align:left" data-x97-action="edit-account" data-id="' + attr(b.id) + '">' + accountIconBox(b.account) + '<div class="x97-row-main"><div class="x97-row-title">' + esc(b.account || "Account") + '</div><div class="x97-row-sub">' + esc(b.line || b.notes || "Tap to update balance") + '</div></div><div class="x97-row-value">' + money(b.balance, "UGX") + '</div></button>';
     }).join("");
-    var attentionRows = attention.length ? attention.map(function (x) {
-      return '<button class="x97-row" style="width:100%;border-left:0;border-right:0;border-top:0;background:transparent;text-align:left" data-x97-nav="' + attr(x.nav) + '"><div class="x97-row-icon ' + esc(x.type) + '">' + icon("alert") + '</div><div class="x97-row-main"><div class="x97-row-title">' + esc(x.title) + '</div><div class="x97-row-sub">' + esc(x.sub) + '</div></div>' + icon("chevron") + '</button>';
-    }).join("") : '<div class="x97-empty">' + icon("check", 25) + '<strong>Nothing urgent</strong><p>Your upcoming money, credit and budgets have no critical alerts.</p></div>';
+    /* One severity signal, not two: the rail carries the tone, so the row
+       drops the tinted tile that repeated the same warning glyph on every
+       line and said nothing the colour had not already said. The count
+       leads as a figure; the wording follows it. */
+    var attentionRows = attention.length ? '<div class="x97-attention">' + attention.map(function (x) {
+      return '<button class="x97-att is-' + esc(x.type) + '" data-x97-nav="' + attr(x.nav) + '">' +
+        (x.count != null ? '<span class="x97-att-count x97-money">' + esc(x.count) + '</span>' : '<span class="x97-att-count is-empty" aria-hidden="true"></span>') +
+        '<span class="x97-att-body"><span class="x97-att-label">' + esc(x.label) + '</span>' +
+        (x.meta ? '<span class="x97-att-meta">' + esc(x.meta) + '</span>' : '') + '</span>' +
+        '<span class="x97-att-go">' + icon("chevron", 16) + '</span>' +
+      '</button>';
+    }).join("") + '</div>' : '<div class="x97-empty">' + icon("check", 25) + '<strong>Nothing urgent</strong><p>Your upcoming money, credit and budgets have no critical alerts.</p></div>';
     var timelineRows = events.length ? '<div class="x97-timeline">' + events.slice(0, 6).map(function (x) {
       var din = x.direction === "in";
       var usd = String(x.currency).toUpperCase() === "USD";

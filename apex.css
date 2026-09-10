@@ -1164,3 +1164,90 @@ body.x97-v2-mode .navin { max-width: none !important; }
   .x97-msg-title { font-size: 14px !important; line-height: 1.3 !important; }
   .x97-msg-sub { font-size: 12px !important; }
 }
+
+/* ── Needs attention ──────────────────────────────────────────────────────
+   A triage queue. Scanning it you want three things fast: how bad, how
+   much, and what. The old row spent its width on two severity signals
+   sitting side by side — a coloured rail and a tinted tile holding the
+   same warning triangle on every line — and its second line on "Open
+   Incoming to follow up", an instruction the chevron already gives. The
+   count, the one piece of data on the row, sat mid-sentence at body
+   weight.
+
+   So: one severity signal (the rail), the count leading as a figure in the
+   severity colour, and the second line carrying money and dates instead of
+   instructions. Removing the tile is what buys the room for all of it. */
+.x97-attention { display: flex; flex-direction: column; }
+.x97-att {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 0 12px;
+  width: 100%;
+  padding: 13px 2px 13px 15px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.x97-att + .x97-att { box-shadow: inset 0 1px 0 var(--line); }
+/* The rail is the row's own left edge, full height and flush — not a
+   floating bar with gaps above and below it. */
+.x97-att::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 99px;
+  background: currentColor;
+}
+.x97-att { position: relative; color: var(--tx3); }
+.x97-att.is-bad { color: var(--neg); }
+.x97-att.is-warn { color: var(--warn); }
+
+.x97-att-count {
+  color: currentColor;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -.04em;
+  font-variant-numeric: tabular-nums lining-nums;
+  /* Right-aligned in a fixed column so 2, 5 and 22 line up on their units
+     digit down the list, the way a column of figures should. */
+  text-align: right;
+}
+.x97-att-count.is-empty { display: none; }
+/* Alerts with no count (an overcommitted budget) give their wording the
+   full width rather than leaving a hole where a figure would be. */
+.x97-att:has(.x97-att-count.is-empty) { grid-template-columns: minmax(0, 1fr) 16px; }
+
+.x97-att-body { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.x97-att-label {
+  color: var(--tx);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -.01em;
+}
+.x97-att-meta {
+  color: var(--tx3);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.x97-att-go { color: var(--tx3); opacity: .5; display: flex; transition: transform .22s var(--apx-ease), opacity .22s ease; }
+@media (hover: hover) {
+  .x97-att:hover { background: color-mix(in srgb, currentColor 7%, transparent); }
+  .x97-att:hover .x97-att-go { opacity: .9; transform: translateX(2px); }
+}
+.x97-att:active { background: color-mix(in srgb, currentColor 11%, transparent); }
+.x97-att:focus-visible { outline-offset: -2px; }
+
+@media (max-width: 380px) {
+  .x97-att { gap: 0 11px; padding-left: 13px; }
+  .x97-att-count { font-size: 22px; }
+}
