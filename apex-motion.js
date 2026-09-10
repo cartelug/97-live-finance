@@ -9,6 +9,8 @@
   var frame = 0;
   var currentPage = "";
   var observer = null;
+  var pending = [];
+  var sweepTimer = 0;
 
   var variants = [
     "rise", "left", "right", "scale", "blur", "wipe", "fold", "drift",
@@ -45,13 +47,46 @@
     return rect.top < viewport && rect.bottom > 0;
   }
 
+  /* An element with no box at all is not "below the fold" — it is inside
+     something currently hidden, which is what the legacy screens look like
+     while the V2 layer is still swapping modes. Handing it straight to the
+     observer left it unrevealed long after it was on screen (the page title on
+     Expenses and Settings sat at opacity 0 until the 4s CSS failsafe fired).
+     Track those separately and re-check them until they gain a box. */
+  function boxless(element) {
+    var rect = element.getBoundingClientRect();
+    return !rect.width && !rect.height;
+  }
+
   function motion(element, variant, order) {
     if (!element || seen.has(element)) return;
     seen.add(element);
     element.dataset.s97Motion = variant;
     element.style.setProperty("--s97-order", String(order || 0));
-    if (reduced || !observer || onScreen(element)) element.classList.add("is-inview");
-    else observer.observe(element);
+    if (reduced || !observer || onScreen(element)) { element.classList.add("is-inview"); return; }
+    observer.observe(element);
+    if (boxless(element)) { pending.push(element); ensureSweep(); }
+  }
+
+  function sweepPending() {
+    if (!pending.length) return;
+    pending = pending.filter(function (element) {
+      if (!element.isConnected || element.classList.contains("is-inview")) return false;
+      if (boxless(element)) return true;                 // still hidden — keep waiting
+      if (onScreen(element)) {
+        element.classList.add("is-inview");
+        if (observer) observer.unobserve(element);
+      }
+      return false;                                      // has a box; the observer owns it now
+    });
+  }
+
+  function ensureSweep() {
+    if (sweepTimer || !pending.length) return;
+    sweepTimer = setInterval(function () {
+      sweepPending();
+      if (!pending.length) { clearInterval(sweepTimer); sweepTimer = 0; }
+    }, 120);
   }
 
   function classifyDashboard(scope) {
@@ -142,6 +177,7 @@
   function scan() {
     frame = 0;
     decorate(document.body);
+    sweepPending();
     document.documentElement.classList.add("s97-motion-ready");
   }
 

@@ -13,7 +13,21 @@
   var PREF_KEY = "ns97.v3.incoming.filters";
   var REFRESH_KEY = "ns97.v2.react-refresh";
   var RESUME_KEY = "ns97.v2.resume-tab";
+  /* Set just before the reload below, and read by the boot script in
+     index.html: this reload is a tab switch, not a cold start, so the splash
+     should stay out of the way. */
+  var QUIET_KEY = "ns97.v2.quiet-boot";
   var MANAGED = { dashboard: true, upcoming: true, credit: true };
+  /* Expenses and Settings are still drawn by the legacy bundle. We do not
+     re-render them, but they get the same header the managed screens use, so
+     the app reads as one product instead of two. See enterChromeMode. */
+  var CHROME = {
+    expenses: { kicker: "97 LIVE / Spending", title: "Expenses", sub: "Budgets and what you have spent this month." },
+    settings: { kicker: "97 LIVE / Workspace", title: "Settings", sub: "Currencies, categories and your cloud copy." }
+  };
+  var chromeScreen = null;
+  var legacyHeader = null;
+  var legacyHeaderDisplay = "";
   var root = null;
   var wrap = null;
   var hiddenChildren = [];
@@ -2154,6 +2168,8 @@
     if (/dashboard|home/.test(text)) return "dashboard";
     if (/follow|incoming|upcoming|receivable/.test(text)) return "upcoming";
     if (/credit|loan/.test(text)) return "credit";
+    if (/expense|spend/.test(text)) return "expenses";
+    if (/setting|config/.test(text)) return "settings";
     return null;
   }
 
@@ -2164,6 +2180,8 @@
       if (screenOrText === "dashboard") return /dashboard|home/.test(text);
       if (screenOrText === "upcoming") return /follow|incoming|upcoming|receivable/.test(text);
       if (screenOrText === "credit") return /credit|loan/.test(text);
+      if (screenOrText === "expenses") return /expense|spend/.test(text);
+      if (screenOrText === "settings") return /setting|config/.test(text);
       return text.indexOf(String(screenOrText || "").toLowerCase()) >= 0;
     });
   }
@@ -2217,6 +2235,56 @@
     scheduleViewportFab();
   }
 
+  /* ── Shared chrome for the legacy screens ────────────────────────────────
+     Expenses and Settings are still React's to render. We leave their body
+     alone and only swap the header: hide the bundle's own small brand bar and
+     put the standard page header above it, so the brand lockup, the title and
+     the control deck sit exactly where they do everywhere else. */
+  function hideLegacyHeader() {
+    if (legacyHeader && legacyHeader.isConnected) { legacyHeader.style.display = "none"; return; }
+    if (!wrap) return;
+    var marks = wrap.querySelectorAll('img[src*="mark-97"]');
+    for (var i = 0; i < marks.length; i++) {
+      var child = directChildFor(marks[i], wrap);
+      if (!child || child === root) continue;   // skip our own lockup
+      legacyHeader = child;
+      legacyHeaderDisplay = child.style.display;
+      child.style.display = "none";
+      return;
+    }
+  }
+
+  function showLegacyHeader() {
+    if (legacyHeader) legacyHeader.style.display = legacyHeaderDisplay || "";
+    legacyHeader = null;
+    legacyHeaderDisplay = "";
+  }
+
+  function enterChromeMode(screen) {
+    var meta = CHROME[screen];
+    if (!meta || !ensureRoot()) return;
+    document.body.classList.add("x97-v2-mode", "x97-v2-chrome");
+    root.classList.add("on");
+    root.dataset.screen = screen;
+    hideLegacyHeader();
+    if (chromeScreen !== screen) {
+      chromeScreen = screen;
+      root.innerHTML = '<div class="x97-page" data-v2-page="' + attr(screen) + '">' +
+        pageHeader(meta.kicker, meta.title, meta.sub, "") + '</div>';
+      updateCloudPill();
+    }
+    scheduleViewportFab();
+  }
+
+  function exitChromeMode() {
+    if (!chromeScreen) return;
+    chromeScreen = null;
+    document.body.classList.remove("x97-v2-chrome");
+    if (!modeActive) document.body.classList.remove("x97-v2-mode");
+    if (root) { root.classList.remove("on"); root.innerHTML = ""; delete root.dataset.screen; }
+    showLegacyHeader();
+  }
+
   function scheduleRender(delay) {
     clearTimeout(renderTimer);
     renderTimer = setTimeout(render, delay == null ? 40 : delay);
@@ -2244,10 +2312,17 @@
   function syncMode() {
     var screen = activeScreen();
     if (screen && MANAGED[screen]) {
+      exitChromeMode();
       enterManagedMode();
       if (screen !== currentScreen) { currentScreen = screen; screenEntering = true; window.scrollTo(0, 0); }
       scheduleRender(0);
-    } else exitManagedMode();
+    } else if (screen && CHROME[screen]) {
+      exitManagedMode();
+      enterChromeMode(screen);
+    } else {
+      exitChromeMode();
+      exitManagedMode();
+    }
   }
 
   function nextScheduledPayment(doc, item) {
@@ -4864,7 +4939,7 @@
 
   document.addEventListener("click", function (e) {
     var nav=e.target.closest && e.target.closest(".navitem");
-    if(nav){var text=(nav.textContent||"").trim().toLowerCase();var managed=/dashboard|home|follow|incoming|upcoming|receivable|credit|loan/.test(text);if(!managed&&needsReactRefresh){e.preventDefault();e.stopImmediatePropagation();try{sessionStorage.setItem(RESUME_KEY,text);sessionStorage.removeItem(REFRESH_KEY);}catch(_){}location.reload();return;}setTimeout(syncMode,30);return;}
+    if(nav){var text=(nav.textContent||"").trim().toLowerCase();var managed=/dashboard|home|follow|incoming|upcoming|receivable|credit|loan/.test(text);if(!managed&&needsReactRefresh){e.preventDefault();e.stopImmediatePropagation();try{sessionStorage.setItem(RESUME_KEY,text);sessionStorage.setItem(QUIET_KEY,"1");sessionStorage.removeItem(REFRESH_KEY);}catch(_){}location.reload();return;}setTimeout(syncMode,30);return;}
     var navTarget=e.target.closest && e.target.closest("[data-x97-nav]");if(navTarget){var target=navTarget.dataset.x97Nav;var item=findNavItem(target);if(item)item.click();return;}
     var btn=e.target.closest && e.target.closest("[data-x97-action]");if(!btn)return;var action=btn.dataset.x97Action;
     if(action==="close-sheet"){closeSheet();return;}
@@ -4924,10 +4999,18 @@
     if(action==="incoming-collapse"){e.stopPropagation();icToggleCollapse(btn.dataset.id);return;}
   }, true);
 
+  function resumeDone(){try{window.dispatchEvent(new CustomEvent("s97:resume-done"));}catch(_){}}
+
   function resumeOriginalTab() {
     var target="";try{target=sessionStorage.getItem(RESUME_KEY)||"";sessionStorage.removeItem(RESUME_KEY);sessionStorage.removeItem(REFRESH_KEY);}catch(_){}
-    needsReactRefresh=false;if(!target)return;
-    var tries=0,timer=setInterval(function(){tries++;var item=findNavItem(target);if(item){clearInterval(timer);item.click();}else if(tries>30)clearInterval(timer);},100);
+    needsReactRefresh=false;
+    if(!target){resumeDone();return;}
+    var tries=0,timer=setInterval(function(){
+      tries++;
+      var item=findNavItem(target);
+      if(item){clearInterval(timer);item.click();setTimeout(resumeDone,90);}
+      else if(tries>30){clearInterval(timer);resumeDone();}
+    },100);
   }
 
   function watchData() {

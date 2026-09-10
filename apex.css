@@ -1287,3 +1287,27 @@ html[data-v2-theme="dark"] { --apx-skel-a: rgba(255, 255, 255, .05); --apx-skel-
   font-family: var(--fu); font-size: 12.5px; letter-spacing: .01em;
 }
 @keyframes x97-sk-shimmer { from { background-position: 150% 0; } to { background-position: -150% 0; } }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LEGACY SCREENS — one header for the whole app
+   Expenses and Settings still render from the legacy bundle. The V2 root sits
+   above them carrying only the page header, so it has to drop the full-page
+   geometry it uses on the screens it actually owns.
+   ══════════════════════════════════════════════════════════════════════════ */
+body.x97-v2-chrome #x97-v2-root {
+  display: block;
+  min-height: 0 !important;
+  /* The responsive rules above give the root a ~100px bottom pad to clear the
+     nav. Here the nav is far below the legacy content, so that pad is a hole
+     between the header rule and the first card. */
+  padding-bottom: 0 !important;
+  background: none;
+}
+body.x97-v2-chrome #x97-v2-root .x97-top { margin-bottom: 0; }
+/* The legacy screen prints its own title and standfirst. With the shared
+   header above it that is the same words twice, so drop the screen's copy and
+   keep its action button, which is the heading row's other child. */
+body.x97-v2-chrome .s97-page-heading > div:first-child { display: none; }
+body.x97-v2-chrome .s97-page-heading { margin-top: 0; }
+/* Settings has no action button, so with its title gone the row is an empty box. */
+body.x97-v2-chrome .s97-page-heading:not(:has(button)) { display: none; }
