@@ -989,10 +989,6 @@ body.x97-v2-mode .navin { max-width: none !important; }
 .s97-cloud-input { min-height: 52px !important; border-radius: 12px !important; background: var(--bg2) !important; }
 .s97-cloud-btn { min-height: 50px !important; border-radius: 12px !important; font-size: 14px !important; }
 .s97-cloud-btn.primary { color: var(--apx-forest-900) !important; border-color: var(--apx-lime) !important; background: var(--apx-lime) !important; }
-#ldr { background: var(--apx-forest-950) !important; }
-#ldr .ldr-mark { width: 126px !important; height: 106px !important; }
-#ldr .ldr-word { color: var(--apx-lime) !important; }
-#ldr .ldr-bar i { background: linear-gradient(90deg,var(--apx-lime),var(--apx-mint)) !important; animation: apx-meter-fill .7s var(--apx-ease) both !important; }
 
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1251,3 +1247,43 @@ body.x97-v2-mode .navin { max-width: none !important; }
   .x97-att { gap: 0 11px; padding-left: 13px; }
   .x97-att-count { font-size: 22px; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LOADING STATE — skeleton, not a sentence
+   The document arrives from the cloud copy a beat after the shell paints.
+   Show the shape of what is coming rather than a paragraph explaining it.
+   ══════════════════════════════════════════════════════════════════════════ */
+:root { --apx-skel-a: rgba(8, 64, 47, .07); --apx-skel-b: rgba(8, 64, 47, .15); }
+html[data-v2-theme="dark"] { --apx-skel-a: rgba(255, 255, 255, .05); --apx-skel-b: rgba(255, 255, 255, .11); }
+
+.x97-skel { display: grid; gap: 16px; padding: 6px 0 28px; }
+.x97-sk {
+  display: block; border-radius: 8px; height: 12px;
+  background: linear-gradient(90deg, var(--apx-skel-a) 24%, var(--apx-skel-b) 50%, var(--apx-skel-a) 76%);
+  background-size: 300% 100%;
+  animation: x97-sk-shimmer 1.5s ease-in-out infinite;
+  animation-delay: calc(var(--i, 0) * 90ms);
+}
+.x97-skel-head { display: grid; gap: 10px; }
+.x97-sk-title { width: 58%; height: 26px; border-radius: 10px; }
+.x97-sk-sub { width: 34%; height: 11px; }
+.x97-skel-card {
+  display: grid; gap: 14px; padding: 20px;
+  border: 1px solid var(--line); border-radius: var(--apx-radius, 20px); background: var(--card);
+}
+.x97-sk-label { width: 40%; height: 10px; }
+.x97-sk-big { width: 66%; height: 32px; border-radius: 11px; }
+.x97-skel-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding-top: 4px; border-top: 1px solid var(--line); }
+.x97-skel-split .x97-sk { height: 14px; }
+.x97-skel-row {
+  display: grid; grid-template-columns: 34px minmax(0, 1fr) 68px; align-items: center; gap: 12px;
+  padding: 14px 4px; border-bottom: 1px solid var(--line);
+}
+.x97-sk-dot { width: 34px; height: 34px; border-radius: 12px; }
+.x97-sk-line { width: 74%; height: 13px; }
+.x97-sk-amt { height: 13px; border-radius: 7px; }
+.x97-skel-note {
+  margin: 4px 0 0; text-align: center; color: var(--tx3);
+  font-family: var(--fu); font-size: 12.5px; letter-spacing: .01em;
+}
+@keyframes x97-sk-shimmer { from { background-position: 150% 0; } to { background-position: -150% 0; } }

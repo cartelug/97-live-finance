@@ -3185,12 +3185,34 @@
       '<button class="x97-fab" data-x97-action="add-facility" aria-label="Add credit facility">' + icon("plus",25) + '</button></div>';
   }
 
+  /* Loading placeholder: the silhouette of the screen that is about to arrive.
+     Reads as "nearly there" rather than as an error state. */
+  function skeletonHTML() {
+    var rows = "";
+    for (var i = 0; i < 4; i++) {
+      rows += '<div class="x97-skel-row">' +
+        '<span class="x97-sk x97-sk-dot" style="--i:' + (i + 3) + '"></span>' +
+        '<span class="x97-sk x97-sk-line" style="--i:' + (i + 3) + '"></span>' +
+        '<span class="x97-sk x97-sk-amt" style="--i:' + (i + 3) + '"></span>' +
+      '</div>';
+    }
+    return '<div class="x97-skel" role="status" aria-live="polite" aria-label="Loading your finance data">' +
+      '<div class="x97-skel-head"><span class="x97-sk x97-sk-title"></span><span class="x97-sk x97-sk-sub" style="--i:1"></span></div>' +
+      '<div class="x97-skel-card">' +
+        '<span class="x97-sk x97-sk-label" style="--i:1"></span>' +
+        '<span class="x97-sk x97-sk-big" style="--i:2"></span>' +
+        '<div class="x97-skel-split"><span class="x97-sk" style="--i:2"></span><span class="x97-sk" style="--i:3"></span></div>' +
+      '</div>' + rows +
+      '<p class="x97-skel-note">Loading your finance data\u2026</p>' +
+    '</div>';
+  }
+
   function render() {
     if (!currentScreen || !ensureRoot()) return;
     root.dataset.screen = currentScreen;
     var doc = readDoc();
     if (!doc) {
-      root.innerHTML = '<div class="x97-page"><div class="x97-card x97-empty"><strong>Loading your finance data…</strong><p>Sign in and wait for the cloud copy to finish loading.</p></div></div>';
+      root.innerHTML = '<div class="x97-page">' + skeletonHTML() + '</div>';
       return;
     }
     try { lastRaw = localStorage.getItem(DATA_KEY) || JSON.stringify(doc); } catch (_) { lastRaw = JSON.stringify(doc); }

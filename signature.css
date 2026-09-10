@@ -370,13 +370,4 @@ textarea.x97-textarea { min-height: 100px !important; }
 .s97-cloud-btn { font-size: 14px !important; min-height: 48px !important; font-weight: 600 !important; border-radius: 11px !important; background: var(--card) !important; color: var(--tx) !important; border: 1px solid var(--line) !important; }
 .s97-cloud-btn.primary { background: var(--s97-green) !important; color: #fff !important; border-color: var(--s97-green) !important; }
 .s97-cloud-fine { font-size: 12px !important; line-height: 1.6 !important; color: var(--tx3) !important; border-top: 1px solid var(--line); padding-top: 18px; margin-top: 20px; }
-#ldr { background: var(--s97-green) !important; }
-#ldr::before, #ldr::after, .ldr-mark::before, .ldr-mark::after { display: none !important; }
-#ldr .ldr-mark { width: 110px !important; height: 96px !important; margin: 0 auto 18px !important; background: transparent !important; border: 0 !important; box-shadow: none !important; animation: none !important; }
-#ldr .ldr-mark img { width: 100% !important; height: 100% !important; object-fit: contain; filter: none !important; }
-#ldr .ldr-word { color: var(--s97-lime) !important; font-family: var(--fu) !important; font-weight: 550 !important; font-size: 16px !important; letter-spacing: .36em !important; }
-#ldr .ldr-greeting strong { font-family: var(--fdisp) !important; color: #fff !important; font-weight: 500 !important; font-size: 30px !important; }
-#ldr .ldr-greeting span { font-family: var(--fu) !important; font-size: 14px !important; color: #bfd9c8 !important; }
-#ldr .ldr-bar { width: 110px !important; height: 3px !important; background: #ffffff20 !important; }
-#ldr .ldr-bar i { background: var(--s97-lime) !important; animation: v4-loader-progress .6s ease both !important; }
 @media (max-width: 359px) { .s97-cloud-card { padding: 24px 20px !important; } }
