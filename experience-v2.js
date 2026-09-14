@@ -1652,7 +1652,7 @@
       .x97-hero-live{font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:var(--pos);font-weight:850;display:inline-flex;align-items:center;gap:5px}
       .x97-hero-live::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--pos);box-shadow:0 0 0 4px var(--posdim)}
       .x97-hero-value{font-size:clamp(39px,7vw,64px);margin:19px 0 6px;letter-spacing:-.055em}
-      button.x97-hero-value-btn{appearance:none;-webkit-appearance:none;border:0;background:transparent;padding:0;cursor:pointer;display:flex;align-items:center;gap:10px;width:100%;text-align:left;font-family:inherit}
+      button.x97-hero-value-btn{appearance:none;-webkit-appearance:none;border:0;background:transparent;padding:0;cursor:pointer;display:flex;align-items:center;gap:10px;width:100%;min-height:44px;text-align:left;font-family:inherit}
       button.x97-hero-value-btn:active{opacity:.72}
       .x97-hero-edit-hint{display:inline-flex;flex-shrink:0;opacity:.45}
       @media(hover:hover){button.x97-hero-value-btn:hover .x97-hero-edit-hint{opacity:.85}}
@@ -4265,7 +4265,7 @@
   function injectMsgCSS() {
     if (document.getElementById("x97-msg-css")) return;
     var css =
-      ".x97-msg-card{width:100%;text-align:left;border:0;cursor:pointer;display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}" +
+      ".x97-msg-card{width:100%;text-align:left;cursor:pointer;display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}" +
       ".x97-msg-icon{width:44px;height:44px;min-width:44px;border-radius:13px;display:flex;align-items:center;justify-content:center;background:linear-gradient(145deg,var(--pos),var(--pos2));color:#fff;box-shadow:0 6px 16px rgba(14,117,72,.28)}" +
       ".x97-msg-body{flex:1;min-width:0}.x97-msg-title{font-size:14.5px;font-weight:800;color:var(--tx)}.x97-msg-sub{font-size:11.5px;color:var(--tx3);margin-top:2px}" +
       ".x97-msg-pills{display:flex;gap:7px;margin-top:8px;flex-wrap:wrap}" +
