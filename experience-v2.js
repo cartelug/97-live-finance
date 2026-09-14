@@ -1644,6 +1644,10 @@
       .x97-hero-live{font-size:9px;text-transform:uppercase;letter-spacing:.09em;color:var(--pos);font-weight:850;display:inline-flex;align-items:center;gap:5px}
       .x97-hero-live::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--pos);box-shadow:0 0 0 4px var(--posdim)}
       .x97-hero-value{font-size:clamp(39px,7vw,64px);margin:19px 0 6px;letter-spacing:-.055em}
+      button.x97-hero-value-btn{appearance:none;-webkit-appearance:none;border:0;background:transparent;padding:0;cursor:pointer;display:flex;align-items:center;gap:10px;width:100%;text-align:left;font-family:inherit}
+      button.x97-hero-value-btn:active{opacity:.72}
+      .x97-hero-edit-hint{display:inline-flex;flex-shrink:0;opacity:.45}
+      @media(hover:hover){button.x97-hero-value-btn:hover .x97-hero-edit-hint{opacity:.85}}
       .x97-hero-caption{position:relative;z-index:1;color:var(--tx3);font-size:11px;line-height:1.45;max-width:36ch}
       .x97-hero-meta{margin-top:20px;gap:9px}
       .x97-stat{padding:11px 12px;border-radius:13px;background:rgba(255,255,255,.68)}
@@ -2628,7 +2632,7 @@
     root.innerHTML = '<div class="x97-page" data-v2-page="dashboard">' +
       pageHeader("97 Live Finance", "Your money", "") +
       '<div class="x97-dashboard-main">' +
-        '<section class="x97-card x97-hero x97-hero-command" data-v2-hero><div class="x97-hero-topline"><div class="x97-hero-label">Available cash</div><span class="x97-hero-live">Cash on hand</span></div><div class="x97-hero-value x97-money">' + money(a.cash, "UGX") + '</div><div class="x97-hero-caption">Across your bank, mobile money and cash accounts.</div><div class="x97-hero-meta"><div class="x97-stat"><span>After active debt</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
+        '<section class="x97-card x97-hero x97-hero-command" data-v2-hero><div class="x97-hero-topline"><div class="x97-hero-label">Available cash</div><span class="x97-hero-live">Cash on hand</span></div><button type="button" class="x97-hero-value x97-money x97-hero-value-btn" data-x97-action="edit-balances" aria-label="Update balances">' + money(a.cash, "UGX") + '<span class="x97-hero-edit-hint">' + icon("edit", 18) + '</span></button><div class="x97-hero-caption">Across your bank, mobile money and cash accounts — tap the total to edit them.</div><div class="x97-hero-meta"><div class="x97-stat"><span>After active debt</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
         '<section class="x97-command-actions x97-dashboard-wide"><button class="x97-command-action primary" data-x97-action="record-payment"><span class="x97-command-icon">' + icon("wallet", 17) + '</span><span><b>Record payment</b><small>Money received</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="add-upcoming"><span class="x97-command-icon teal">' + icon("plus", 17) + '</span><span><b>Add deal</b><small>Money expected</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="go-expenses"><span class="x97-command-icon warn">' + icon("trend", 17) + '</span><span><b>Add expense</b><small>Money spent</small></span>' + icon("chevron", 14) + '</button></section>' +
         '<section class="x97-section x97-glance-section x97-dashboard-wide">' + sectionHead("At a glance") + '<div class="x97-summary-grid x97-finance-pulse"><div class="x97-card x97-summary"><div class="k">Collected this month</div><div class="v x97-money x97-green">' + money(collectedThisMonth, "UGX", true) + '</div><div class="s">Actual money received</div></div><div class="x97-card x97-summary"><div class="k">Due next 7 days</div><div class="v x97-money x97-teal">' + money(in7, "UGX", true) + '</div><div class="s">' + (in7USD ? '<span class="x97-teal">' + money(in7USD, "USD", true) + '</span> · ' : '') + 'Scheduled incoming</div></div><div class="x97-card x97-summary"><div class="k">Outstanding</div><div class="v x97-money x97-amber">' + money(outstandingUGX, "UGX", true) + '</div><div class="s">' + (outstandingUSD ? '<span class="x97-teal">' + money(outstandingUSD, "USD", true) + '</span> · ' : '') + 'Still owed by clients</div></div><div class="x97-card x97-summary"><div class="k">Actual spending</div><div class="v x97-money x97-red">' + money(actualSpend, "UGX", true) + '</div><div class="s">This month</div></div></div></section>' +
         '<section class="x97-section x97-dashboard-accounts">' + sectionHead("Accounts", "Add account", "add-account") + '<div class="x97-card x97-pad x97-account-rail">' + (accountRows || '<div class="x97-empty"><strong>No accounts yet</strong><p>Add your bank, mobile money or cash balance.</p></div>') + '</div></section>' +
@@ -3536,6 +3540,34 @@
     var body='<form id="x97-facility-form" data-x97-form="facility"><input type="hidden" name="id" value="'+attr(f.id)+'"><div class="x97-fields-2">'+field("Network",'<select class="x97-select" name="network">'+option("Airtel","Airtel",f.network)+option("MTN","MTN",f.network)+option("Other","Other",f.network)+'</select>')+field("Phone line",'<input class="x97-input" name="line" value="'+attr(f.line)+'" placeholder="e.g. 0708">')+'</div>'+field("Service",'<input class="x97-input" name="service" required value="'+attr(f.service)+'" placeholder="e.g. XtraCash">')+'<div class="x97-fields-2">'+field("Current offer",'<input class="x97-input" name="limitOffer" type="number" min="0" step="1" value="'+attr(f.limitOffer)+'">')+field("Availability",'<select class="x97-select" name="status">'+option("Live","Live",f.status)+option("Currently Unavailable","Currently unavailable",f.status)+'</select>')+'</div>'+field("Fee model",'<select class="x97-select" name="feeModel" id="x97-fee-model">'+option("Fixed fee","Fixed fee",f.feeModel)+option("Daily fee","Daily fee",f.feeModel)+option("Manual","Manual amount due",f.feeModel)+'</select>')+'<div class="x97-fields-2">'+field("Base fee rate",'<input class="x97-input" name="baseFeePct" type="number" min="0" step="0.01" value="'+attr(num(f.baseFee)*100)+'" placeholder="e.g. 9">','Enter percentage, not decimal.')+field("Daily rate",'<input class="x97-input" name="dailyRatePct" type="number" min="0" step="0.01" value="'+attr(num(f.dailyRate)*100)+'" placeholder="e.g. 1">','Used only for daily-fee facilities.')+'</div>'+field("Default term (days)",'<input class="x97-input" name="termDays" type="number" min="0" step="1" value="'+attr(f.termDays||30)+'">')+field("Notes",'<textarea class="x97-textarea" name="notes">'+esc(f.notes)+'</textarea>')+'</form>';
     var foot=(existing?'<button class="x97-btn danger" data-x97-action="delete-facility" data-id="'+attr(f.id)+'">'+icon("trash")+' Delete</button>':'<button class="x97-btn" data-x97-action="close-sheet">Cancel</button>')+'<button class="x97-btn primary" type="submit" form="x97-facility-form">'+icon("check")+' Save facility</button>';
     openSheet(existing?"Edit credit facility":"Add credit facility",body,foot);
+  }
+
+  // One editor for every amount that makes up "Cash on hand" — tapping the
+  // dashboard hero figure lands here instead of hunting down each bank,
+  // mobile-money and credit-line row on its own screen.
+  function openBalancesEditor() {
+    injectRemindCSS(); injectCampCSS();
+    var doc = readDoc();
+    var accounts = doc.balances || [], lines = doc.credit || [];
+    var accountFields = accounts.length ? accounts.map(function (b) {
+      var label = b.account || "Account";
+      if (b.line) label += " · " + b.line;
+      return field(label, '<input class="x97-input" type="number" inputmode="decimal" step="1" name="balance__' + attr(b.id) + '" value="' + attr(b.balance) + '">');
+    }).join("") : '<div class="x97-empty" style="padding:12px 6px"><p>No accounts yet.</p></div>';
+    var lineFields = lines.length ? lines.map(function (f) {
+      var label = (f.network ? f.network + " " : "") + (f.service || "Credit line");
+      if (f.line) label += " · " + f.line;
+      return field(label, '<input class="x97-input" type="number" inputmode="decimal" min="0" step="1" name="limit__' + attr(f.id) + '" value="' + attr(f.limitOffer) + '">');
+    }).join("") : '<div class="x97-empty" style="padding:12px 6px"><p>No credit lines yet.</p></div>';
+    var body = '<div class="x97-help" style="margin-bottom:12px">Update any balance or credit limit below, then save — every change applies at once.</div>' +
+      '<form id="x97-balances-form" data-x97-form="balances">' +
+      '<div class="x97-camp-sec">Bank &amp; mobile money accounts</div>' + accountFields +
+      '<div style="margin:2px 0 18px"><button type="button" class="x97-rm-tool" data-x97-action="add-account">' + icon("plus", 13) + ' Add account</button></div>' +
+      '<div class="x97-camp-sec">Credit lines</div>' + lineFields +
+      '<div style="margin:2px 0 4px"><button type="button" class="x97-rm-tool" data-x97-action="add-facility">' + icon("plus", 13) + ' Add credit facility</button></div>' +
+      '</form>';
+    var foot = '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button><button class="x97-btn primary" type="submit" form="x97-balances-form">' + icon("check") + ' Save all</button>';
+    openSheet("Update balances", body, foot);
   }
 
   function facilityPreview(f, amount, borrowDate, manualDue) {
@@ -4500,7 +4532,11 @@
     else if (v === "compose") inner = head(campaignState.editId ? "Edit campaign" : "New campaign", "Compose and send", "home") + campComposeHTML(doc);
     else if (v === "report") inner = head(campaignState.name || "Campaign", "Delivery report", campaignState.sending ? "" : "home") + campReportHTML(doc);
     else inner = head("Campaigns", campContacts(doc).length + " contacts · " + campLists(doc).length + " lists", "hub", "Messaging") + campHomeHTML(doc);
-    return '<div class="x97-remind-panel">' + inner + '</div>';
+    // The Google refresh FAB sits as a sibling of the sheet, not nested
+    // inside it — .x97-remind-panel clips overflow, which would clip a
+    // position:fixed button rendered inside it.
+    var fab = (v === "import" || v === "compose" || v === "report") ? "" : '<button type="button" class="x97-fab" data-camp="google-refresh" aria-label="Refresh Google contacts"><span class="x97-google-g" style="width:26px;height:26px;font-size:15px">G</span></button>';
+    return '<div class="x97-remind-panel">' + inner + '</div>' + fab;
   }
 
   /* ---- Google Contacts import (client-side OAuth, no server) ---- */
@@ -4565,13 +4601,12 @@
   }
 
   // Keeps the contacts directory itself current — not a campaign list, just
-  // name+phone — so a contact added in Google shows up here the next time
-  // the app is opened, without anyone having to press "Connect" again.
-  // Only ever runs once a Client ID has been set up at least once, and only
-  // ever silently: prompt:"" asks Google for a token without any visible
-  // sign-in UI, which succeeds when the browser still holds a granted
-  // session for this app and does nothing at all — no popup, no error —
-  // when it doesn't. Either way nothing here is allowed to interrupt boot.
+  // name+phone — merging in anyone new from Google without creating a
+  // duplicate "Google Contacts" list on every press. Only ever runs when
+  // someone presses the Google refresh floating button, never on its own:
+  // prompt:"" asks Google for a token without forcing the account chooser
+  // when the browser already holds a granted session for this app, but
+  // still surfaces Google's own sign-in UI the first time it's needed.
   function mergeContactsQuiet(contacts) {
     var added = 0;
     updateDoc(function (d) {
@@ -4591,34 +4626,38 @@
     return added;
   }
 
-  function syncGoogleContactsQuietly() {
+  // Manual only — reached by pressing the floating Google button on
+  // Contacts & lists. Never called automatically, so nothing Google-related
+  // fires without a deliberate tap: no client ID yet opens setup (which
+  // itself only ever proceeds once one is saved), otherwise it asks Google
+  // for the latest contacts and merges in anyone new.
+  function refreshGoogleContacts() {
     var doc = readDoc();
     var clientId = doc && doc.settings && doc.settings.googleClientId;
-    if (!clientId) return;
+    if (!clientId) return openGoogleSetup();
+    toast("Checking Google for new contacts…", "");
     loadGIS().then(function () {
       var client = window.google.accounts.oauth2.initTokenClient({
         client_id: clientId,
         scope: GOOGLE_SCOPE,
         callback: function (resp) {
-          if (!resp || resp.error || !resp.access_token) return;
+          if (!resp || resp.error || !resp.access_token) { toast("Google sign-in was cancelled or failed" + (resp && resp.error ? " (" + resp.error + ")" : ""), "error"); return; }
           fetchGoogleContacts(resp.access_token).then(function (contacts) {
-            if (!contacts.length) return;
+            if (!contacts.length) { toast("No phone numbers found in your Google contacts", "error"); return; }
             var added = mergeContactsQuiet(contacts);
-            if (added) {
-              toast(added + " new Google contact" + (added === 1 ? "" : "s") + " synced", "");
-              refreshMsgHub();
-              if (campaignState.open) refreshCamp();
-            }
-          }).catch(function () {});
+            toast(added ? (added + " new Google contact" + (added === 1 ? "" : "s") + " synced") : "Google contacts are already up to date", "success");
+            refreshMsgHub();
+            if (campaignState.open) refreshCamp();
+          }).catch(function (err) { toast("Could not read Google contacts: " + err.message, "error"); });
         }
       });
       client.requestAccessToken({ prompt: "" });
-    }).catch(function () {});
+    }).catch(function () { toast("Could not load Google sign-in — check your connection", "error"); });
   }
 
   function openGoogleSetup() {
     var doc = readDoc();
-    var body = '<div class="x97-help" style="margin-bottom:12px">Connects your real Google Contacts (name + phone) into a list here. This needs a free, one-time <b>Google API Client ID</b> for your own copy of the app. See the setup guide, then paste the Client ID below. Once connected, the app quietly checks for anyone new every time you open it — no need to reconnect.</div>' +
+    var body = '<div class="x97-help" style="margin-bottom:12px">Connects your real Google Contacts (name + phone) into a list here. This needs a free, one-time <b>Google API Client ID</b> for your own copy of the app. See the setup guide, then paste the Client ID below. Once connected, press the floating Google button on Contacts &amp; lists any time you want to check for anyone new — nothing runs on its own.</div>' +
       '<form id="x97-google-form" data-x97-form="google-setup">' +
       field("Google OAuth Client ID", '<input class="x97-input" name="clientId" value="' + attr((doc.settings && doc.settings.googleClientId) || "") + '" placeholder="xxxxxxxxxxxx.apps.googleusercontent.com">', "Ends in .apps.googleusercontent.com — from Google Cloud Console → Credentials.") +
       '</form>';
@@ -4820,6 +4859,7 @@
     if (a === "import") { campaignState.view = "import"; return refreshCamp(); }
     if (a === "refresh-import") return refreshCamp();
     if (a === "google-connect") return connectGoogleContacts();
+    if (a === "google-refresh") return refreshGoogleContacts();
     if (a === "match-numbers") return openNumbersManager();
     if (a === "new") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: audienceContacts(doc, { type: "overdue" }).length ? "overdue" : "all", id: "" }; campaignState.previewIdx = 0; return refreshCamp(); }
     if (a === "use-list") { campaignState.view = "compose"; campaignState.editId = null; campaignState.name = ""; campaignState.message = ""; campaignState.audience = { type: "list", id: node.dataset.id }; campaignState.previewIdx = 0; return refreshCamp(); }
@@ -4913,6 +4953,28 @@
     var v=formValues(form),id=v.id||uid("facility");updateDoc(function(doc){var i=doc.credit.findIndex(function(x){return String(x.id)===String(id);});var old=i>=0?doc.credit[i]:{};var item=Object.assign({},old,{id:id,network:v.network,line:v.line.trim(),service:v.service.trim(),limitOffer:roundMoney(v.limitOffer),status:v.status,feeModel:v.feeModel,baseFee:num(v.baseFeePct)/100,dailyRate:num(v.dailyRatePct)/100,termDays:Math.max(0,roundMoney(v.termDays)),notes:v.notes.trim()});if(item.borrowed==null)item.borrowed=0;if(item.borrowDate==null)item.borrowDate="";if(item.manualDue==null)item.manualDue=0;if(i>=0)doc.credit[i]=item;else doc.credit.push(item);},"facility-save");closeSheet();
   }
 
+  function submitBalances(form) {
+    var v = formValues(form), changed = 0;
+    updateDoc(function (doc) {
+      (doc.balances || []).forEach(function (b) {
+        var key = "balance__" + b.id;
+        if (!(key in v) || String(v[key]).trim() === "") return;
+        var next = roundMoney(v[key]);
+        if (next !== num(b.balance)) changed++;
+        b.balance = next;
+      });
+      (doc.credit || []).forEach(function (f) {
+        var key = "limit__" + f.id;
+        if (!(key in v) || String(v[key]).trim() === "") return;
+        var next = roundMoney(v[key]);
+        if (next !== num(f.limitOffer)) changed++;
+        f.limitOffer = next;
+      });
+    }, "balances-bulk-edit");
+    closeSheet();
+    toast(changed ? "Updated " + changed + " amount" + (changed === 1 ? "" : "s") : "No changes made", changed ? "success" : "");
+  }
+
   function submitBorrow(form) {
     var v=formValues(form),doc=readDoc(),f=facilityById(doc,v.facilityId);if(!f)return;var loans=virtualLegacyLoans(doc),available=Math.max(0,num(f.limitOffer)-activePrincipalForFacility(loans,f.id)),amount=roundMoney(v.amount);if(amount<=0||amount>available){toast("Enter an amount within the available offer","error");return;}var p=facilityPreview(f,amount,v.borrowDate,v.manualDue);updateDoc(function(next){var facility=facilityById(next,f.id);var loan={id:uid("loan"),facilityId:f.id,principal:amount,borrowDate:v.borrowDate,dueDate:p.dueDate,feeModelSnapshot:f.feeModel,baseFeeSnapshot:num(f.baseFee),dailyRateSnapshot:num(f.dailyRate),termDaysSnapshot:num(f.termDays||30),estimatedDue:p.estimated,manualDue:num(v.manualDue),status:"Active",destinationAccountId:v.destinationAccount||"",notes:"",createdAt:new Date().toISOString()};next.creditLoans.push(loan);facility.borrowed=amount;facility.borrowDate=v.borrowDate;facility.manualDue=p.estimated;if(v.destinationAccount){var account=next.balances.find(function(b){return String(b.id)===String(v.destinationAccount);});if(account)account.balance=num(account.balance)+amount;}},"credit-borrow");closeSheet();state.creditView="borrowed";scheduleRender(0);
   }
@@ -4927,7 +4989,7 @@
   }
 
   document.addEventListener("submit", function (e) {
-    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="payment")submitPayment(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);else if(type==="wa-numbers")submitNumbers(form);else if(type==="google-setup")submitGoogleSetup(form);
+    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="payment")submitPayment(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="balances")submitBalances(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);else if(type==="wa-numbers")submitNumbers(form);else if(type==="google-setup")submitGoogleSetup(form);
   });
 
   document.addEventListener("input", function (e) {
@@ -4965,6 +5027,7 @@
     if(action==="record-payment"){var current=readDoc(), summary=current&&analytics(current), target=summary&&(summary.overdue[0]||summary.next7[0]);if(target)openPaymentForm(target.itemId);else {var firstOpen=current&&(current.followups||[]).find(isOpenFollowup);if(firstOpen)openPaymentForm(firstOpen.id);else toast("Add an incoming deal first","error");}return;}
     if(action==="go-expenses"){var expenses=findNavItem("expenses");if(expenses)expenses.click();return;}
     if(action==="go-credit"){var cr=findNavItem("credit");if(cr)cr.click();return;}
+    if(action==="edit-balances"){openBalancesEditor();return;}
     if(action==="add-account"){openAccountForm();return;}
     if(action==="edit-account"){openAccountForm(btn.dataset.id);return;}
     if(action==="delete-account"){if(confirm("Delete this account?")){updateDoc(function(doc){doc.balances=doc.balances.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"account-delete");closeSheet();}return;}
@@ -5025,7 +5088,7 @@
   function boot() {
     try { localStorage.removeItem("ns97-ai-cfg-v1"); } catch (_) {}
     applyTheme(loadTheme());
-    injectCSS();injectMsgCSS();injectFeatureCSS();injectProCSS();injectRevampCSS();injectV2CSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();syncGoogleContactsQuietly();
+    injectCSS();injectMsgCSS();injectFeatureCSS();injectProCSS();injectRevampCSS();injectV2CSS();loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
     var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
     var observer=new MutationObserver(function(mutations){
       var relevant=mutations.some(function(m){
