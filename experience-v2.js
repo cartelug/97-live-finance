@@ -101,7 +101,7 @@
   var state = {
     upcoming: {
       quick: "open",
-      month: "all",
+      month: monthKey(todayDate()),
       search: "",
       statuses: [],
       currencies: [],
@@ -751,6 +751,14 @@
     if (["all", "only", "exclude"].indexOf(state.upcoming.retainers) < 0) state.upcoming.retainers = "all";
     if (state.upcoming.categories.length === 1 && isRetainerCategory(state.upcoming.categories[0]) && state.upcoming.retainers === "all") {
       state.upcoming.categories = []; state.upcoming.retainers = "only";
+    }
+    // A specific month saved from an earlier day goes stale silently — carry
+    // it forward to the current month instead of leaving the Incoming page
+    // parked on a month that's already passed. "All months"/"unscheduled" and
+    // a deliberately-chosen future month are left alone.
+    var currentMonth = monthKey(todayDate());
+    if (state.upcoming.month !== "all" && state.upcoming.month !== "unscheduled" && state.upcoming.month < currentMonth) {
+      state.upcoming.month = currentMonth;
     }
   }
 
