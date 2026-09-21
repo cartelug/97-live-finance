@@ -2125,6 +2125,58 @@
       @media(prefers-reduced-motion:reduce){
         .x97-hero-command::after,.x97-progress i,.x97-pay-bar i,.x97-collection-progress i{animation:none!important}
       }
+
+      /* ── Navigation dock ──────────────────────────────────────────────
+         A floating dock rather than an edge-to-edge bar, and one confident
+         active signal — a lime capsule around the whole item — instead of
+         the three that used to fire at once (icon chip, underline, colour).
+         Flex tracks however many items exist; the base grid was still cut
+         for six while only five are rendered, which left the row lopsided.
+         Desktop keeps its sidebar, so this stops before 1200px. */
+      @media(max-width:1199px){
+        :root{--x97-nav-h:86px}
+        .nav{
+          position:fixed!important;z-index:55!important;
+          left:50%!important;right:auto!important;transform:translateX(-50%)!important;
+          bottom:max(12px,env(safe-area-inset-bottom))!important;
+          width:min(calc(100% - 24px),480px)!important;
+          min-height:0!important;padding:0!important;overflow:hidden!important;
+          border:1px solid rgba(217,255,102,.16)!important;border-radius:27px!important;
+          background:linear-gradient(168deg,#0B4E38 0%,#062D21 56%,#04211A 100%)!important;
+          box-shadow:0 1px 2px rgba(3,27,19,.3),0 20px 46px -20px rgba(3,27,19,.95),inset 0 1px 0 rgba(255,255,255,.08)!important;
+          backdrop-filter:blur(22px) saturate(1.3)!important;
+        }
+        .nav::before{content:""!important;display:block!important;position:absolute!important;inset:0!important;pointer-events:none!important;
+          background:linear-gradient(118deg,rgba(255,255,255,.08),transparent 40%,rgba(217,255,102,.05))!important}
+        .navin{position:relative;z-index:1;display:flex!important;grid-template-columns:none!important;
+          max-width:none!important;margin:0!important;gap:2px!important;padding:6px!important}
+        .navitem{
+          flex:1 1 0!important;min-width:0!important;
+          display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;
+          gap:5px!important;min-height:58px!important;padding:9px 3px 8px!important;
+          border:0!important;border-radius:21px!important;background:transparent!important;
+          color:rgba(232,245,236,.58)!important;
+          font-size:10px!important;font-weight:700!important;letter-spacing:.015em!important;line-height:1!important;
+          transition:color .18s ease,background-color .24s cubic-bezier(.34,1.26,.52,1),box-shadow .24s ease,transform .15s ease!important;
+        }
+        .navitem .ind{display:none!important}
+        .navitem svg{width:21px!important;height:21px!important;padding:0!important;border-radius:0!important;
+          background:none!important;box-shadow:none!important;color:inherit!important;
+          transition:transform .26s cubic-bezier(.34,1.5,.5,1)!important}
+        .navitem:active{transform:scale(.94)!important}
+        .navitem.on{color:#062D21!important;
+          background:linear-gradient(180deg,#E8FF8E 0%,#D9FF66 100%)!important;
+          box-shadow:0 9px 20px -9px rgba(217,255,102,.65),inset 0 1px 0 rgba(255,255,255,.5)!important}
+        .navitem.on svg{color:#062D21!important;background:none!important;box-shadow:none!important;
+          transform:translateY(-1px) scale(1.04)!important}
+        .navitem.on::after{display:none!important}
+        /* The floating dock is taller than the old flush bar, so the action
+           button rides the shared token instead of its own fixed offset. */
+        body>.x97-fab.x97-fab-viewport{bottom:calc(var(--x97-nav-h) + 12px + env(safe-area-inset-bottom))!important}
+      }
+      @media(max-width:1199px) and (prefers-reduced-motion:reduce){
+        .navitem,.navitem svg{transition:none!important}
+      }
     `;
     document.head.appendChild(style);
   }
