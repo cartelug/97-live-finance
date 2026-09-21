@@ -36,8 +36,10 @@ working creative business. It must answer four questions immediately:
 3. What is overdue or risky?
 4. What action should be taken today?
 
-The interface should never mix cash already received with booked or available
-money. Every number should have one meaning throughout the app.
+Every number should have one meaning throughout the app. Where a figure
+deliberately combines kinds of money — the dashboard hero is the one place it
+does — it must be labelled for what it is and broken into its parts in the
+same view, never presented as cash.
 
 ## Product and information architecture
 
@@ -91,14 +93,19 @@ font-family: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 
 ### Colour semantics
 
-- **Porcelain `#F2F2EC`** — page canvas.
+- **Porcelain `#F1F5F5`** — page canvas.
 - **White `#FFFFFF`** — primary cards and sheets.
-- **Ink `#171B12`** — main text.
-- **Deep green `#0E7548`** — received money, paid work and primary actions.
-- **Teal `#0B7285`** — USD, available credit and potential money.
-- **Amber `#855909`** — pending, due soon and attention.
-- **Coral `#B5352E`** — overdue, debt, actual outflow and destructive actions.
+- **Ink `#0F2224`** — main text.
+- **Turquoise `#0D8080`** — received money, paid work and primary actions.
+- **Sapphire `#1A5FB4`** — USD, available credit and potential money.
+- **Amber `#A76508`** — pending, due soon and attention.
+- **Coral `#BC3E45`** — overdue, debt, actual outflow and destructive actions.
 - **Violet `#5D49D6`** — Copilot only.
+
+Dark chrome — the hero, the navigation dock and the collection command — is
+**petrol `#042A2F`** carrying **aqua `#6CF9DD`** as its accent. Turquoise and
+sapphire sit close enough to read as one family and far enough apart that
+"money in" never reads as "money owed".
 
 Colour must communicate meaning, not decorate every card. A status always has
 an icon or label as well as colour.
@@ -123,21 +130,25 @@ The dashboard should be deliberately short above the fold.
 - Small profile/More button.
 - No oversized page title competing with the money.
 
-### 2. Cash-position hero
+### 2. Total-position hero
 
-The largest number is **Available cash**, calculated only from actual account
-balances. It must not contain receivables or credit.
+The largest number is **Total position**: cash on hand, plus available credit,
+plus outstanding invoices. Because it combines money held, money borrowable and
+money owed, it is never labelled "cash", and it never appears without its
+breakdown directly beneath it in the same card.
 
 The hero includes:
 
-- Available cash.
-- Net after active debt.
-- Change this month: collected minus actual spending.
-- A small account-count label.
-- Tap to open Accounts.
+- Total position, as the dominant figure.
+- Cash on hand, available credit and incoming, as three smaller parts.
+- Tap the total to edit account balances and credit lines.
 
-USD holdings or receivables stay in a separate teal mini-row with the current
-UGX equivalent; they are never silently mixed into cash.
+Dollar receivables convert at the live rate, falling back to the rate saved in
+Settings — they are folded into the incoming figure rather than dropped, and
+the dollar amount stays visible underneath it.
+
+Active debt is **not** in the hero. It is a liability, not availability, and
+belongs in Credit position further down and in the Credit tab.
 
 ### 3. Today action strip
 

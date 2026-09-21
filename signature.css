@@ -2,29 +2,29 @@
    Final presentation layer. Native document scrolling and app data remain
    owned by the existing application. All fonts and brand assets are local. */
 :root {
-  --s97-green: #062d21;
-  --s97-green-mid: #0b4b36;
-  --s97-lime: #d9ff66;
+  --s97-green: #042a2f;
+  --s97-green-mid: #08474e;
+  --s97-lime: #6cf9dd;
   --s97-space: clamp(16px, 2.4vw, 28px);
   --s97-radius: 18px;
   --v2-paper: #f3f5f0;
   --v2-paper-2: #fafbf8;
   --v2-surface-solid: #ffffff;
-  --v2-line: #dde5dd;
-  --v2-line-strong: #bccdbf;
-  --v2-ink: #142b20;
-  --v2-ink-soft: #4d6455;
-  --v2-ink-faint: #617466;
+  --v2-line: #dde5e4;
+  --v2-line-strong: #bccdcb;
+  --v2-ink: #13292c;
+  --v2-ink-soft: #4d6464;
+  --v2-ink-faint: #617474;
 }
 html[data-v2-theme="dark"] {
-  --v2-paper: #08150f;
-  --v2-paper-2: #0c1e15;
-  --v2-surface-solid: #10271b;
-  --v2-line: #294333;
-  --v2-line-strong: #42634c;
-  --v2-ink: #f0f6ed;
-  --v2-ink-soft: #bfd0c2;
-  --v2-ink-faint: #9db4a2;
+  --v2-paper: #071416;
+  --v2-paper-2: #0b1d1f;
+  --v2-surface-solid: #0f2528;
+  --v2-line: #284144;
+  --v2-line-strong: #426363;
+  --v2-ink: #edf6f5;
+  --v2-ink-soft: #bfd0ce;
+  --v2-ink-faint: #9db4b2;
 }
 body { font-family: var(--fu); line-height: 1.5; }
 button, input, select, textarea { font: inherit; }
@@ -47,7 +47,7 @@ button:disabled { cursor: default; opacity: .5; }
   padding: 6px 15px 6px 9px;
   color: #fff;
   background: var(--s97-green);
-  border: 1px solid #285c43;
+  border: 1px solid #285c5c;
   border-radius: 15px;
 }
 .x97-brand-lockup > .x97-brand-mark {
@@ -73,7 +73,7 @@ button:disabled { cursor: default; opacity: .5; }
 }
 .x97-brand-word small {
   margin-top: 6px !important;
-  color: #b9d1c1 !important;
+  color: #b9d1cf !important;
   font-size: 8px !important;
   font-weight: 550 !important;
   letter-spacing: .2em !important;
@@ -92,7 +92,7 @@ button:disabled { cursor: default; opacity: .5; }
 .x97-money, .tabnum { font-variant-numeric: tabular-nums lining-nums !important; }
 .x97-pill, .ic-badge { font-weight: 600; }
 .x97-btn, .btn { min-height: 46px !important; padding: 11px 16px !important; border-radius: 11px !important; font-size: 14px !important; font-weight: 600 !important; box-shadow: none !important; }
-.x97-btn.primary, .btn.primary { color: #fff !important; background: #0b754c !important; border-color: #0b754c !important; }
+.x97-btn.primary, .btn.primary { color: #fff !important; background: #0b7575 !important; border-color: #0b7575 !important; }
 .x97-btn.danger, .btn.danger { color: var(--neg) !important; background: var(--negdim) !important; border-color: transparent !important; }
 .x97-btn.teal { background: var(--posdim) !important; color: var(--pos) !important; border-color: transparent !important; }
 .x97-btn svg, .btn svg { flex-shrink: 0; }
@@ -136,7 +136,7 @@ button:disabled { cursor: default; opacity: .5; }
 .ic-shell .x97-top { padding-bottom: 18px; }
 .ic-hero { background: var(--s97-green) !important; border-color: var(--s97-green) !important; padding: 22px 24px !important; }
 .ic-hero-top { align-items: center; }
-.ic-hero-label { color: #d5e8d8; }
+.ic-hero-label { color: #d5e8e6; }
 .ic-hero-value { margin-top: 6px; font-size: clamp(2rem, 5vw, 2.8rem) !important; }
 .ic-hero-headline { color: var(--s97-lime); max-width: 24ch; }
 .ic-filter-deck { margin-top: 14px; }
@@ -164,7 +164,7 @@ button:disabled { cursor: default; opacity: .5; }
 .s97-credit-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin: 0 0 22px !important; }
 .s97-credit-summary > .x97-summary { padding: 22px 18px !important; min-height: 136px !important; }
 .s97-credit-summary > .x97-summary:first-child { background: var(--s97-green) !important; border-color: var(--s97-green) !important; }
-.s97-credit-summary > .x97-summary:first-child .k, .s97-credit-summary > .x97-summary:first-child .s { color: #d0e2d5 !important; }
+.s97-credit-summary > .x97-summary:first-child .k, .s97-credit-summary > .x97-summary:first-child .s { color: #d0e2e0 !important; }
 .s97-credit-summary > .x97-summary:first-child .v { color: var(--s97-lime) !important; }
 .s97-credit-summary .k { font-size: 13px !important; font-weight: 550; }
 .s97-credit-summary .v { margin: 12px 0 6px; font-size: clamp(1.3rem, 2.5vw, 1.9rem) !important; }
@@ -254,11 +254,11 @@ textarea.x97-textarea { min-height: 100px !important; }
 
 @media (min-width: 1360px) {
   body { padding-left: 208px; }
-  .nav { top: 18px !important; bottom: 18px !important; left: 18px !important; width: 172px !important; height: calc(100dvh - 36px) !important; max-height: 1000px; transform: none !important; background: var(--s97-green) !important; border: 1px solid #21543d !important; border-radius: 20px !important; padding: 124px 10px 14px !important; box-shadow: none !important; }
+  .nav { top: 18px !important; bottom: 18px !important; left: 18px !important; width: 172px !important; height: calc(100dvh - 36px) !important; max-height: 1000px; transform: none !important; background: var(--s97-green) !important; border: 1px solid #215454 !important; border-radius: 20px !important; padding: 124px 10px 14px !important; box-shadow: none !important; }
   .nav::before { display: block !important; content: ""; top: 22px; left: 47px; width: 76px; height: 66px; background: url('./icons/mark-97.png') center/contain no-repeat; }
-  .nav::after { position: absolute; display: block; content: "LIVE  ·  FINANCE"; top: 94px; left: 10px; width: 150px; color: #c5d9ca; font: 600 8px/1 var(--fu); letter-spacing: .18em; text-align: center; }
+  .nav::after { position: absolute; display: block; content: "LIVE  ·  FINANCE"; top: 94px; left: 10px; width: 150px; color: #c5d9d7; font: 600 8px/1 var(--fu); letter-spacing: .18em; text-align: center; }
   .navin { display: flex !important; flex-direction: column; gap: 8px; padding: 0 !important; }
-  .navitem { display: flex !important; flex-direction: row !important; align-items: center; justify-content: flex-start; gap: 12px; padding: 14px !important; height: 52px; min-height: 52px !important; font-size: 14px !important; color: #c5d9ca !important; border-radius: 11px; }
+  .navitem { display: flex !important; flex-direction: row !important; align-items: center; justify-content: flex-start; gap: 12px; padding: 14px !important; height: 52px; min-height: 52px !important; font-size: 14px !important; color: #c5d9d7 !important; border-radius: 11px; }
   .navitem.on { background: var(--s97-lime) !important; color: var(--s97-green) !important; }
   .navitem .ind { display: none; }
   #x97-v2-root, .v3-screen { padding-top: 30px !important; }
@@ -361,7 +361,7 @@ textarea.x97-textarea { min-height: 100px !important; }
 /* Sign-in and startup use the same 97 identity as the signed-in workspace. */
 .s97-cloud-gate { background: var(--bg) !important; color: var(--tx) !important; font-family: var(--fu) !important; padding: max(24px,env(safe-area-inset-top)) 20px max(24px,env(safe-area-inset-bottom)) !important; }
 .s97-cloud-card { max-width: 440px; background: var(--card) !important; border: 1px solid var(--line) !important; padding: 30px !important; border-radius: 24px !important; box-shadow: 0 20px 70px #062d2110 !important; }
-.s97-cloud-brand { width: max-content; min-height: 62px; padding: 6px 16px 6px 9px; font-family: var(--fu) !important; font-size: 17px !important; font-weight: 700 !important; letter-spacing: .16em !important; color: #fff !important; gap: 12px !important; background: var(--s97-green); border: 1px solid #285c43; border-radius: 16px; }
+.s97-cloud-brand { width: max-content; min-height: 62px; padding: 6px 16px 6px 9px; font-family: var(--fu) !important; font-size: 17px !important; font-weight: 700 !important; letter-spacing: .16em !important; color: #fff !important; gap: 12px !important; background: var(--s97-green); border: 1px solid #285c5c; border-radius: 16px; }
 .s97-cloud-brand .s97-brand-mark { width: 60px !important; height: 52px !important; padding: 0; object-fit: contain; border: 0; border-radius: 0; background: transparent; }
 .s97-cloud-sub { font-size: 14px !important; line-height: 1.65 !important; color: var(--tx2) !important; margin: 22px 0 !important; }
 .s97-cloud-label { color: var(--tx) !important; font-size: 14px !important; font-weight: 550 !important; margin: 18px 0 8px !important; }
