@@ -2126,6 +2126,26 @@
         .x97-hero-command::after,.x97-progress i,.x97-pay-bar i,.x97-collection-progress i{animation:none!important}
       }
 
+      /* ── Hero breakdown ───────────────────────────────────────────────
+         The headline sums three different kinds of money, so the parts sit
+         inside the same card rather than in separate tiles — the total is
+         only honest while its components are readable next to it. */
+      .x97-hero-split{position:relative;z-index:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
+        gap:10px;margin-top:16px;padding-top:15px;border-top:1px solid rgba(255,255,255,.13)}
+      .x97-hero-part{min-width:0}
+      .x97-hero-part-k{display:block;font-size:9.5px;text-transform:uppercase;letter-spacing:.08em;
+        font-weight:800;color:rgba(255,255,255,.52);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .x97-hero-part b{display:block;margin-top:6px;font-size:15px;font-weight:500;color:#fff;letter-spacing:-.02em}
+      .x97-hero-part b.is-credit{color:var(--lime)}
+      .x97-hero-part b.is-incoming{color:#9FE9CE}
+      .x97-hero-part b small{display:block;margin-top:3px;font-size:9px;font-weight:700;color:rgba(255,255,255,.42);letter-spacing:0}
+      .x97-hero-command .x97-hero-caption{margin-top:14px}
+      @media(max-width:420px){
+        .x97-hero-split{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+        .x97-hero-part-k{font-size:8.5px;letter-spacing:.05em}
+        .x97-hero-part b{font-size:12.5px}
+      }
+
       /* ── Navigation dock ──────────────────────────────────────────────
          A floating dock rather than an edge-to-edge bar, and one confident
          active signal — a lime capsule around the whole item — instead of
@@ -2652,6 +2672,16 @@
     var outstandingUGX = a.open.filter(function (x) { return String(x.currency || "UGX").toUpperCase() !== "USD"; }).reduce(function (s, x) { return s + outstandingOf(x); }, 0);
     var outstandingUSD = a.open.filter(function (x) { return String(x.currency || "UGX").toUpperCase() === "USD"; }).reduce(function (s, x) { return s + outstandingOf(x); }, 0);
     var actualSpend = (a.expenses.personalActual || 0) + (a.expenses.businessActual || 0);
+    // Receivables are held in two currencies. The headline is a single home-currency
+    // figure, so dollars convert at the live rate and fall back to the rate saved in
+    // Settings — never silently dropped, which would understate what is owed.
+    var outstandingUSDHome = 0;
+    if (outstandingUSD) {
+      var converted = fxConvert(outstandingUSD, "USD", FX_HOME);
+      outstandingUSDHome = converted == null ? outstandingUSD * num(doc.meta && doc.meta.usdRate) : converted;
+    }
+    var incomingTotal = outstandingUGX + outstandingUSDHome;
+    var totalPosition = a.cash + a.creditAvailable + incomingTotal;
     var months = [0, 1, 2].map(function (offset) { var d = startOfMonth(todayDate()); d.setMonth(d.getMonth() + offset); return monthKey(d); });
     var accountRows = (doc.balances || []).slice().sort(function (a, b) {
       var ae = /equity/i.test(String(a.account || "")), be = /equity/i.test(String(b.account || ""));
@@ -2692,7 +2722,13 @@
     root.innerHTML = '<div class="x97-page" data-v2-page="dashboard">' +
       pageHeader("97 Live Finance", "Your money", "") +
       '<div class="x97-dashboard-main">' +
-        '<section class="x97-card x97-hero x97-hero-command" data-v2-hero><div class="x97-hero-topline"><div class="x97-hero-label">Available cash</div><span class="x97-hero-live">Cash on hand</span></div><button type="button" class="x97-hero-value x97-money x97-hero-value-btn" data-x97-action="edit-balances" aria-label="Update balances">' + money(a.cash, "UGX") + '<span class="x97-hero-edit-hint">' + icon("edit", 18) + '</span></button><div class="x97-hero-caption">Across your bank, mobile money and cash accounts — tap the total to edit them.</div><div class="x97-hero-meta"><div class="x97-stat"><span>After active debt</span><b>' + money(a.cash - a.debt, "UGX") + '</b></div><div class="x97-stat"><span>Active debt</span><b class="' + (a.debt ? "x97-red" : "x97-green") + '">' + money(a.debt, "UGX") + '</b></div></div></section>' +
+        '<section class="x97-card x97-hero x97-hero-command" data-v2-hero><div class="x97-hero-topline"><div class="x97-hero-label">Total position</div><span class="x97-hero-live">Cash + credit + incoming</span></div><button type="button" class="x97-hero-value x97-money x97-hero-value-btn" data-x97-action="edit-balances" aria-label="Update balances">' + money(totalPosition, "UGX") + '<span class="x97-hero-edit-hint">' + icon("edit", 18) + '</span></button>' +
+          '<div class="x97-hero-split">' +
+            '<div class="x97-hero-part"><span class="x97-hero-part-k">Cash on hand</span><b class="x97-money">' + money(a.cash, "UGX") + '</b></div>' +
+            '<div class="x97-hero-part"><span class="x97-hero-part-k">Available credit</span><b class="x97-money is-credit">' + money(a.creditAvailable, "UGX") + '</b></div>' +
+            '<div class="x97-hero-part"><span class="x97-hero-part-k">Incoming</span><b class="x97-money is-incoming">' + money(incomingTotal, "UGX") + (outstandingUSD ? '<small>incl. ' + esc(money(outstandingUSD, "USD", true)) + '</small>' : '') + '</b></div>' +
+          '</div>' +
+          '<div class="x97-hero-caption">Money you hold, credit you can draw and invoices still owed — tap the total to edit balances and credit lines.</div></section>' +
         '<section class="x97-command-actions x97-dashboard-wide"><button class="x97-command-action primary" data-x97-action="record-payment"><span class="x97-command-icon">' + icon("wallet", 17) + '</span><span><b>Record payment</b><small>Money received</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="add-upcoming"><span class="x97-command-icon teal">' + icon("plus", 17) + '</span><span><b>Add deal</b><small>Money expected</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="go-expenses"><span class="x97-command-icon warn">' + icon("trend", 17) + '</span><span><b>Add expense</b><small>Money spent</small></span>' + icon("chevron", 14) + '</button></section>' +
         '<section class="x97-section x97-glance-section x97-dashboard-wide">' + sectionHead("At a glance") + '<div class="x97-summary-grid x97-finance-pulse"><div class="x97-card x97-summary"><div class="k">Collected this month</div><div class="v x97-money x97-green">' + money(collectedThisMonth, "UGX", true) + '</div><div class="s">Actual money received</div></div><div class="x97-card x97-summary"><div class="k">Due next 7 days</div><div class="v x97-money x97-teal">' + money(in7, "UGX", true) + '</div><div class="s">' + (in7USD ? '<span class="x97-teal">' + money(in7USD, "USD", true) + '</span> · ' : '') + 'Scheduled incoming</div></div><div class="x97-card x97-summary"><div class="k">Outstanding</div><div class="v x97-money x97-amber">' + money(outstandingUGX, "UGX", true) + '</div><div class="s">' + (outstandingUSD ? '<span class="x97-teal">' + money(outstandingUSD, "USD", true) + '</span> · ' : '') + 'Still owed by clients</div></div><div class="x97-card x97-summary"><div class="k">Actual spending</div><div class="v x97-money x97-red">' + money(actualSpend, "UGX", true) + '</div><div class="s">This month</div></div></div></section>' +
         '<section class="x97-section x97-dashboard-accounts">' + sectionHead("Accounts", "Add account", "add-account") + '<div class="x97-card x97-pad x97-account-rail">' + (accountRows || '<div class="x97-empty"><strong>No accounts yet</strong><p>Add your bank, mobile money or cash balance.</p></div>') + '</div></section>' +
