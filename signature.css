@@ -91,11 +91,9 @@ button:disabled { cursor: default; opacity: .5; }
 .x97-summary { min-width: 0; }
 .x97-money, .tabnum { font-variant-numeric: tabular-nums lining-nums !important; }
 .x97-pill, .ic-badge { font-weight: 600; }
-.x97-btn, .btn { min-height: 46px !important; padding: 11px 16px !important; border-radius: 11px !important; font-size: 14px !important; font-weight: 600 !important; box-shadow: none !important; }
-.x97-btn.primary, .btn.primary { color: #fff !important; background: #0b7575 !important; border-color: #0b7575 !important; }
-.x97-btn.danger, .btn.danger { color: var(--neg) !important; background: var(--negdim) !important; border-color: transparent !important; }
+/* .btn/.x97-btn base, .btn.primary, and .btn.danger now live in app.css's
+   components layer (danger's colours came from here — kept faithfully). */
 .x97-btn.teal { background: var(--posdim) !important; color: var(--pos) !important; border-color: transparent !important; }
-.x97-btn svg, .btn svg { flex-shrink: 0; }
 @media (hover: hover) {
   button.x97-card:hover, .s97-expense-row:hover { border-color: var(--line2) !important; background: var(--bg2) !important; transform: none !important; }
   .x97-btn:hover, .btn:hover { filter: brightness(.97); transform: none !important; }

@@ -220,20 +220,7 @@ body.x97-v2-mode .wrap,
 .v2-tool { width: 42px; height: 42px; min-width: 42px; border: 0; border-radius: 10px; background: transparent; color: var(--tx2); }
 .v2-tool[aria-pressed="true"] { color: var(--apx-forest-900); background: var(--apx-lime); }
 
-/* Surface language */
-.x97-card,
-.v3-classic-app .card,
-.x97-msg-card,
-.x97-fx-card,
-.x97-facility,
-.x97-loan {
-  position: relative;
-  min-width: 0;
-  border: 1px solid var(--line) !important;
-  border-radius: var(--apx-radius-md) !important;
-  background: color-mix(in srgb, var(--card) 96%, var(--bg)) !important;
-  box-shadow: var(--apx-shadow-1) !important;
-}
+/* .card/.x97-card family now live in app.css's components layer. */
 .x97-section { min-width: 0; margin-top: 0 !important; }
 .x97-section-head { min-height: 44px; margin: 0 0 12px !important; gap: 14px; align-items: center; }
 .x97-section-title, .s97-section-label {
@@ -261,37 +248,8 @@ body.x97-v2-mode .wrap,
   font-feature-settings: "tnum" 1, "lnum" 1, "zero" 1 !important;
   letter-spacing: -.045em !important;
 }
-.x97-btn, .btn {
-  min-height: 46px !important;
-  padding: 11px 16px !important;
-  border-radius: 11px !important;
-  font-size: 14px !important;
-  font-weight: 650 !important;
-  box-shadow: none !important;
-}
-.x97-btn.primary, .btn.primary {
-  position: relative;
-  overflow: hidden;
-  color: #fff !important;
-  border-color: var(--pos) !important;
-  background: linear-gradient(145deg, #108181, #035963) !important;
-}
-.x97-btn.primary::after, .btn.primary::after {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 -70%;
-  width: 46%;
-  background: linear-gradient(105deg, transparent, rgba(255,255,255,.28), transparent);
-  transform: skewX(-18deg);
-}
-@media (hover:hover) {
-  .x97-btn.primary:hover::after, .btn.primary:hover::after { animation: apx-sheen .7s var(--apx-ease); }
-  .x97-card:hover, .v3-classic-app .card:hover, .x97-msg-card:hover, .x97-fx-card:hover {
-    border-color: var(--line2) !important;
-    box-shadow: var(--apx-shadow-2) !important;
-    transform: translateY(-2px) !important;
-  }
-}
+/* .btn/.x97-btn family and .card-family :hover now live in app.css's
+   components layer. */
 
 /* Desktop bento dashboard */
 #x97-v2-root[data-screen="dashboard"] .x97-dashboard-main {
@@ -576,25 +534,9 @@ body.x97-v2-mode .wrap,
 .s97-settings-footer { padding: 10px 0 0 !important; color: var(--tx3) !important; font: 600 11px/1.4 var(--fnum) !important; letter-spacing: .14em; }
 
 /* Editors and overlays */
-.x97-input, .x97-select, .x97-textarea, .inp {
-  min-height: 48px !important;
-  padding: 12px 14px !important;
-  border: 1px solid var(--line2) !important;
-  border-radius: 11px !important;
-  background: var(--card) !important;
-  color: var(--tx) !important;
-  box-shadow: none !important;
-}
-.x97-input:focus, .x97-select:focus, .x97-textarea:focus, .inp:focus { border-color: var(--pos) !important; box-shadow: 0 0 0 3px var(--posdim) !important; }
+/* .inp/.x97-input family and .backdrop/.sheet now live in app.css's
+   components layer. */
 .x97-field > label { margin-bottom: 8px !important; color: var(--tx) !important; font-size: 14px !important; font-weight: 600 !important; text-transform: none; letter-spacing: 0; }
-.x97-back, .backdrop { background: rgba(1,19,21,.58) !important; backdrop-filter: blur(10px) saturate(.9); }
-.x97-sheet, .v3-classic-app .sheet {
-  overflow: hidden;
-  border: 1px solid var(--line2) !important;
-  border-radius: 24px !important;
-  background: var(--bg2) !important;
-  box-shadow: 0 34px 100px rgba(0,18,20,.36) !important;
-}
 .x97-sheet-head { padding: 19px 22px !important; border-bottom: 1px solid var(--line); }
 .x97-sheet-head h2, .sheet > div:nth-child(2) .disp { font: 500 26px/1.15 var(--fdisp) !important; letter-spacing: -.04em; }
 .x97-sheet-body, .sheet > div:nth-child(3) { padding: 22px !important; overscroll-behavior: contain; }
@@ -751,7 +693,6 @@ body.x97-v2-mode .wrap,
   .s97-setting-card { padding: 19px 17px !important; }
   .s97-setting-card > div[style*="grid"] { grid-template-columns: minmax(0,1fr) !important; gap: 15px !important; }
   .s97-backups > div:nth-child(3) { grid-template-columns: minmax(0,1fr); }
-  .x97-sheet, .v3-classic-app .sheet { max-height: 94dvh; border-radius: 24px 24px 0 0 !important; border-bottom: 0 !important; }
   .x97-sheet-head { padding: 16px 18px !important; }
   .x97-sheet-body, .sheet > div:nth-child(3) { padding: 18px !important; }
   .x97-sheet-foot, .sheet > div:last-child:has(> .btn) { padding-inline: 18px !important; }
@@ -849,8 +790,6 @@ body.x97-v2-mode .wrap,
 .is-inview[data-s97-motion="brand"] { animation: apx-brand-spring .72s var(--apx-ease) both !important; }
 .is-inview[data-s97-motion="headline"] { animation: apx-title-reveal .68s var(--apx-ease) both !important; }
 .is-inview[data-s97-motion="hero"] { animation: apx-hero-open .82s var(--apx-ease) both !important; }
-.x97-sheet, .v3-classic-app .sheet { animation: apx-sheet-open .46s var(--apx-ease) both !important; }
-.x97-back, .backdrop { animation: apx-backdrop-in .25s ease both !important; }
 .x97-fab, .fab { animation: apx-fab-enter .55s var(--apx-ease) both !important; }
 .x97-cloud i, .s97-cloud-dot.saved { animation: apx-cloud-ping 2.8s ease-in-out infinite !important; }
 .x97-empty svg, .ic-empty svg { animation: apx-empty-float 3.8s ease-in-out infinite !important; }
@@ -865,8 +804,6 @@ body.x97-v2-mode .wrap,
 @keyframes apx-brand-spring { 0% { opacity: 0; transform: translate3d(-18px,0,0) scale(.9); } 65% { transform: translate3d(2px,0,0) scale(1.015); } 100% { opacity: 1; transform: none; } }
 @keyframes apx-title-reveal { from { opacity: 0; clip-path: inset(0 0 100% 0); transform: translate3d(0,16px,0); } to { opacity: 1; clip-path: inset(0); transform: none; } }
 @keyframes apx-hero-open { from { opacity: 0; transform: scale(.97) translate3d(0,18px,0); filter: saturate(.65); } to { opacity: 1; transform: none; filter: none; } }
-@keyframes apx-sheet-open { from { opacity: 0; transform: translate3d(0,30px,0) scale(.985); } to { opacity: 1; transform: none; } }
-@keyframes apx-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes apx-fab-enter { from { opacity: 0; transform: translate3d(0,18px,0) scale(.78) rotate(-8deg); } to { opacity: 1; transform: none; } }
 @keyframes apx-cloud-ping { 0%,100% { opacity: .68; box-shadow: 0 0 0 0 rgba(11,117,117,.18); } 50% { opacity: 1; box-shadow: 0 0 0 5px rgba(11,117,117,0); } }
 @keyframes apx-empty-float { 0%,100% { transform: translate3d(0,0,0); } 50% { transform: translate3d(0,-5px,0); } }

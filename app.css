@@ -272,3 +272,130 @@
   @keyframes chrome-nav-select { 0% { transform: scale(.72) rotate(-5deg); } 70% { transform: scale(1.06) rotate(1deg); } 100% { transform: none; } }
   @keyframes chrome-nav-hover { 0%,100% { transform: none; } 50% { transform: translate3d(2px,0,0); } }
 }
+
+@layer components {
+  /* Base design-system primitives: card, button, input, sheet/backdrop.
+     apex.css carries these today (it wins the cascade via the same
+     ensureStyleLast() mechanism as nav did), with index.html's original
+     base rule supplying interaction details (transitions, hover/active,
+     the .btn variants apex never touched) that apex was never opposing
+     in the first place — both sets merged here, apex's visual values
+     kept where the two actually conflict. See the chrome layer's note
+     on !important: same reasoning applies here. */
+  .card, .x97-card, .x97-fx-card, .x97-msg-card, .x97-item, .x97-facility, .x97-loan {
+    position: relative;
+    min-width: 0;
+    background: color-mix(in srgb, var(--card) 96%, var(--bg)) !important;
+    border: 1px solid var(--line) !important;
+    border-radius: var(--r2) !important;
+    box-shadow: 0 1px 2px rgba(2,25,28,.035), 0 12px 30px -24px rgba(2,25,28,.25) !important;
+    transition: border-color .2s ease, box-shadow .22s ease, transform .22s cubic-bezier(.22,1,.36,1);
+  }
+  @media (hover: hover) {
+    .card:hover, .x97-card:hover, .x97-fx-card:hover, .x97-msg-card:hover {
+      border-color: var(--line2) !important;
+      box-shadow: 0 20px 60px -38px rgba(2,25,28,.4), 0 2px 8px rgba(2,25,28,.04) !important;
+      transform: translateY(-2px) !important;
+    }
+  }
+
+  .press { cursor: pointer; transition: transform .12s ease, background .15s ease, opacity .15s ease; }
+  .press:active { transform: scale(.97); }
+
+  .btn, .x97-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    border: 1px solid transparent; border-radius: 11px !important;
+    padding: 11px 16px !important; font-size: 14px !important; font-weight: 650 !important;
+    min-height: 46px !important; box-shadow: none !important;
+    transition: opacity .15s, transform .14s cubic-bezier(.34,1.4,.64,1), box-shadow .18s, filter .18s, background .15s;
+  }
+  .btn svg, .x97-btn svg { flex-shrink: 0; }
+  .btn:active, .x97-btn:active { transform: scale(.96); }
+  @media (hover: hover) { .btn:hover, .x97-btn:hover { transform: translateY(-1px); } }
+  .btn.primary, .x97-btn.primary {
+    position: relative; overflow: hidden;
+    color: #fff !important;
+    background: linear-gradient(145deg, #108181, #035963) !important;
+    border: none !important;
+    box-shadow: 0 14px 28px -17px rgba(4,42,47,.78) !important;
+  }
+  .btn.primary::after, .x97-btn.primary::after {
+    content: ""; position: absolute; inset: 0 auto 0 -70%; width: 46%;
+    background: linear-gradient(105deg, transparent, rgba(255,255,255,.28), transparent);
+    transform: skewX(-18deg); pointer-events: none;
+  }
+  @media (hover: hover) {
+    .btn.primary:hover::after, .x97-btn.primary:hover::after { animation: apx-sheen .7s var(--apx-ease, cubic-bezier(.22,1,.36,1)); }
+  }
+  .btn.ghost { background: transparent !important; color: var(--tx) !important; border-color: var(--line2) !important; }
+  .btn.ghost:hover { background: var(--posdim) !important; border-color: var(--pos) !important; }
+  .btn.subtle { background: var(--card2) !important; color: var(--tx2) !important; border-color: var(--line) !important; }
+  .btn.subtle:hover { background: var(--card3) !important; color: var(--tx) !important; }
+  .btn.danger { background: var(--negdim) !important; color: var(--neg) !important; border-color: transparent !important; }
+  .btn.danger:hover { background: var(--negdim) !important; border-color: var(--neg) !important; }
+
+  .inp, .x97-input, .x97-select, .x97-textarea, .cinput, .s97-cloud-input {
+    width: 100%;
+    min-height: 48px !important;
+    padding: 12px 14px !important;
+    border: 1px solid var(--line2) !important;
+    border-radius: 11px !important;
+    background: var(--card) !important;
+    color: var(--tx) !important;
+    font-size: 14px;
+    outline: none;
+    box-shadow: none !important;
+    transition: border-color .18s, box-shadow .18s, background .18s;
+    caret-color: var(--pos);
+  }
+  .inp::placeholder { color: var(--tx3); }
+  .inp:focus, .x97-input:focus, .x97-select:focus, .x97-textarea:focus, .cinput:focus, .s97-cloud-input:focus {
+    border-color: var(--pos) !important;
+    box-shadow: 0 0 0 3px var(--posdim) !important;
+  }
+  select.inp {
+    appearance: none; -webkit-appearance: none; padding-right: 32px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%2362675A' stroke-width='2' viewBox='0 0 24 24'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 11px center;
+  }
+
+  .backdrop, .x97-back {
+    position: fixed; inset: 0; z-index: 60;
+    display: flex; align-items: flex-end; justify-content: center;
+    background: rgba(1,19,21,.58) !important;
+    backdrop-filter: blur(14px) saturate(1.1) !important;
+    animation: apx-backdrop-in .25s ease both;
+  }
+  .sheet, .x97-sheet {
+    width: 100%; max-width: 520px;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    border: 1px solid #dbe6e5 !important;
+    border-radius: 28px 28px 0 0 !important;
+    background: #fafcf9 !important;
+    box-shadow: 0 22px 60px -28px rgba(2,25,28,.58) !important;
+    padding-bottom: env(safe-area-inset-bottom);
+    animation: apx-sheet-open .46s var(--apx-ease, cubic-bezier(.22,1,.36,1)) both;
+  }
+  html[data-v2-theme="dark"] .sheet, html[data-v2-theme="dark"] .x97-sheet {
+    border-color: #294245 !important;
+    background: #0b1f21 !important;
+    box-shadow: 0 24px 68px -26px rgba(0,0,0,.9) !important;
+  }
+  @media (min-width: 560px) {
+    .backdrop, .x97-back { align-items: center; padding: 16px; }
+  }
+  @media (max-width: 759px) {
+    .sheet, .x97-sheet { max-height: 94dvh !important; }
+  }
+  .sheet-foot, .x97-sheet-foot {
+    border-color: var(--line) !important;
+    background: color-mix(in srgb, var(--bg2) 94%, transparent) !important;
+    backdrop-filter: blur(18px) saturate(1.15);
+  }
+  .handle { width: 36px; height: 4px; border-radius: 99px; background: var(--line2); margin: 9px auto 2px; }
+
+  @keyframes apx-sheen { from { transform: translateX(-110%) skewX(-18deg); } to { transform: translateX(430%) skewX(-18deg); } }
+  @keyframes apx-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes apx-sheet-open { from { opacity: 0; transform: translate3d(0,30px,0) scale(.985); } to { opacity: 1; transform: none; } }
+}

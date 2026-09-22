@@ -420,28 +420,7 @@ body.x97-v2-mode .wrap {
   backdrop-filter: blur(16px);
 }
 
-.x97-card,
-.card,
-.x97-fx-card,
-.x97-msg-card,
-.x97-item {
-  border: 1px solid var(--v2-line) !important;
-  background: linear-gradient(158deg, color-mix(in srgb, var(--v2-surface-solid) 96%, transparent), color-mix(in srgb, var(--v2-paper-2) 92%, transparent)) !important;
-  border-radius: var(--v2-radius) !important;
-  box-shadow: var(--v2-shadow-sm) !important;
-}
-
-@media (hover: hover) {
-  .x97-card:not(.x97-hero-command):hover,
-  .card:hover,
-  .x97-fx-card:hover,
-  .x97-msg-card:hover,
-  .x97-item:hover {
-    border-color: var(--v2-line-strong) !important;
-    box-shadow: var(--v2-shadow) !important;
-    transform: translateY(-3px) !important;
-  }
-}
+/* .card/.x97-card family now live in app.css's components layer. */
 
 .x97-hero-command {
   isolation: isolate;
@@ -733,59 +712,19 @@ body.x97-v2-mode .wrap {
   border-color: var(--v2-forest) !important;
 }
 
-.x97-btn.primary,
-.btn.primary,
-.s97-cloud-btn.primary {
-  color: #fff !important;
-  background: linear-gradient(145deg, var(--v2-forest-2), var(--v2-forest)) !important;
-  box-shadow: 0 14px 28px -17px rgba(4, 42, 47, 0.78) !important;
-}
-
-.x97-input,
-.x97-select,
-.x97-textarea,
-.inp,
-.cinput,
-.s97-cloud-input {
-  color: var(--v2-ink) !important;
-  border-color: var(--v2-line-strong) !important;
-  border-radius: 13px !important;
-  background: var(--v2-surface-solid) !important;
-  box-shadow: inset 0 1px 2px rgba(2, 25, 28, 0.035) !important;
-}
-
-.x97-input:focus,
-.x97-select:focus,
-.x97-textarea:focus,
-.inp:focus,
-.cinput:focus,
-.s97-cloud-input:focus {
-  border-color: var(--v2-emerald) !important;
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--v2-emerald) 17%, transparent) !important;
-}
-
-.x97-back,
-.backdrop,
-.x97-remind-overlay,
-.s97-cloud-back {
+/* .btn.primary, .inp/.x97-input family, .backdrop, .sheet now live in
+   app.css's components layer. .x97-remind-overlay/-panel and
+   .s97-cloud-back/-modal still need SOME visual treatment here since
+   they weren't part of that migration (messaging/cloud-sync screens,
+   not yet consolidated) — kept narrowly scoped to just those. */
+.x97-remind-overlay, .s97-cloud-back {
   background: rgba(2, 17, 19, 0.58) !important;
   backdrop-filter: blur(14px) saturate(1.1) !important;
 }
-
-.x97-sheet,
-.sheet,
-.x97-remind-panel,
-.s97-cloud-modal {
+.x97-remind-panel, .s97-cloud-modal {
   border: 1px solid var(--v2-line) !important;
   background: var(--v2-paper-2) !important;
   box-shadow: var(--v2-shadow-float) !important;
-}
-
-.x97-sheet-foot,
-.sheet-foot {
-  border-color: var(--v2-line) !important;
-  background: color-mix(in srgb, var(--v2-paper-2) 94%, transparent) !important;
-  backdrop-filter: blur(18px) saturate(1.15);
 }
 
 .v2-slider-shell {

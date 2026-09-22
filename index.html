@@ -50,30 +50,8 @@ button{cursor:pointer;color:inherit}
 .hscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;scroll-snap-type:x mandatory;scrollbar-width:none}
 .hscroll::-webkit-scrollbar{display:none}
 .snap{scroll-snap-align:start}
-.card{background:linear-gradient(180deg,var(--card) 0%,var(--bg2) 135%);border:1px solid var(--line);border-radius:var(--r2);box-shadow:var(--toplit),var(--elev-1);transition:border-color .2s ease,box-shadow .22s ease,transform .22s cubic-bezier(.22,1,.36,1)}
-@media(hover:hover){.card:hover{box-shadow:var(--toplit),var(--elev-2);border-color:var(--line2);transform:translateY(-2px)}}
-.press{cursor:pointer;transition:transform .12s ease,background .15s ease,opacity .15s ease}
-.press:active{transform:scale(.97)}
-.inp{width:100%;background:var(--card);border:1px solid var(--line2);border-radius:11px;padding:11px 12px;color:var(--tx);font-size:14px;outline:none;min-height:42px;box-shadow:inset 0 1px 2px rgba(18,27,25,.04);transition:border-color .18s,box-shadow .18s,background .18s;caret-color:var(--pos)}
-.inp::placeholder{color:var(--tx3)}
-.inp:focus{border-color:var(--pos);background:#FFF;box-shadow:inset 0 1px 2px rgba(18,27,25,.04),var(--ring)}
-select.inp{appearance:none;-webkit-appearance:none;padding-right:32px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%2362675A' stroke-width='2' viewBox='0 0 24 24'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 11px center}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid transparent;border-radius:12px;padding:10px 15px;font-size:13.5px;font-weight:600;min-height:44px;transition:opacity .15s,transform .14s cubic-bezier(.34,1.4,.64,1),box-shadow .18s,filter .18s,background .15s}
-.btn:active{transform:scale(.96)}
-@media(hover:hover){.btn:hover{transform:translateY(-1px)}.btn:active{transform:scale(.96)}}
-.btn.primary{position:relative;overflow:hidden;background:linear-gradient(180deg,#0F8585,var(--pos2));color:var(--onpos);border:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 8px 20px -8px rgba(11,103,103,.55)}
-.btn.primary::after{content:"";position:absolute;top:0;bottom:0;left:-75%;width:46%;background:linear-gradient(105deg,transparent,rgba(255,255,255,.35),transparent);transform:skewX(-20deg);pointer-events:none;transition:left .55s ease}
-@media(hover:hover){.btn.primary:hover{filter:brightness(1.05)}.btn.primary:hover::after{left:128%}}
-.btn.ghost{background:transparent;color:var(--tx);border-color:var(--line2)}
-.btn.ghost:hover{background:var(--posdim);border-color:var(--pos)}
-.btn.subtle{background:var(--card2);color:var(--tx2);border-color:var(--line)}
-.btn.subtle:hover{background:var(--card3);color:var(--tx)}
-.btn.danger{background:rgba(181,53,46,.07);color:var(--neg);border-color:rgba(181,53,46,.35)}
-.btn.danger:hover{background:var(--negdim);border-color:var(--neg)}
-.backdrop{position:fixed;inset:0;z-index:60;background:rgba(18,27,25,.42);backdrop-filter:blur(6px);display:flex;align-items:flex-end;justify-content:center;animation:fadeIn .22s ease}
-.sheet{width:100%;max-width:520px;background:var(--bg2);border-top-left-radius:var(--r3);border-top-right-radius:var(--r3);border:1px solid var(--line);border-top-color:var(--line2);max-height:92vh;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom);box-shadow:var(--toplit),0 -24px 60px rgba(18,27,25,.28);animation:sheetUp .36s cubic-bezier(.3,1.22,.42,1)}
-@media(min-width:560px){.backdrop{align-items:center;padding:16px}.sheet{border-radius:var(--r3)}}
-.handle{width:36px;height:4px;border-radius:99px;background:var(--line2);margin:9px auto 2px}
+/* .card/.press/.inp/.btn(+variants)/.backdrop/.sheet/.handle now live in
+   app.css's components layer. */
 .fab{position:fixed;z-index:50;right:max(16px,calc(50% - 244px));bottom:calc(78px + env(safe-area-inset-bottom));width:54px;height:54px;border-radius:50%;background:var(--grad-fab);color:var(--onpos);display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 12px 28px -8px rgba(11,103,103,.55),0 2px 6px rgba(18,27,25,.18);border:none;transition:transform .14s}
 .fab::after{content:"";position:absolute;inset:-7px;border-radius:50%;background:radial-gradient(closest-side,rgba(14,117,117,.35),transparent 74%);z-index:-1;filter:blur(10px);animation:breathe 3.4s ease-in-out infinite}
 @keyframes breathe{0%,100%{opacity:.4;transform:scale(.93)}50%{opacity:.9;transform:scale(1.1)}}
@@ -94,7 +72,6 @@ select.inp{appearance:none;-webkit-appearance:none;padding-right:32px;background
 .dots i:nth-child(2){animation-delay:.2s}
 .dots i:nth-child(3){animation-delay:.4s}
 @keyframes blink{0%,60%,100%{opacity:.25}30%{opacity:1}}
-@keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes sheetUp{from{transform:translateY(26px);opacity:.4}to{transform:translateY(0);opacity:1}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:translateY(0)}}
 /* fadeUp uses fill-mode: backwards (NOT both/forwards). A "both"/"forwards" fill keeps the
