@@ -399,3 +399,922 @@
   @keyframes apx-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
   @keyframes apx-sheet-open { from { opacity: 0; transform: translate3d(0,30px,0) scale(.985); } to { opacity: 1; transform: none; } }
 }
+
+@layer screens {
+  /* Bulk of the remaining screen-specific styling (Incoming, Credit,
+     Expenses/Settings, Dashboard polish, motion system, sign-in gate),
+     moved here from apex.css's "Desktop bento dashboard" section through
+     its "messaging card" comment (originally two separate visual regions
+     of the file, but apex.css shares breakpoints across them — e.g. one
+     max-width:759px block touches ic-hero, s97-credit-summary AND
+     x97-hero-command together), so this is extracted as ONE contiguous,
+     order-preserving slice rather than split into per-screen commits or
+     migrated as separately-concatenated chunks: an earlier attempt at
+     this migration split "dashboard" from "incoming onward" and pasted
+     them dashboard-then-incoming, which silently swapped the relative
+     order of rules for the same selector that straddled the split point
+     (verified concretely on .x97-hero-command.x97-card's min-height,
+     whose 759px override used to lose a same-layer, same-specificity,
+     equal-importance tie it should have won). Re-extracting as one slice
+     from the pre-migration file fixes that class of bug at the root.
+
+     !important is added selectively, not blanket, and only where a real
+     CSS parse (tinycss2, not text matching) proves it's needed to match
+     what's actually live today: v2-premium.css, signature.css and
+     index.html's own inline <style> block all still carry competing
+     declarations for these selectors (their removal is deferred to the
+     final cleanup step) and stay unlayered, so a property they also set
+     would otherwise silently win over this layer. Four failure modes
+     were found and are guarded against here:
+     (1) forcing !important on every declaration would also steamroll
+     every :hover / :active / .is-* / dark-theme / pseudo-element /
+     ancestor-scoped refinement that's still winning on specificity in the old
+     files (e.g. it would have silently killed the .ic-row:hover
+     background and the .is-overdue/.is-paid status-stripe indicators),
+     so a declaration is only forced important when another unlayered
+     rule for the same element (not a conditional refinement of it) also
+     sets that property;
+     (2) "same element" includes GENERALIZATIONS, not just exact-text
+     selector matches: a lower-specificity selector that's still an
+     unconditional superset (e.g. plain .x97-hero-command, vs this
+     layer's .x97-hero-command.x97-card) is just as much a threat as an
+     exact match, because unlayered-beats-layered for normal declarations
+     ignores specificity entirely — a naive exact-text-only comparison
+     missed this and let .x97-hero-command's unlayered min-height keep
+     winning over the (layered, unforced) compound selector;
+     (3) forcing importance is skipped for any property whose only
+     same-element competitor is ALREADY !important in its original
+     source, since that competitor is already winning today (importance
+     beats non-important regardless of load order) and forcing apex's
+     copy too would flip a winner that already isn't apex's, rather than
+     preserve it (e.g. signature.css's already-important .s97-cloud-btn
+     colors, and v2-premium.css's already-important .ic-hero background,
+     both keep winning here exactly as they do today);
+     (4) where a real refinement rule and an exact/generalization fix
+     collided on the same property, the refinement itself was also
+     migrated below (see "Refinements") so it keeps winning via
+     specificity within this layer's own !important tier.
+     Every value was verified unchanged (only the importance flag flips,
+     never inside @keyframes) and the refinement search was run to a
+     fixed point. */
+/* Desktop bento dashboard */
+#x97-v2-root[data-screen="dashboard"] .x97-dashboard-main {
+  display: grid !important;
+  grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
+  grid-auto-flow: row dense;
+  gap: 22px !important;
+  align-items: start!important;
+}
+#x97-v2-root[data-screen="dashboard"] .x97-dashboard-main > section { grid-column: span 6; min-width: 0!important; margin: 0 !important; }
+#x97-v2-root[data-screen="dashboard"] .x97-dashboard-main > .x97-dashboard-wide { grid-column: 1 / -1!important; }
+#x97-v2-root[data-screen="dashboard"] .x97-hero-command { grid-column: 1 / 9; grid-row: 1; }
+#x97-v2-root[data-screen="dashboard"] .x97-dashboard-accounts { grid-column: 9 / -1; grid-row: 1; }
+#x97-v2-root[data-screen="dashboard"] [data-s97-module="actions"] { grid-column: 1 / -1; grid-row: 2; }
+#x97-v2-root[data-screen="dashboard"] [data-s97-module="glance"] { grid-column: 1 / -1; grid-row: 3; }
+#x97-v2-root[data-screen="dashboard"] [data-s97-module="attention"] { grid-column: 1 / 7; grid-row: 4; }
+#x97-v2-root[data-screen="dashboard"] [data-s97-module="messaging"] { grid-column: 7 / -1; grid-row: 4; }
+#x97-v2-root[data-screen="dashboard"] [data-s97-module="week"] { grid-column: 1 / 7; grid-row: 5; }
+#x97-v2-root[data-screen="dashboard"] [data-s97-module="earnings"] { grid-column: 7 / -1; grid-row: 5; }
+#x97-v2-root[data-screen="dashboard"] [data-s97-module="currency"] { grid-column: 1 / 5; grid-row: 6; }
+#x97-v2-root[data-screen="dashboard"] [data-s97-module="pipeline"] { grid-column: 5 / -1; grid-row: 6; }
+#x97-v2-root[data-screen="dashboard"] [data-s97-module="deals"] { grid-column: 1 / -1; grid-row: 7; }
+#x97-v2-root[data-screen="dashboard"] [data-s97-module="credit"] { grid-column: 1 / -1; grid-row: 8; }
+
+.x97-hero-command.x97-card {
+  min-height: 360px!important;
+  padding: 30px !important;
+  overflow: hidden !important;
+  isolation: isolate!important;
+  color: #fff!important;
+  border-color: #285c5c !important;
+  border-radius: var(--apx-radius-lg) !important;
+  background:
+    linear-gradient(90deg, transparent 49.75%, rgba(255,255,255,.035) 50%, transparent 50.25%),
+    linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+    radial-gradient(420px 300px at 100% 0%, rgba(108,249,221,.18), transparent 65%),
+    linear-gradient(145deg, #063e44, var(--apx-forest-950)) !important;
+  background-size: 40px 40px, 40px 40px, auto, auto !important;
+  box-shadow: var(--apx-shadow-dark) !important;
+}
+.x97-hero-command::before {
+  content: "" !important;
+  display: block !important;
+  position: absolute!important;
+  z-index: -1!important;
+  inset: auto -70px -110px auto!important;
+  width: 290px;
+  height: 290px;
+  border: 1px solid rgba(108,249,221,.16);
+  border-radius: 50%;
+}
+.x97-hero-command::after {
+  content: "97" !important;
+  display: block !important;
+  position: absolute!important;
+  z-index: -1!important;
+  right: 24px !important;
+  bottom: -30px !important;
+  width: auto !important;
+  height: auto !important;
+  color: rgba(255,255,255,.035);
+  background: none !important;
+  font: 700 180px/.8 var(--fu);
+  letter-spacing: -.1em;
+}
+.x97-hero-topline { gap: 14px; align-items: center; }
+.x97-hero-label { padding: 7px 10px !important; border-radius: 999px !important; background: rgba(108,249,221,.11) !important; color: var(--apx-lime) !important; font-size: 12px !important; font-weight: 650 !important; }
+.x97-hero-live { color: #c6dcda !important; font-size: 12px !important; }
+.x97-hero-live::before { background: var(--apx-lime) !important; box-shadow: 0 0 0 5px rgba(108,249,221,.1) !important; }
+.x97-hero-command .x97-hero-value {
+  max-width: 100%;
+  margin: 38px 0 8px !important;
+  color: #fff !important;
+  font-size: clamp(2.6rem, 5.1vw, 5.25rem) !important;
+  font-weight: 520 !important;
+  line-height: .98 !important;
+  letter-spacing: -.075em !important;
+  overflow-wrap: anywhere!important;
+}
+.x97-hero-caption { max-width: 42ch!important; color: #bad0ce !important; font-size: 14px !important; }
+.x97-hero-command .x97-hero-meta { margin-top: 34px !important; padding-top: 20px!important; border-top: 1px solid rgba(255,255,255,.14)!important; gap: 26px !important; }
+.x97-hero-command .x97-stat { padding: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; }
+.x97-hero-command .x97-stat + .x97-stat { padding-left: 24px !important; border-left: 1px solid rgba(255,255,255,.14) !important; }
+.x97-hero-command .x97-stat span { color: #aac6c3 !important; font-size: 12px !important; }
+.x97-hero-command .x97-stat b { margin-top: 7px!important; color: #fff; font: 540 clamp(1.05rem, 2vw, 1.4rem)/1.2 var(--fnum) !important; overflow-wrap: anywhere!important; }
+
+.x97-command-actions { display: grid !important; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px !important; }
+.x97-command-action {
+  min-height: 92px !important;
+  padding: 18px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--apx-radius-md) !important;
+  background: var(--card) !important;
+  box-shadow: var(--apx-shadow-1) !important;
+}
+.x97-command-action.primary { color: var(--apx-forest-900) !important; border-color: var(--apx-lime) !important; background: var(--apx-lime) !important; }
+.x97-command-action .x97-command-icon { width: 46px; height: 46px; border-radius: 14px; color: var(--pos)!important; background: var(--posdim)!important; }
+.x97-command-action.primary .x97-command-icon { color: var(--apx-lime); background: var(--apx-forest-900); }
+.x97-command-action b { font-size: 15px !important; font-weight: 680; }
+.x97-command-action small { color: var(--tx3) !important; font-size: 12px !important; }
+.x97-command-action.primary small { color: #315c5c !important; }
+
+.x97-finance-pulse { display: grid !important; grid-template-columns: repeat(4,minmax(0,1fr)) !important; gap: 12px !important; }
+.x97-finance-pulse .x97-summary {
+  min-height: 148px !important;
+  padding: 20px !important;
+  overflow: hidden!important;
+  border-radius: var(--apx-radius-md) !important;
+  box-shadow: inset 0 3px 0 var(--line), var(--apx-shadow-1) !important;
+}
+.x97-finance-pulse .x97-summary:first-child { box-shadow: inset 0 3px 0 var(--pos), var(--apx-shadow-1) !important; }
+.x97-finance-pulse .x97-summary:nth-child(2) { box-shadow: inset 0 3px 0 var(--usd), var(--apx-shadow-1) !important; }
+.x97-finance-pulse .x97-summary:nth-child(3) { box-shadow: inset 0 3px 0 var(--warn), var(--apx-shadow-1) !important; }
+.x97-finance-pulse .x97-summary:last-child { box-shadow: inset 0 3px 0 var(--neg), var(--apx-shadow-1) !important; }
+.x97-finance-pulse .k { color: var(--tx2); font-size: 13px !important; font-weight: 560!important; }
+.x97-finance-pulse .v { margin-top: 18px !important; font-size: clamp(1.35rem, 2.2vw, 2rem) !important; font-weight: 600 !important; overflow-wrap: anywhere; }
+.x97-finance-pulse .s { margin-top: 8px!important; color: var(--tx3)!important; font-size: 12px !important; }
+
+.x97-dashboard-accounts .x97-account-rail { min-height: 300px; padding: 4px 18px !important; overflow: hidden !important; }
+.x97-dashboard-accounts .x97-row { min-height: 72px; padding: 15px 0 !important; gap: 11px; border: 0 !important; border-bottom: 1px solid var(--line) !important; }
+.x97-dashboard-accounts .x97-row:last-child { border-bottom: 0 !important; }
+.x97-dashboard-accounts .x97-row-icon { width: 40px!important; height: 40px!important; flex: 0 0 40px!important; border-radius: 12px; }
+.x97-dashboard-accounts .x97-row-title { font-size: 14px !important; font-weight: 650 !important; }
+.x97-dashboard-accounts .x97-row-sub { font-size: 12px !important; }
+.x97-dashboard-accounts .x97-row-value { flex: 0 1 46%!important; font-size: 15px !important; white-space: normal; overflow-wrap: anywhere!important; }
+
+.x97-msg-card { width: 100%; min-height: 160px; padding: 22px !important; overflow: hidden; text-align: left; }
+.x97-msg-card::after { content: ""; position: absolute; width: 140px; height: 140px; right: -62px; bottom: -76px; border-radius: 50%; background: var(--posdim); }
+.x97-msg-icon { width: 48px; height: 48px; border-radius: 15px; }
+.x97-msg-title { font-size: 16px !important; font-weight: 680 !important; }
+.x97-msg-sub { margin-top: 5px; color: var(--tx3); font-size: 13px !important; line-height: 1.55!important; }
+.x97-tl-row { min-height: 72px; padding: 13px 0 !important; gap: 12px!important; }
+.x97-tl-date { width: 44px!important; min-width: 44px; border: 1px solid var(--line)!important; border-radius: 11px !important; background: var(--card2) !important; }
+.x97-tl-title, .x97-row-title { font-size: 14px !important; font-weight: 650 !important; }
+.x97-tl-sub { color: var(--tx3); font-size: 12px !important; }
+.x97-tl-amt { max-width: 38%!important; font-size: 14px !important; overflow-wrap: anywhere!important; }
+.x97-earn-card, .x97-fx-card { height: 100%; min-height: 240px; padding: 22px !important; border-radius: var(--apx-radius-md) !important; }
+.x97-earn-value, .x97-fx-value { font-size: clamp(1.7rem, 3vw, 2.35rem) !important; }
+.x97-month-rail { display: grid !important; grid-template-columns: repeat(3,minmax(0,1fr)) !important; gap: 12px !important; overflow: visible !important; }
+.x97-month-card { min-height: 176px !important; padding: 20px !important; border-top: 0 !important; overflow: hidden; }
+.x97-month-card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: linear-gradient(var(--apx-mint), var(--pos)); }
+.x97-month-title { font: 500 25px/1.05 var(--fdisp) !important; letter-spacing: -.04em !important; }
+.x97-month-count { margin-top: 8px; color: var(--tx3); font-size: 12px !important; }
+.x97-deal-metrics { gap: 12px !important; }
+.x97-deal-metric-card { min-height: 170px; padding: 20px !important; }
+.x97-deal-metric-card::after { display: block !important; width: 120px !important; height: 120px !important; right: -70px !important; top: -70px !important; opacity: .7; }
+.x97-deal-metric-main { font-size: clamp(1.6rem, 3vw, 2.2rem) !important; }
+
+/* Incoming / collections */
+#x97-v2-root[data-screen="upcoming"] { min-height: 100svh!important; padding-bottom: 46px !important; }
+.ic-shell { --ig-gut: 0!important; position: relative!important; inset: auto!important; display: block!important; overflow: visible!important; background: transparent!important; }
+.ic-shell .x97-eyebrow { display: block !important; }
+.ic-summary { display: block; }
+.ic-hero {
+  position: relative!important;
+  min-height: 236px;
+  padding: 28px 30px !important;
+  overflow: hidden !important;
+  border: 1px solid #285c5c !important;
+  border-radius: var(--apx-radius-lg) !important;
+  background:
+    radial-gradient(430px 240px at 100% 0%, rgba(108,249,221,.16), transparent 68%),
+    linear-gradient(145deg, #063f45, var(--apx-forest-950)) !important;
+  box-shadow: var(--apx-shadow-dark) !important;
+}
+.ic-hero::after { content: "IN"; position: absolute!important; right: -8px; bottom: -45px; color: rgba(255,255,255,.035)!important; font: 750 180px/.8 var(--fu); letter-spacing: -.1em; }
+.ic-hero-top { position: relative; z-index: 1; display: grid!important; grid-template-columns: minmax(0,1fr) minmax(180px,.36fr); align-items: end!important; gap: 30px!important; }
+.ic-hero-label { color: #b7d3d0 !important; font: 620 12px/1.3 var(--fnum) !important; letter-spacing: .08em!important; text-transform: uppercase!important; }
+.ic-hero-value { display: flex!important; align-items: baseline!important; flex-wrap: wrap!important; gap: 10px 16px!important; margin-top: 16px!important; color: #fff!important; font-size: clamp(2.5rem, 5vw, 4.8rem) !important; line-height: 1 !important; }
+.ic-hero-usd { color: var(--apx-lime)!important; font-size: clamp(1.05rem, 2vw, 1.35rem) !important; }
+.ic-hero-headline { padding: 14px 16px; border: 1px solid rgba(255,255,255,.12); border-radius: 14px; background: rgba(255,255,255,.07); color: #d8e7e6 !important; font-size: 14px !important; line-height: 1.5; }
+.ic-filter-deck { margin: 14px 0 0 !important; padding: 14px; border: 1px solid var(--line); border-radius: var(--apx-radius-md); background: var(--card); box-shadow: var(--apx-shadow-1); }
+.ic-hero-chips { display: flex !important; flex-wrap: wrap !important; gap: 7px !important; margin: 0 !important; overflow: visible !important; }
+.ic-quick { min-height: 44px!important; padding: 10px 13px!important; border: 1px solid var(--line)!important; border-radius: 10px!important; background: var(--card2)!important; color: var(--tx2)!important; font-size: 13px!important; font-weight: 580!important; }
+.ic-quick b { color: var(--tx3)!important; }
+.ic-quick.on, .ic-quick.on b { color: var(--apx-forest-900) !important; border-color: var(--apx-lime) !important; background: var(--apx-lime) !important; }
+.ic-quick.danger.on, .ic-quick.danger.on b { color: #fff !important; border-color: var(--neg) !important; background: var(--neg) !important; }
+.ic-month-row { display: flex!important; flex-wrap: wrap !important; gap: 5px !important; margin-top: 12px!important; padding-top: 12px!important; overflow: visible !important; border-top: 1px solid var(--line) !important; }
+.ic-month-chip { min-height: 40px!important; padding: 8px 11px!important; border: 1px solid transparent!important; border-radius: 9px!important; color: var(--tx2)!important; font-size: 12px!important; }
+.ic-month-chip.on, .ic-month-chip.on b { color: var(--pos) !important; background: var(--posdim) !important; }
+#ic-controls { position: sticky; z-index: 24; top: 10px; margin: 14px 0 10px!important; }
+.ic-toolbar { display: grid!important; grid-template-columns: minmax(0,1fr) 48px 48px 48px!important; gap: 8px!important; padding: 7px!important; border: 1px solid var(--line)!important; border-radius: 16px; background: color-mix(in srgb, var(--card) 92%, transparent); box-shadow: 0 16px 40px -30px rgba(2,25,28,.55); backdrop-filter: blur(18px) saturate(1.2); }
+.ic-search { height: 48px!important; border: 1px solid var(--line)!important; border-radius: 11px!important; background: var(--bg2)!important; }
+.ic-search:focus-within { border-color: var(--pos)!important; box-shadow: 0 0 0 3px var(--posdim)!important; }
+.ic-tbtn { width: 48px; height: 48px!important; border-radius: 11px!important; background: var(--card)!important; }
+.ic-listwrap { position: relative!important; overflow: visible!important; border: 1px solid var(--line); border-radius: 18px!important; background: var(--card); box-shadow: var(--apx-shadow-1); }
+.ic-list { overflow: visible; overflow-anchor: none!important; }
+.ic-row { min-width: 0!important; margin: 0; border: 0!important; border-bottom: 1px solid var(--line)!important; background: var(--card)!important; transition: background-color 150ms ease!important; }
+.ic-row:last-child { border-bottom: 0!important; }
+.ic-row-head { position: sticky!important; z-index: 12!important; top: 82px!important; min-height: 48px!important; border: 0; border-bottom: 1px solid var(--line); border-radius: 18px 18px 0 0!important; background: var(--card2) !important; box-shadow: 0 10px 22px -22px rgba(2,25,28,.6); }
+.ic-row-head span { color: var(--tx3)!important; font: 620 11px/1.2 var(--fnum); letter-spacing: .035em!important; }
+.ic-group { position: relative!important; padding: 20px 16px 9px!important; color: var(--tx2)!important; background: var(--card2)!important; font: 700 12px/1.2 var(--fnum); letter-spacing: .08em!important; text-transform: uppercase!important; }
+.ic-group span { color: var(--tx3)!important; }
+.ic-c-client b { font-size: 14px!important; font-weight: 680!important; }
+.ic-c-client small, .ic-c-structure, .ic-c-due small { color: var(--tx3)!important; font-size: 12px!important; }
+.ic-c-balance { font-weight: 650 !important; }
+.ic-badge { min-height: 27px!important; padding: 4px 8px!important; border-radius: 8px!important; font-size: 11px!important; font-weight: 650!important; }
+.ic-collapse-btn, .ic-check, .ic-quickact { width: 40px!important; height: 40px!important; border-radius: 10px!important; }
+.ic-quickact { border-color: var(--line)!important; background: var(--posdim)!important; color: var(--pos)!important; }
+.ic-statusbar { padding: 14px 4px 8px !important; color: var(--tx3)!important; font: 550 12px/1.4 var(--fnum); }
+
+/* Credit workspace */
+.s97-credit-summary { display: grid!important; grid-template-columns: repeat(12,minmax(0,1fr))!important; gap: 12px!important; margin: 0 0 18px !important; }
+.s97-credit-summary > .x97-summary { grid-column: span 3; min-height: 156px !important; padding: 22px 20px !important; overflow: hidden!important; }
+.s97-credit-summary > .x97-summary:first-child {
+  color: #fff;
+  border-color: #285c5c !important;
+  background: radial-gradient(220px 160px at 100% 0%,rgba(108,249,221,.18),transparent 70%),linear-gradient(145deg,#063f45,var(--apx-forest-950)) !important;
+  box-shadow: var(--apx-shadow-dark) !important;
+}
+.s97-credit-summary > .x97-summary:first-child .k,
+.s97-credit-summary > .x97-summary:first-child .s { color: #bdd2d0 !important; }
+.s97-credit-summary > .x97-summary:first-child .v { color: var(--apx-lime) !important; }
+.s97-credit-summary .k { color: var(--tx2); font-size: 13px !important; font-weight: 570!important; }
+.s97-credit-summary .v { margin: 18px 0 8px!important; font-size: clamp(1.45rem, 2.5vw, 2.2rem) !important; overflow-wrap: anywhere; }
+.s97-credit-summary .s { color: var(--tx3); font-size: 12px !important; }
+.s97-credit-page > .x97-segment { display: inline-grid!important; grid-template-columns: repeat(3,minmax(110px,1fr)); width: auto!important; margin: 0 0 18px!important; padding: 5px!important; gap: 4px!important; border: 1px solid var(--line)!important; border-radius: 14px!important; background: var(--card2); }
+.s97-credit-page > .x97-segment button { min-height: 44px!important; padding: 10px 18px!important; border-radius: 10px!important; font-size: 13px!important; font-weight: 650; }
+.s97-credit-page > .x97-segment button.on { color: var(--pos); background: var(--card); box-shadow: var(--apx-shadow-1)!important; }
+.s97-credit-list { display: grid!important; grid-template-columns: repeat(12,minmax(0,1fr))!important; gap: 14px!important; }
+.s97-credit-list > .x97-facility,
+.s97-credit-list > .x97-loan { grid-column: span 6; }
+.s97-credit-list > .x97-group,
+.s97-credit-list > .x97-empty,
+.s97-credit-list > button,
+.s97-credit-list > div:not(.x97-card) { grid-column: 1 / -1!important; }
+.s97-credit-list .x97-group { margin: 8px 0 0!important; padding: 4px 2px!important; color: var(--tx); font-size: 15px!important; }
+.x97-facility, .x97-loan { min-height: 220px; padding: 22px !important; margin: 0 !important; }
+.x97-facility-head { align-items: flex-start!important; gap: 13px!important; }
+.x97-network { width: 48px!important; height: 48px!important; flex: 0 0 48px!important; border-radius: 14px!important; }
+.x97-facility-title { font-size: 16px !important; font-weight: 680!important; white-space: normal!important; }
+.x97-facility-sub { margin-top: 5px!important; color: var(--tx3); font-size: 13px!important; line-height: 1.55!important; }
+.x97-facility-limit b { font-size: 20px!important; white-space: normal!important; overflow-wrap: anywhere!important; }
+.x97-facility-actions { margin-top: 20px!important; padding-top: 16px!important; gap: 8px!important; border-top: 1px solid var(--line)!important; }
+.x97-facility-actions .x97-btn:first-child { flex: 1!important; }
+.x97-loan-amount { margin: 22px 0 12px!important; font-size: 34px!important; }
+.x97-loan-meta { color: var(--tx3); font-size: 13px!important; line-height: 1.7!important; }
+
+/* React Expenses + Settings */
+.v3-appbar { position: relative !important; z-index: 2; border: 0 !important; background: transparent !important; box-shadow: none !important; }
+.v3-appbar-inner { min-height: 86px!important; padding: 18px var(--apx-gutter) 8px !important; }
+.v3-appbar-inner div:has(> img[src="./icons/mark-97.png"]) {
+  width: 58px !important; height: 54px !important; flex: 0 0 58px;
+  border: 1px solid #285c5c !important; border-radius: 15px !important;
+  background: var(--apx-forest-900) !important;
+}
+.v3-appbar-inner img[src="./icons/mark-97.png"] { width: 50px !important; height: 43px !important; object-fit: contain; }
+.v3-appbar-inner .disp { font: 500 24px/1 var(--fdisp) !important; letter-spacing: -.035em !important; }
+.s97-page-heading { grid-column: 1 / -1!important; display: flex!important; justify-content: space-between!important; align-items: flex-end!important; gap: 20px!important; margin: 0 0 2px; padding: 0 0 20px!important; border: 0; border-bottom: 1px solid var(--line); }
+.s97-expenses, .s97-settings { display: grid!important; grid-template-columns: repeat(12,minmax(0,1fr))!important; gap: 20px!important; }
+.s97-expenses .s97-budget-overview { grid-column: 1 / 6; padding: 22px !important; }
+.s97-expenses > .s97-section-label { grid-column: 6 / -1; align-self: end; }
+.s97-expense-list { grid-column: 6 / -1; display: grid !important; gap: 0 !important; overflow: hidden!important; border: 1px solid var(--line)!important; border-radius: var(--apx-radius-md)!important; background: var(--card)!important; box-shadow: var(--apx-shadow-1); }
+.s97-month-control { margin-bottom: 22px !important; }
+.s97-month-control button { min-width: 44px!important; min-height: 44px!important; border: 1px solid var(--line) !important; border-radius: 11px !important; background: var(--card2) !important; }
+.s97-month-control .disp { font: 500 19px/1.2 var(--fdisp) !important; }
+.s97-month-control > div > div:last-child { margin-top: 4px; font-size: 12px !important; }
+.s97-budget-grid { grid-template-columns: 1fr !important; gap: 12px !important; }
+.s97-budget-card { padding: 20px !important; border: 1px solid var(--line) !important; border-radius: 16px !important; background: var(--card2) !important; }
+.s97-budget-card:first-child { box-shadow: inset 3px 0 0 var(--pos); }
+.s97-budget-card:last-child { box-shadow: inset 3px 0 0 var(--usd); }
+.s97-budget-card > .disp { margin-top: 14px !important; font: 560 clamp(1.55rem,3vw,2.2rem)/1.1 var(--fnum) !important; overflow-wrap: anywhere!important; }
+.s97-budget-card > .disp + div { margin-top: 7px !important; font-size: 12px !important; }
+.s97-expense-list .s97-expense-row { width: 100%!important; min-width: 0!important; padding: 18px 20px !important; gap: 16px !important; border: 0 !important; border-bottom: 1px solid var(--line) !important; border-radius: 0 !important; box-shadow: none !important; text-align: left!important; }
+.s97-expense-row:last-child { border-bottom: 0 !important; }
+.s97-expense-row > div:first-child > div:first-child > span:first-child { font-size: 15px !important; font-weight: 650 !important; }
+.s97-expense-row > div:first-child > .tabnum { margin-top: 6px !important; color: var(--tx3)!important; font-size: 12px !important; }
+.s97-expense-row > .tabnum { flex: 0 1 40% !important; font-size: 16px !important; text-align: right!important; overflow-wrap: anywhere!important; }
+.s97-settings .s97-general { grid-column: 1 / 7; }
+.s97-settings .s97-budgets { grid-column: 7 / -1; }
+.s97-settings .s97-list-setting { grid-column: span 6; }
+.s97-settings .s97-backups, .s97-settings-footer { grid-column: 1 / -1!important; }
+.s97-setting-card { min-width: 0!important; padding: 24px !important; }
+.s97-setting-card > .s97-section-label { margin-bottom: 20px!important; }
+.s97-setting-card > div[style*="grid"] { gap: 18px !important; }
+.s97-field > div:first-child { margin-bottom: 8px !important; color: var(--tx) !important; font-size: 14px !important; font-weight: 600 !important; }
+.s97-editable-tags { gap: 8px !important; margin: 0 0 18px !important; }
+.s97-editable-tags > span { min-height: 42px; padding: 0 0 0 12px !important; border: 1px solid var(--line) !important; border-radius: 10px !important; background: var(--card2) !important; font-size: 13px !important; }
+.s97-editable-tags button { min-width: 42px!important; min-height: 42px!important; }
+.s97-backups > div:nth-child(2) { max-width: 68ch!important; color: var(--tx2) !important; font-size: 14px !important; line-height: 1.65 !important; }
+.s97-backups > div:nth-child(3) { display: grid !important; grid-template-columns: repeat(3,minmax(0,1fr))!important; gap: 10px !important; margin-top: 18px!important; }
+.s97-settings-footer { padding: 10px 0 0 !important; color: var(--tx3) !important; font: 600 11px/1.4 var(--fnum) !important; letter-spacing: .14em!important; }
+
+/* Editors and overlays */
+/* .inp/.x97-input family and .backdrop/.sheet now live in app.css's
+   components layer. */
+.x97-field > label { margin-bottom: 8px !important; color: var(--tx) !important; font-size: 14px !important; font-weight: 600 !important; text-transform: none!important; letter-spacing: 0!important; }
+.x97-sheet-head { padding: 19px 22px !important; border-bottom: 1px solid var(--line)!important; }
+.x97-sheet-head h2, .sheet > div:nth-child(2) .disp { font: 500 26px/1.15 var(--fdisp) !important; letter-spacing: -.04em!important; }
+.x97-sheet-body, .sheet > div:nth-child(3) { padding: 22px !important; overscroll-behavior: contain!important; }
+.x97-sheet-foot, .sheet > div:last-child:has(> .btn) { gap: 10px!important; padding: 16px 22px max(16px,env(safe-area-inset-bottom)) !important; border-top: 1px solid var(--line)!important; background: var(--card)!important; }
+.x97-empty, .ic-empty { padding: 34px 24px !important; border-radius: var(--apx-radius-md)!important; }
+.x97-empty strong, .ic-empty strong { font: 500 23px/1.2 var(--fdisp); letter-spacing: -.035em!important; }
+.x97-empty p, .ic-empty p { font-size: 14px!important; line-height: 1.65!important; }
+
+/* Command rail — a genuinely different desktop shell */
+@media (min-width: 1200px) {
+  body { padding-left: calc(var(--apx-sidebar) + 36px) !important; }
+  /* .nav/.navin/.navitem (desktop rail) now live in app.css's chrome layer. */
+  #x97-v2-root, .v3-screen { padding-top: 36px !important; padding-bottom: 56px !important; }
+  .x97-fab, body > .x97-fab.x97-fab-viewport, .fab { right: 34px !important; bottom: 30px !important; }
+}
+
+/* Tablet/mobile shell and card sizing */
+@media (max-width: 1199px) {
+  body { padding-left: 0 !important; }
+  #x97-v2-root, .v3-screen { padding-bottom: calc(104px + env(safe-area-inset-bottom)) !important; }
+  /* .nav/.navin/.navitem (mobile bar) now live in app.css's chrome layer. */
+  .x97-fab, body > .x97-fab.x97-fab-viewport, .fab, .s97-cloud-fab { bottom: calc(92px + env(safe-area-inset-bottom)) !important; }
+  .ic-row-head { display: none !important; }
+  .ic-listwrap { border: 0; background: transparent; box-shadow: none; }
+  .ic-row {
+    display: grid!important;
+    grid-template-columns: 42px minmax(0,1fr) minmax(92px,auto)!important;
+    grid-template-areas: "client client balance" "status status due" "lead structure quick"!important;
+    gap: 10px 8px!important;
+    min-height: 126px!important;
+    margin-bottom: 10px!important;
+    padding: 15px!important;
+    border: 1px solid var(--line)!important;
+    border-radius: 16px!important;
+    background: var(--card)!important;
+    box-shadow: var(--apx-shadow-1)!important;
+  }
+  .ic-c-total, .ic-c-paid, .ic-c-cur { display: none!important; }
+  .ic-c-balance { align-self: start!important; max-width: 40vw!important; font-size: 15px!important; overflow-wrap: anywhere!important; }
+  .ic-c-balance::before { content: "Balance"!important; display: block!important; margin-bottom: 4px!important; color: var(--tx3)!important; font: 550 11px/1.2 var(--fu)!important; letter-spacing: 0; }
+  .ic-c-client b, .ic-c-client small { white-space: normal!important; overflow-wrap: anywhere!important; }
+  .ic-c-client b { font-size: 15px!important; }
+  .ic-c-due b, .ic-c-due small { white-space: normal!important; }
+  .ic-c-structure { display: block!important; font-size: 12px!important; }
+  .ic-quickacts { display: flex!important; gap: 5px!important; }
+  .ic-row-part { grid-template-columns: minmax(0,1fr) minmax(90px,auto)!important; grid-template-areas: "client balance" "status due"!important; min-height: 82px!important; margin: -3px 0 10px 14px!important; padding: 12px 14px!important; border-radius: 13px!important; background: var(--card2)!important; box-shadow: none; }
+  .ic-row-part .ic-c-structure, .ic-row-part .ic-c-edge { display: none!important; }
+}
+
+@media (max-width: 759px) {
+  :root { --apx-gutter: 16px; }
+  body { background-size: 36px 36px, 36px 36px, auto, auto !important; }
+  #x97-v2-root, #x97-v2-root[data-screen="upcoming"], .v3-screen { padding: max(16px,env(safe-area-inset-top)) 16px calc(100px + env(safe-area-inset-bottom)) !important; }
+  .x97-top, .ic-shell .x97-top { gap: 14px 8px !important; margin-bottom: 18px !important; padding-bottom: 17px !important; }
+  .x97-brand-lockup { min-height: 52px!important; padding: 5px 11px 5px 6px!important; gap: 7px !important; border-radius: 14px!important; }
+  .x97-brand-lockup > .x97-brand-mark, .x97-brand-lockup > .x97-brand-mark img { width: 50px !important; height: 42px !important; }
+  .x97-brand-word { font-size: 12px !important; letter-spacing: .14em !important; }
+  .x97-brand-word small { font-size: 7px !important; }
+  .x97-top .x97-top-actions { max-width: 154px!important; gap: 4px !important; }
+  .x97-cloud { min-height: 38px !important; padding-inline: 8px !important; font-size: 10px !important; }
+  .v2-control-deck { padding: 2px!important; }
+  .v2-tool { width: 40px!important; height: 40px!important; min-width: 40px!important; }
+  .x97-title, .ic-shell .x97-title, .s97-page-heading h1 { max-width: 100%; font-size: clamp(2rem, 10vw, 2.8rem) !important; line-height: 1.02 !important; }
+  .x97-sub, .s97-page-heading p { margin-top: 9px !important; font-size: 13px !important; line-height: 1.55 !important; }
+  .x97-section-head { min-height: 40px; margin-bottom: 10px !important; }
+  .x97-section-title, .s97-section-label { font-size: 15px !important; }
+  .x97-link { min-height: 40px!important; padding: 7px 9px !important; font-size: 12px !important; }
+  .x97-pad { padding: 15px !important; }
+  #x97-v2-root[data-screen="dashboard"] .x97-dashboard-main { grid-template-columns: minmax(0,1fr) !important; grid-auto-flow: row; gap: 18px !important; }
+  #x97-v2-root[data-screen="dashboard"] .x97-dashboard-main > section { grid-column: 1 !important; grid-row: auto !important; }
+  .x97-hero-command.x97-card { min-height: 286px!important; padding: 21px 19px !important; border-radius: 22px !important; }
+  .x97-hero-command::after { right: 14px !important; bottom: -18px !important; font-size: 110px; }
+  .x97-hero-label { padding: 6px 8px !important; font-size: 11px !important; }
+  .x97-hero-command .x97-hero-value { margin: 27px 0 9px !important; font-size: clamp(2.05rem, 10vw, 3rem) !important; }
+  .x97-hero-caption { font-size: 13px !important; }
+  .x97-hero-command .x97-hero-meta { margin-top: 25px !important; padding-top: 16px!important; gap: 12px !important; }
+  .x97-hero-command .x97-stat + .x97-stat { padding-left: 12px !important; }
+  .x97-hero-command .x97-stat b { font-size: clamp(.98rem,4.5vw,1.15rem) !important; }
+  .x97-command-actions { grid-template-columns: repeat(3,minmax(0,1fr)) !important; gap: 8px !important; }
+  .x97-command-action { flex-direction: column; justify-content: flex-start; align-items: center; min-height: 108px !important; padding: 13px 7px !important; gap: 8px; text-align: center; }
+  .x97-command-action > svg, .x97-command-action small { display: none!important; }
+  .x97-command-action .x97-command-icon { width: 38px; height: 38px; border-radius: 11px; }
+  .x97-command-action b { font-size: 12px !important; line-height: 1.25; white-space: normal; }
+  .x97-finance-pulse { grid-template-columns: repeat(2,minmax(0,1fr)) !important; gap: 9px !important; }
+  .x97-finance-pulse .x97-summary { min-height: 128px !important; padding: 15px 13px !important; }
+  .x97-finance-pulse .k { font-size: 12px !important; line-height: 1.35!important; }
+  .x97-finance-pulse .v { margin-top: 13px !important; font-size: clamp(1.05rem,5vw,1.4rem) !important; }
+  .x97-finance-pulse .s { font-size: 11px !important; line-height: 1.4!important; }
+  .x97-dashboard-accounts .x97-account-rail { min-height: 0; padding: 3px 14px !important; }
+  .x97-dashboard-accounts .x97-row { min-height: 68px; padding: 12px 0 !important; gap: 9px; }
+  .x97-dashboard-accounts .x97-row-value { max-width: 39%; font-size: 13px !important; }
+  .x97-msg-card { min-height: 150px; padding: 17px !important; }
+  .x97-tl-row { display: grid!important; grid-template-columns: 40px minmax(0,1fr) minmax(78px,auto)!important; gap: 9px!important; }
+  .x97-tl-date { width: 40px!important; min-width: 40px; }
+  .x97-tl-amt { max-width: 31vw!important; font-size: 12px !important; }
+  .x97-earn-card, .x97-fx-card { min-height: 210px; padding: 17px !important; }
+  .x97-month-rail { grid-template-columns: minmax(0,1fr) !important; gap: 9px !important; }
+  .x97-month-card { min-height: 138px !important; padding: 17px !important; }
+  .x97-deal-metrics { grid-template-columns: minmax(0,1fr) !important; }
+  .x97-deal-metric-card { min-height: 150px; padding: 17px !important; }
+  .ic-hero { min-height: 212px; padding: 21px 19px !important; border-radius: 22px !important; }
+  .ic-hero::after { bottom: -28px; font-size: 110px; }
+  .ic-hero-top { display: block!important; }
+  .ic-hero-value { margin-top: 13px!important; font-size: clamp(2rem,10vw,3rem) !important; }
+  .ic-hero-headline { width: fit-content; margin-top: 20px!important; padding: 10px 12px; font-size: 12px !important; }
+  .ic-filter-deck { padding: 10px; border-radius: 16px; }
+  .ic-hero-chips { display: grid !important; grid-template-columns: repeat(3,minmax(0,1fr))!important; gap: 6px !important; }
+  .ic-quick { min-width: 0; min-height: 48px!important; padding: 8px 7px!important; justify-content: space-between!important; white-space: normal!important; text-align: left!important; font-size: 11px!important; line-height: 1.25; }
+  .ic-month-row { flex-wrap: nowrap !important; overflow-x: auto !important; overflow-y: hidden !important; padding-bottom: 3px!important; scrollbar-width: none!important; -webkit-overflow-scrolling: touch; overscroll-behavior-inline: contain; touch-action: pan-x; }
+  .ic-month-row::-webkit-scrollbar { display: none!important; }
+  .ic-month-chip { flex: 0 0 auto!important; }
+  #ic-controls { top: 6px; margin-top: 10px!important; }
+  .ic-toolbar { grid-template-columns: minmax(0,1fr) 46px 46px!important; padding: 6px!important; border-radius: 14px; }
+  .ic-search { grid-column: 1 / -1!important; height: 46px!important; }
+  .ic-tbtn { width: 46px; height: 46px!important; }
+  .ic-toolbar > [data-x97-action="open-incoming-filters"] { grid-column: 1; width: auto; justify-content: flex-start!important; gap: 7px!important; padding: 0 12px!important; }
+  .ic-toolbar > [data-x97-action="open-incoming-filters"]::after { content: "Filters"!important; font-size: 12px!important; }
+  .ic-row { min-height: 118px!important; margin-bottom: 8px!important; padding: 13px!important; gap: 7px 8px!important; border-radius: 14px!important; }
+  .ic-c-client b { font-size: 14px!important; }
+  .ic-c-client small, .ic-c-structure, .ic-c-due small { font-size: 11px!important; }
+  .ic-c-balance { max-width: 38vw!important; font-size: 13px!important; }
+  .ic-collapse-btn, .ic-check, .ic-quickact { width: 38px!important; height: 38px!important; }
+  .ic-statusbar { padding-bottom: 0 !important; }
+  .s97-credit-summary { grid-template-columns: repeat(2,minmax(0,1fr))!important; gap: 9px!important; }
+  .s97-credit-summary > .x97-summary { grid-column: auto; min-height: 122px !important; padding: 16px 14px !important; }
+  .s97-credit-summary > .x97-summary:first-child { grid-column: 1 / -1; min-height: 150px !important; }
+  .s97-credit-summary > .x97-summary:last-child { grid-column: 1 / -1; min-height: 105px !important; }
+  .s97-credit-summary .v { margin: 12px 0 6px!important; font-size: clamp(1.2rem,6vw,1.65rem) !important; }
+  .s97-credit-page > .x97-segment { display: grid!important; grid-template-columns: repeat(3,minmax(0,1fr)); width: 100%!important; }
+  .s97-credit-page > .x97-segment button { min-width: 0!important; padding: 9px 5px!important; font-size: 12px!important; }
+  .s97-credit-list { grid-template-columns: minmax(0,1fr)!important; gap: 10px!important; }
+  .s97-credit-list > .x97-facility, .s97-credit-list > .x97-loan { grid-column: 1; }
+  .x97-facility, .x97-loan { min-height: 0; padding: 18px !important; }
+  .x97-facility-head { display: grid!important; grid-template-columns: 42px minmax(0,1fr)!important; gap: 10px!important; }
+  .x97-network { width: 42px!important; height: 42px!important; flex-basis: 42px; border-radius: 12px!important; }
+  .x97-facility-limit { grid-column: 2!important; display: flex!important; align-items: baseline!important; flex-wrap: wrap!important; gap: 7px!important; margin-top: 7px!important; text-align: left!important; }
+  .x97-facility-limit b { font-size: 22px!important; }
+  .x97-facility-actions { flex-wrap: wrap!important; margin-top: 16px!important; padding-top: 14px!important; }
+  .v3-appbar-inner { min-height: 72px!important; padding: max(12px,env(safe-area-inset-top)) 16px 6px !important; }
+  .v3-appbar-inner div:has(> img[src="./icons/mark-97.png"]) { width: 48px !important; height: 46px !important; flex-basis: 48px; border-radius: 12px !important; }
+  .v3-appbar-inner img[src="./icons/mark-97.png"] { width: 41px !important; height: 35px !important; }
+  .v3-appbar-inner .disp { font-size: 21px !important; }
+  .s97-page-heading { align-items: flex-start!important; gap: 10px!important; padding: 6px 0 16px!important; }
+  .s97-expenses, .s97-settings { grid-template-columns: minmax(0,1fr)!important; gap: 16px!important; }
+  .s97-expenses .s97-budget-overview, .s97-expenses > .s97-section-label, .s97-expense-list,
+  .s97-settings .s97-general, .s97-settings .s97-budgets, .s97-settings .s97-list-setting,
+  .s97-settings .s97-backups, .s97-settings-footer { grid-column: 1!important; }
+  .s97-expenses .s97-budget-overview { padding: 17px !important; }
+  .s97-budget-grid { grid-template-columns: minmax(0,1fr) !important; gap: 9px !important; }
+  .s97-budget-card { min-height: 148px; padding: 16px 14px !important; }
+  .s97-budget-card > .disp { font-size: clamp(1.45rem,8vw,2rem) !important; }
+  .s97-expense-list .s97-expense-row { padding: 16px !important; gap: 10px !important; }
+  .s97-expense-row > .tabnum { max-width: 36%; font-size: 14px !important; }
+  .s97-setting-card { padding: 19px 17px !important; }
+  .s97-setting-card > div[style*="grid"] { grid-template-columns: minmax(0,1fr) !important; gap: 15px !important; }
+  .s97-backups > div:nth-child(3) { grid-template-columns: minmax(0,1fr)!important; }
+  .x97-sheet-head { padding: 16px 18px !important; }
+  .x97-sheet-body, .sheet > div:nth-child(3) { padding: 18px !important; }
+  .x97-sheet-foot, .sheet > div:last-child:has(> .btn) { padding-inline: 18px !important; }
+}
+
+@media (max-width: 380px) {
+  :root { --apx-gutter: 12px; }
+  #x97-v2-root, #x97-v2-root[data-screen="upcoming"], .v3-screen { padding-inline: 12px !important; }
+  .x97-brand-word { display: none !important; }
+  .x97-brand-lockup { padding-right: 6px!important; }
+  .x97-top .x97-top-actions { max-width: 142px!important; }
+  .x97-finance-pulse { grid-template-columns: minmax(0,1fr) !important; }
+  .x97-finance-pulse .x97-summary { min-height: 112px !important; }
+  .ic-hero-chips { grid-template-columns: repeat(2,minmax(0,1fr))!important; }
+  .ic-row { grid-template-columns: 38px minmax(0,1fr) minmax(82px,auto)!important; padding: 11px!important; }
+  .s97-credit-summary { grid-template-columns: minmax(0,1fr)!important; }
+  .s97-credit-summary > .x97-summary { grid-column: 1 !important; }
+}
+
+/* Motion system: 18 reusable patterns, one-shot, scroll-led, no scroll hijack. */
+.s97-motion-ready [data-s97-motion] {
+  --s97-delay: min(calc(var(--s97-order, 0) * 34ms), 340ms);
+  transition:
+    opacity .66s var(--apx-ease) var(--s97-delay),
+    transform .72s var(--apx-ease) var(--s97-delay),
+    filter .7s var(--apx-ease) var(--s97-delay),
+    clip-path .76s var(--apx-ease) var(--s97-delay) !important;
+  will-change: opacity, transform;
+}
+/* Failsafe: the pre-reveal state must never be able to outlive a short
+   window. is-inview arrives from an IntersectionObserver, and an observer
+   can lose its race with a re-render (experience-v2.js replaces whole
+   screens via innerHTML), leaving elements observed-but-detached and their
+   replacements hidden for good. That shipped as real invisible content on
+   the dashboard: the page title, the theme/privacy deck and the third
+   quick action sat at opacity 0 inside the viewport, permanently. The
+   animation below force-reveals anything still hidden after 4s, so a
+   dropped signal costs a late reveal instead of content nobody can see.
+   Once is-inview lands this selector stops matching and the failsafe is
+   discarded, so it never fights the real reveal. */
+.s97-motion-ready [data-s97-motion]:not(.is-inview) {
+  opacity: 0;
+  animation: s97-motion-failsafe .001s linear 4s forwards !important;
+}
+@keyframes s97-motion-failsafe {
+  to { opacity: 1; transform: none; filter: none; clip-path: none; }
+}
+.s97-motion-ready [data-s97-motion="rise"]:not(.is-inview),
+.s97-motion-ready [data-s97-motion="cascade"]:not(.is-inview) { transform: translate3d(0, 28px, 0); }
+.s97-motion-ready [data-s97-motion="left"]:not(.is-inview) { transform: translate3d(-34px, 0, 0); }
+.s97-motion-ready [data-s97-motion="right"]:not(.is-inview) { transform: translate3d(34px, 0, 0); }
+.s97-motion-ready [data-s97-motion="scale"]:not(.is-inview) { transform: scale(.955); }
+.s97-motion-ready [data-s97-motion="zoom"]:not(.is-inview) { transform: scale(.9); }
+.s97-motion-ready [data-s97-motion="blur"]:not(.is-inview) { filter: blur(10px); transform: translate3d(0, 16px, 0); }
+.s97-motion-ready [data-s97-motion="wipe"]:not(.is-inview) { clip-path: inset(0 100% 0 0 round 18px); }
+.s97-motion-ready [data-s97-motion="fold"]:not(.is-inview) { transform: perspective(900px) rotateX(8deg) translate3d(0, 22px, 0); transform-origin: 50% 0; }
+.s97-motion-ready [data-s97-motion="drift"]:not(.is-inview) { transform: translate3d(0, 24px, 0) rotate(.5deg); }
+.s97-motion-ready [data-s97-motion="headline"]:not(.is-inview) { clip-path: inset(0 0 100% 0); transform: translate3d(0, 14px, 0); }
+.s97-motion-ready [data-s97-motion="brand"]:not(.is-inview) { transform: translate3d(-16px, 0, 0) scale(.94); }
+.s97-motion-ready [data-s97-motion="hero"]:not(.is-inview) { transform: scale(.975) translate3d(0, 18px, 0); filter: saturate(.7); }
+.s97-motion-ready [data-s97-motion="ledger"]:not(.is-inview) { transform: translate3d(0, 14px, 0); clip-path: inset(0 0 25% 0 round 14px); }
+.s97-motion-ready [data-s97-motion="glide"]:not(.is-inview) { transform: translate3d(20px, 10px, 0); }
+.s97-motion-ready [data-s97-motion="metric"]:not(.is-inview) { transform: translate3d(0, 20px, 0) scale(.98); filter: saturate(.6); }
+.s97-motion-ready [data-s97-motion="spotlight"]:not(.is-inview) { filter: brightness(.86) saturate(.6); transform: scale(.97); }
+.s97-motion-ready [data-s97-motion].is-inview { opacity: 1; transform: none; filter: none; clip-path: inset(0 0 0 0 round 0); will-change: auto; }
+
+/* A press has to answer instantly. The reveal transition above runs
+   transform for .72s with up to .34s of stagger delay and carries
+   !important, so it also governs the press-scale on anything that is both
+   a motion target and a control — a quick action card took nearly a second
+   to acknowledge a tap. Collapsing the duration for the pressed state only
+   keeps the reveal choreography untouched while making touch feel direct. */
+.s97-motion-ready [data-s97-motion].is-inview:active {
+  transition-duration: .1s !important;
+  transition-delay: 0s !important;
+}
+
+/* Touch targets: WCAG 2.5.5 and the iOS HIG both want 44px. Section links
+   ("View Incoming", "Add account", "Open Credit") sat at 34px, and the
+   carousel dots at 6px were effectively unhittable. The dots keep their
+   6px look — the padding grows the hit area, background-clip keeps the
+   paint on the content box. */
+@media (pointer: coarse) {
+  .x97-link { min-height: 44px !important; }
+  /* box-sizing is border-box here, so the padding sets the hit area
+     outright: 22px top and bottom lands the target at exactly 44px. */
+  .v2-slider-dot {
+    padding: 22px 10px !important;
+    background-clip: content-box !important;
+    background-origin: content-box;
+  }
+}
+
+.s97-page-enter { animation: apx-page-open .58s var(--apx-ease) both !important; }
+.is-inview[data-s97-motion="brand"] { animation: apx-brand-spring .72s var(--apx-ease) both !important; }
+.is-inview[data-s97-motion="headline"] { animation: apx-title-reveal .68s var(--apx-ease) both !important; }
+.is-inview[data-s97-motion="hero"] { animation: apx-hero-open .82s var(--apx-ease) both !important; }
+.x97-fab, .fab { animation: apx-fab-enter .55s var(--apx-ease) both !important; }
+.x97-cloud i, .s97-cloud-dot.saved { animation: apx-cloud-ping 2.8s ease-in-out infinite !important; }
+.x97-empty svg, .ic-empty svg { animation: apx-empty-float 3.8s ease-in-out infinite !important; }
+.x97-pill, .ic-badge { animation: apx-badge-pop .38s var(--apx-ease) both !important; }
+.x97-toast, .toast { animation: apx-toast-in .42s var(--apx-ease) both !important; }
+.x97-progress i, .x97-pay-bar i, .x97-collection-progress i { animation: apx-meter-fill .85s var(--apx-ease) both !important; transform-origin: 0 50%; }
+@media (hover:hover) {
+  .x97-command-action:hover .x97-command-icon, .ic-quickact:hover svg { animation: apx-icon-nudge .44s var(--apx-ease); }
+}
+
+@keyframes apx-page-open { from { opacity: 0; transform: translate3d(0,10px,0); } to { opacity: 1; transform: none; } }
+@keyframes apx-brand-spring { 0% { opacity: 0; transform: translate3d(-18px,0,0) scale(.9); } 65% { transform: translate3d(2px,0,0) scale(1.015); } 100% { opacity: 1; transform: none; } }
+@keyframes apx-title-reveal { from { opacity: 0; clip-path: inset(0 0 100% 0); transform: translate3d(0,16px,0); } to { opacity: 1; clip-path: inset(0); transform: none; } }
+@keyframes apx-hero-open { from { opacity: 0; transform: scale(.97) translate3d(0,18px,0); filter: saturate(.65); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes apx-fab-enter { from { opacity: 0; transform: translate3d(0,18px,0) scale(.78) rotate(-8deg); } to { opacity: 1; transform: none; } }
+@keyframes apx-cloud-ping { 0%,100% { opacity: .68; box-shadow: 0 0 0 0 rgba(11,117,117,.18); } 50% { opacity: 1; box-shadow: 0 0 0 5px rgba(11,117,117,0); } }
+@keyframes apx-empty-float { 0%,100% { transform: translate3d(0,0,0); } 50% { transform: translate3d(0,-5px,0); } }
+@keyframes apx-badge-pop { from { opacity: 0; transform: scale(.82); } to { opacity: 1; transform: none; } }
+@keyframes apx-toast-in { from { opacity: 0; transform: translate3d(0,15px,0) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes apx-meter-fill { from { transform: scaleX(.1); filter: saturate(.4); } to { transform: scaleX(1); filter: none; } }
+@keyframes apx-icon-nudge { 0%,100% { transform: none; } 45% { transform: translate3d(3px,-2px,0) rotate(4deg); } }
+@keyframes apx-sheen { from { transform: translateX(-110%) skewX(-18deg); } to { transform: translateX(430%) skewX(-18deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto !important; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  [data-s97-motion] { opacity: 1 !important; transform: none !important; filter: none !important; clip-path: none !important; }
+  .s97-scroll-progress { display: none; }
+}
+
+/* Sign-in and loader complete the same product identity. */
+.s97-cloud-gate { background: radial-gradient(700px 460px at 50% -10%,rgba(115,224,213,.16),transparent 62%),var(--bg) !important; }
+.s97-cloud-card { max-width: 470px !important; padding: 34px !important; border: 1px solid var(--line) !important; border-radius: 28px !important; background: var(--card) !important; box-shadow: 0 32px 100px -44px rgba(2,25,28,.55) !important; }
+.s97-cloud-brand { min-height: 68px!important; padding: 7px 18px 7px 9px!important; border-radius: 18px!important; background: linear-gradient(145deg,#063e44,var(--apx-forest-950)) !important; box-shadow: var(--apx-shadow-dark); }
+.s97-cloud-brand .s97-brand-mark { width: 66px !important; height: 55px !important; object-fit: contain!important; }
+.s97-cloud-sub { margin: 24px 0 !important; color: var(--tx2) !important; font-size: 14px !important; line-height: 1.7 !important; }
+.s97-cloud-input { min-height: 52px !important; border-radius: 12px !important; background: var(--bg2) !important; }
+.s97-cloud-btn { min-height: 50px !important; border-radius: 12px !important; font-size: 14px !important; }
+.s97-cloud-btn.primary { color: var(--apx-forest-900) !important; border-color: var(--apx-lime) !important; background: var(--apx-lime) !important; }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   POLISH — chrome recedes, money leads.
+
+   The layers above grew the interface's furniture faster than its data:
+   section headers, action pills and filter boxes ended up louder than the
+   amounts they frame. A finance product should read the other way round —
+   the figures carry the page and everything else is quiet scaffolding that
+   stays out of their way. These rules restore that order. Nothing here
+   changes what is on screen, only how much of your attention it takes.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Section actions read as links, not buttons. A filled mint pill next to a
+   heading competes with the card beneath it for the eye; "View Incoming"
+   is a way out of the section, never the point of it. The 44px touch
+   target is kept as padding, so the target stays honest while the paint
+   recedes to the word itself. */
+.x97-link {
+  padding: 8px 2px 8px 10px !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: -.005em;
+  opacity: .82;
+}
+.x97-link svg { opacity: .75; transition: transform .22s var(--apx-ease); }
+@media (hover: hover) {
+  .x97-link:hover { background: var(--posdim) !important; opacity: 1; }
+  .x97-link:hover svg { transform: translateX(2px); }
+}
+.x97-link:active { background: var(--posdim) !important; opacity: 1; }
+
+/* The heading and its rule share one baseline. A hairline that runs from
+   the end of the label to the action ties the pair together and gives the
+   eye a line to travel, instead of two objects floating apart. */
+.x97-section-head { gap: 12px !important; }
+.x97-section-head::after {
+  content: "";
+  order: 1;
+  flex: 1 1 auto;
+  height: 1px;
+  min-width: 12px;
+  background: linear-gradient(90deg, var(--line), transparent);
+}
+.x97-section-head > .x97-link,
+.x97-section-head > button:last-child { order: 2; flex: 0 0 auto; }
+.x97-section-head > *:first-child { flex: 0 1 auto; }
+/* Headers carrying a subtitle stack instead, so the rule never cuts
+   between a title and the line explaining it. */
+.x97-section-head:has(.x97-row-sub)::after { display: none; }
+
+/* Money never touches an edge. Right-aligned values sat flush against the
+   card wall, which reads as clipped rather than aligned. */
+.x97-row-value, .ic-c-balance, .x97-item-amount { padding-right: 2px; }
+
+/* Vertical rhythm: the page was spending more height on the gaps between
+   sections than on several of the sections themselves. */
+@media (max-width: 759px) {
+  .x97-dashboard-main { gap: 20px !important; }
+  .x97-section-head { min-height: 36px !important; margin-bottom: 9px !important; }
+  .x97-pad { padding: 15px !important; }
+}
+
+/* The top row is one row. Brand, controls and the primary action sat on
+   three different baselines at phone width because the actions wrap — the
+   sync pill would drop underneath the add button and orphan itself. The
+   brand block gives up the width instead, since it is the one element
+   whose meaning survives being smaller. */
+@media (max-width: 480px) {
+  .x97-top .x97-top-actions { flex-wrap: nowrap !important; gap: 5px !important; }
+  .x97-brand-lockup {
+    min-width: 0;
+    min-height: 52px !important;
+    padding: 5px 12px 5px 6px !important;
+    gap: 8px !important;
+    border-radius: 15px!important;
+  }
+  .x97-brand-lockup > .x97-brand-mark,
+  .x97-brand-lockup > .x97-brand-mark img { width: 46px !important; height: 39px !important; }
+  .x97-brand-word { font-size: 12.5px !important; letter-spacing: .13em !important; }
+  .x97-brand-word small { font-size: 7.5px !important; }
+  .v2-control-deck { padding: 3px!important; border-radius: 12px!important; }
+  .v2-tool { width: 36px!important; height: 36px!important; min-width: 36px!important; border-radius: 9px!important; }
+  .x97-cloud { min-height: 36px !important; padding: 0 9px !important; }
+}
+
+/* Incoming's filters are chips again. Six full-width boxes in a grid read
+   as a settings form — they took a third of the first screen before a
+   single deal appeared. Chips wrap to as few lines as the words need and
+   put the ledger back above the fold. */
+@media (max-width: 759px) {
+  .ic-hero-chips {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+  .ic-quick {
+    flex: 0 0 auto!important;
+    min-height: 38px !important;
+    padding: 0 12px !important;
+    border-radius: 999px !important;
+    justify-content: flex-start !important;
+    gap: 6px!important;
+    white-space: nowrap !important;
+    font-size: 12.5px !important;
+    line-height: 1 !important;
+  }
+  .ic-quick b { font-weight: 700!important; opacity: .62; }
+  .ic-month-chip { min-height: 34px !important; padding: 0 11px !important; border-radius: 999px !important; }
+  .ic-filter-deck { padding: 11px !important; }
+  .ic-month-row { margin-top: 10px !important; padding-top: 10px !important; }
+}
+
+/* A horizontal rail should say it continues. The month row clipped its
+   last chip mid-word with no signal there was more; a mask fades the cut
+   edge so it reads as scrollable rather than broken. */
+.ic-month-row {
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%)!important;
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 26px), transparent 100%)!important;
+}
+
+/* Cards earn their weight by role. Everything carrying the same border,
+   radius and shadow flattens the hierarchy — the summary tiles should sit
+   a step behind the surfaces that hold real records. */
+.x97-summary { box-shadow: var(--apx-shadow-1) !important; }
+
+/* Incoming's hero was holding a 212px floor on phones while its content
+   needed about 150px, so a third of the card was empty green, and the
+   oversized "IN" watermark was being clipped mid-glyph against that void
+   — it read as a rendering fault rather than a mark. Let the card fit its
+   content and let the mark sit fully inside it. */
+@media (max-width: 759px) {
+  .ic-hero { min-height: 0 !important; padding: 18px 18px 20px !important; }
+  .ic-hero::after { right: 10px; bottom: -18px; font-size: 84px; opacity: .55; }
+  .ic-hero-top { grid-template-columns: minmax(0, 1fr) !important; gap: 14px !important; align-items: start !important; }
+  .ic-hero-value { margin-top: 10px !important; }
+  .ic-hero-headline { justify-self: start; padding: 9px 13px !important; font-size: 13px !important; }
+}
+
+/* The toolbar's filter control stretched a full 1fr column to hold one
+   16px icon, and search sat alone on its own row — two rows of chrome for
+   three controls. Search takes the width it needs and the icon buttons sit
+   beside it on the same line, which is a row of height back for the
+   ledger. (The bulk-select button is deliberately display:none on phones,
+   so the row is search + filter + more.) */
+@media (max-width: 759px) {
+  .ic-toolbar {
+    display: flex !important;
+    align-items: center!important;
+    gap: 7px !important;
+  }
+  .ic-search { flex: 1 1 auto!important; min-width: 0!important; height: 44px !important; }
+  .ic-tbtn { flex: 0 0 auto!important; width: 44px !important; height: 44px !important; }
+}
+
+/* Refinements: state (:hover/:active/.is-*), dark-theme, pseudo-element and
+   ancestor-qualified rules for the selectors above, migrated from v2-premium.css/
+   signature.css/index.html's inline styles so they can keep winning via specificity
+   within this layer's own !important tier instead of being unconditionally defeated
+   by the plain rules above. Excludes any selector already declared directly above
+   (e.g. ".x97-top, .ic-shell .x97-top" is one co-declared rule in the true source,
+   not base-plus-independent-refinement, so pulling ".ic-shell .x97-top" in here too
+   would just import a second, competing value for the same selector). Two further,
+   hand-verified corrections on top of the mechanical extraction: (1) a handful of
+   rules were comma-joined with an unrelated selector in their source file (e.g.
+   v2-premium's dark-theme "html[data-v2-theme=dark] body" background was joined
+   with a plain "body, ..., .app" in one rule) — copying the full selector list
+   would have force-!important'd the unrelated branch too (bare "body" is one of
+   apex's OWN selectors, governed by its own already-!important rule elsewhere;
+   forcing importance on a second, competing "var(--bg)" value for it broke the
+   grid/radial-gradient background in light mode), so only the branch that was
+   actually identified as a refinement is kept, dropping such siblings; (2) a
+   .ic-quick.retainer.on background/color that's NOT already !important in either
+   source file was left non-important rather than forced, because the plain
+   .ic-quick.on rule above (2 classes, a generalization of this 3-class selector)
+   is already !important in apex's true original and already wins today —
+   forcing the more-specific-but-not-actually-important retainer rule would have
+   let it wrongly outrank that existing winner via specificity within this same
+   !important tier. Also moved verbatim (values unchanged, !important added the
+   same programmatic, verified way, except where hand-corrected as just noted). */
+html[data-v2-theme="dark"] body { background:
+    radial-gradient(52rem 34rem at -12% -14%, rgba(85, 215, 202, 0.075), transparent 64%),
+    radial-gradient(40rem 28rem at 108% 18%, rgba(108, 199, 221, 0.04), transparent 70%),
+    var(--v2-paper) !important; }
+.x97-top::after { content: ""!important;
+  position: absolute!important;
+  left: 0!important;
+  right: 0!important;
+  bottom: -8px!important;
+  height: 1px!important;
+  background: linear-gradient(90deg, var(--v2-line-strong), transparent 72%)!important; }
+.v2-tool:hover { color: var(--v2-ink)!important;
+  background: var(--v2-surface-muted)!important;
+  transform: translateY(-1px)!important; }
+.v2-tool[aria-pressed="true"] { color: var(--v2-forest)!important;
+  background: var(--v2-lime)!important;
+  box-shadow: 0 9px 22px -12px rgba(34, 162, 137, 0.8)!important; }
+.x97-summary::after { content: ""!important;
+  position: absolute!important;
+  inset: auto -32px -46px auto!important;
+  width: 92px!important;
+  height: 92px!important;
+  border-radius: 50%!important;
+  background: radial-gradient(circle, var(--posdim), transparent 70%)!important;
+  pointer-events: none!important; }
+.v2-slider-dot[aria-current="true"] { width: 22px!important;
+  background: var(--v2-emerald)!important; }
+.v3-appbar-inner .v2-control-deck { flex: none!important;
+  padding: 3px!important;
+  border-radius: 13px!important;
+  box-shadow: none!important; }
+.v3-appbar-inner .v2-tool { width: 34px!important;
+  height: 34px!important; }
+.ic-shell .x97-cloud { min-height: 0 !important; padding: 5px 10px !important; font-size: 9.5px !important; box-shadow: none !important; }
+.ic-hero-chips::-webkit-scrollbar { display: none!important; }
+.ic-quick.retainer { border-color: rgba(169, 240, 233, 0.35)!important; color: #a9f0e9!important; }
+.ic-quick.retainer.on { background: #a9f0e9; color: #04373d; }
+.ic-quick.retainer.on b { color: #04373d; }
+.ic-tbtn:hover { background: var(--ig-surface2)!important; }
+.ic-tbtn.on { background: var(--ig-selected)!important; border-color: var(--ig-selected-line)!important; color: var(--tx)!important; }
+.ic-row:hover { background: var(--ig-surface2)!important; }
+.ic-row-head:hover { background: var(--ig-surface2); }
+.ic-c-paid.ic-pos { color: var(--pos)!important; font-weight: 650!important; }
+.ic-c-balance.ic-pos { color: var(--pos)!important; font-weight: 650; }
+.ic-quickact:hover { background: var(--ig-surface3)!important; color: var(--tx)!important; border-color: var(--ig-line)!important; }
+.ic-row.is-overdue { box-shadow: inset 3px 0 0 var(--neg)!important; }
+.ic-row.is-today, .ic-row.is-very-soon, .ic-row.is-soon { box-shadow: inset 3px 0 0 var(--warn)!important; }
+.ic-row.is-paid { box-shadow: inset 3px 0 0 var(--pos)!important; }
+.ic-row.is-cancelled { box-shadow: inset 3px 0 0 var(--ig-line2)!important; }
+.ic-row.is-cancelled .ic-c-client b { color: var(--tx3)!important; text-decoration: line-through!important; }
+.ic-row.is-paid .ic-c-client b { color: color-mix(in srgb, var(--tx) 75%, var(--card))!important; }
+.ic-row[data-cur="USD"] .ic-c-total, .ic-row[data-cur="USD"] .ic-c-balance { color: var(--usd)!important; }
+.ic-row-part .ic-c-client small { font-size: 9.5px!important; }
+.ic-row-part .ic-c-total, .ic-row-part .ic-c-paid, .ic-row-part .ic-c-balance { font-size: 11px!important; }
+.ic-collapse-btn:hover { background: var(--ig-surface3)!important; color: var(--tx)!important; }
+.ic-collapse-btn[aria-expanded="false"] { transform: rotate(0deg)!important; }
+.ic-check.on { background: var(--pos)!important; border-color: var(--pos)!important; }
+.ic-row.is-bulked { background: var(--ig-selected)!important; }
+.ic-list > .ic-row-head + .ic-group { top: 30px!important; }
+html[data-v2-theme="dark"] body { background: var(--bg) !important; }
+body::before, .x97-top::after, .v3-appbar::after { display: none !important; }
+.ic-shell .x97-cloud { padding: 7px 10px !important; font-size: 12px !important; }
+.x97-hero-command .x97-hero-caption { font-size: 13px !important; line-height: 1.5!important; max-width: 36ch!important; }
+.ic-quick.retainer { color: var(--pos)!important; border-color: var(--line)!important; }
+.ic-quick.retainer.on, .ic-quick.retainer.on b { background: var(--s97-green); color: #fff; }
+.v3-appbar-inner .v2-tool { width: 44px!important; height: 44px!important; }
+.fab::after { content:""!important;position:absolute!important;inset:-7px!important;border-radius:50%!important;background:radial-gradient(closest-side,rgba(14,117,117,.35),transparent 74%)!important;z-index:-1!important;filter:blur(10px)!important;animation:breathe 3.4s ease-in-out infinite; }
+@media (max-width: 759px) {
+.x97-command-action > svg:last-child { display: none !important; }
+.x97-account-rail > .x97-row .x97-row-value { max-width: none !important;
+    margin-left: 0 !important;
+    white-space: nowrap !important;
+    overflow: visible !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important; }
+.ic-list > .ic-group { top: 0!important; }
+#x97-v2-root[data-screen="dashboard"] .x97-top-actions { max-width: 174px!important; }
+.x97-hero-command .x97-hero-caption { max-width: 36ch!important; }
+.x97-facility-head .x97-network { width: 40px!important; height: 40px!important; }
+}
+@media (max-width: 620px) {
+.v3-appbar-inner .v2-tool { width: 31px!important;
+    height: 31px!important; }
+}
+@media (max-width: 1179px) {
+.ic-row-part .ic-c-balance { font-size: 14px!important; }
+.ic-row-part .ic-c-client small { font-size: 12px!important; }
+}
+@media (max-width: 599px) {
+.ic-shell .x97-cloud { padding: 5px 7px !important; }
+}
+@media (min-width: 1180px) {
+.ic-row .ic-c-structure, .ic-row .ic-c-due small { font-size: 12px!important; }
+.ic-row .ic-badge { font-size: 12px!important; padding-inline: 5px!important; }
+}
+@media (pointer: coarse) {
+.ic-row:hover { background: var(--card)!important; }
+.ic-row-part:hover { background: var(--bg2)!important; }
+}
+}
