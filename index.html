@@ -15,39 +15,12 @@
 <link rel="icon" href="./icons/favicon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
 <style>
-:root{color-scheme:light;
-/* SURFACES — porcelain page, white cards, three elevation tiers (banking paper) */
---bg:#F2F2EC;--bg2:#FBFBF8;--card:#FFFFFF;--card2:#F4F4EE;--card3:#DEE7E5;
-/* HAIRLINES */
---line:rgba(19,28,26,.09);--line2:rgba(19,28,26,.16);
-/* TEXT — ink on paper, all ≥ 4.5:1 */
---tx:#121B19;--tx2:#485754;--tx3:#5A6764;
-/* GREEN = realized cash / paid / inflow (brand, deep banking green) */
---pos:#0E7575;--pos2:#0B6767;--posdim:rgba(14,117,117,.10);
-/* CYAN-TEAL = potential cash: USD + available credit */
---usd:#1A5FB4;--usddim:rgba(11,114,133,.09);
-/* AMBER = attention / pending / due-soon */
---warn:#855909;--warndim:rgba(133,89,9,.11);
-/* CORAL = loss / overdue / debt / outflow */
---neg:#B5352E;--negdim:rgba(181,53,46,.09);
-/* VIOLET = reserved supporting accent */
---vio:#5D49D6;--viodim:rgba(93,73,214,.09);
-/* text/icons painted on top of the brand green */
---onpos:#FFFFFF;
---r1:14px;--r2:20px;--r3:28px;
-/* DEPTH SYSTEM — soft ink-tinted shadows, the paper look */
---elev-1:0 1px 2px rgba(18,27,25,.05),0 10px 28px -16px rgba(18,27,25,.18);
---elev-2:0 2px 6px rgba(18,27,25,.06),0 22px 48px -20px rgba(18,27,25,.25);
---toplit:inset 0 1px 0 rgba(255,255,255,.9);
---ring:0 0 0 3px rgba(14,117,117,.18);
---glow-pos:0 0 10px 1px rgba(14,117,117,.4);
---grad-fab:radial-gradient(120% 120% at 30% 22%,#128A8A,var(--pos2) 88%);
-/* TYPE — the editorial interface uses a calm system sans; numerical data uses
-   IBM Plex Mono for clear, stable finance-grade figures. v2-premium.css
-   swaps --fu/--fd to the self-hosted Geist Sans once it loads. */
---fu:'Helvetica Neue',Helvetica,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
---fd:var(--fu);
---fnum:'IBM Plex Mono','SFMono-Regular',Consolas,monospace;
+/* Design tokens now live in app.css's `tokens` layer. This block used to
+   open with its own :root{...} here — removed, not relocated, since the
+   old stylesheets this inline block predates already override every token
+   it declared (it's first in <head>, so it lost every cascade tie already;
+   deleting it changes nothing rendered). See app.css for the current
+   values and the ~17-source audit that produced them. */
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg)}
 html{scroll-behavior:smooth}
@@ -231,6 +204,13 @@ html.ldr-on{overflow:hidden}
 <link rel="stylesheet" href="./v2-premium.css?v=9" data-v2-premium="true" />
 <link rel="stylesheet" href="./signature.css?v=4" data-97-signature="true" />
 <link rel="stylesheet" href="./apex.css?v=8" data-97-apex="true" />
+<!-- app.css is the consolidation target (see the CSS-consolidation migration
+     steps) — its rules live in @layer, so it can only ever lose to the three
+     stylesheets above; it has no effect until they're retired one unit at a
+     time and finally deleted. Added here, ahead of that, purely so each
+     step's diff is additive-then-subtractive within one commit rather than
+     needing to reintroduce this tag later. -->
+<link rel="stylesheet" href="./app.css?v=1" data-97-app="true" />
 </head>
 <body>
 <div id="root"></div>

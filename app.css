@@ -1,0 +1,116 @@
+/* 97 LIVE — consolidated stylesheet.
+   Replaces the old v2-premium.css / signature.css / apex.css split plus the
+   8 runtime-injected <style> blocks from experience-v2.js and the 1 from
+   sync.js. Layer order (not source order, not edit order) decides which
+   rule wins a conflict — the exact problem the old split-file setup had.
+   See UI_REDESIGN_PLAN.md for design intent; this file is the executed,
+   current-truth result, not a copy of that plan. */
+@layer reset, tokens, base, chrome, components, screens, legacy-overrides;
+
+@layer tokens {
+  /* Design tokens, consolidated from the ~17 :root blocks that used to be
+     scattered across index.html's inline style, the 3 old stylesheets, and
+     3 of the 8 injected <style> blocks. Values below are a faithful snapshot
+     of what actually renders today (confirmed via getComputedStyle on the
+     live page, both themes) — not a redesign. Known-wrong/dead values found
+     during that audit (a shadowed --fnum typo, the orphaned --vio/--viodim
+     pair) are already dropped/fixed here since nothing reads this layer yet
+     (see the migration step that adds "tokens" to the deleted-old-sources
+     list for why this is still a safe, inert change on its own). */
+  :root {
+    color-scheme: light;
+
+    /* SURFACES */
+    --bg: #F1F5F5;
+    --bg2: #FAFCFC;
+    --card: #FFFFFF;
+    --card2: #EEF3F3;
+    --card3: #DEE8E7;
+
+    /* HAIRLINES */
+    --line: rgba(16,34,36,.09);
+    --line2: rgba(16,34,36,.17);
+
+    /* TEXT */
+    --tx: #0F2224;
+    --tx2: #4F6262;
+    --tx3: #697A7A;
+
+    /* SEMANTIC COLOR — realized cash/paid/inflow (brand) */
+    --pos: #0D8080;
+    --pos2: #045760;
+    --posdim: rgba(13,128,128,.11);
+    /* potential cash: USD + available credit */
+    --usd: #1A5FB4;
+    --usddim: rgba(26,95,180,.10);
+    /* attention / pending / due-soon */
+    --warn: #A76508;
+    --warndim: rgba(167,101,8,.12);
+    /* loss / overdue / debt / outflow */
+    --neg: #BC3E45;
+    --negdim: rgba(188,62,69,.10);
+
+    /* BRAND ACCENTS */
+    --lime: #6cf9dd;
+    --forest: #042a2f;
+    --accent: #0d8080;
+    --accent-soft: #e0f1ef;
+    --onpos: #FFFFFF;
+
+    /* RADII */
+    --r1: 14px;
+    --r2: 20px;
+    --r3: 28px;
+
+    /* DEPTH — same in both themes today (not theme-tuned, left as-is) */
+    --elev-1: 0 1px 2px rgba(9,33,36,.04),0 14px 34px -23px rgba(4,42,47,.25);
+    --elev-2: 0 3px 8px rgba(9,33,36,.06),0 24px 50px -25px rgba(4,42,47,.32);
+    --toplit: inset 0 1px 0 rgba(255,255,255,.9);
+    --ring: 0 0 0 3px rgba(14,117,117,.18);
+    --glow-pos: 0 0 10px 1px rgba(14,117,117,.4);
+    --grad-fab: radial-gradient(120% 120% at 30% 22%,#128A8A,var(--pos2) 88%);
+
+    /* TYPE */
+    --fu: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --fd: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --fdisp: "Fraunces", Georgia, serif;
+    --fnum: "Geist Mono", "IBM Plex Mono", Consolas, monospace;
+    --fmeta: "Geist Mono", Consolas, monospace;
+
+    /* v3-classic-app layout tokens */
+    --v3-border: color-mix(in srgb, var(--tx) 10%, transparent);
+    --v3-content: 1120px;
+    --v3-glass: color-mix(in srgb, var(--bg2) 82%, transparent);
+    --v3-space-1: 6px;
+    --v3-space-2: 10px;
+    --v3-space-3: 14px;
+    --v3-space-4: 18px;
+    --v3-space-5: 24px;
+    --v3-space-6: 32px;
+  }
+
+  html[data-v2-theme="dark"] {
+    color-scheme: dark;
+    --bg: #061315;
+    --bg2: #091a1c;
+    --card: #0d2325;
+    --card2: #11292c;
+    --card3: #193437;
+    --line: #223b3e;
+    --line2: #3c5d5d;
+    --tx: #eff8f7;
+    --tx2: #c5d6d4;
+    --tx3: #9db2b0;
+    --pos: #66dfd3;
+    --pos2: #37b8b8;
+    --posdim: #173a3d;
+    --usd: #85d4cc;
+    --usddim: #153c41;
+    --warn: #f4c46b;
+    --warndim: #3b3224;
+    --neg: #ff9cab;
+    --negdim: #412733;
+    --accent: #76ddd3;
+    --accent-soft: #183b3f;
+  }
+}
