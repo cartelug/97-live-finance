@@ -703,8 +703,8 @@ body.x97-v2-mode .navin { max-width: none !important; }
     backdrop-filter: blur(20px) saturate(1.25) !important;
   }
   .nav::before, .nav::after, .navin::after { display: none !important; }
-  .navin { display: grid !important; grid-template-columns: repeat(6,minmax(0,1fr)); width: min(100%, 760px); height: 76px; margin: auto; padding: 7px 8px 5px !important; gap: 2px; }
-  .navitem { min-width: 0; min-height: 62px !important; padding: 4px 2px !important; gap: 3px; border-radius: 12px; color: var(--tx3) !important; background: transparent !important; font-size: 10px !important; }
+  .navin { display: flex !important; flex-direction: row !important; grid-template-columns: none !important; width: min(100%, 760px); height: 76px; margin: auto; padding: 7px 8px 5px !important; gap: 2px; }
+  .navitem { flex: 1 1 0 !important; min-width: 0; min-height: 62px !important; padding: 4px 2px !important; gap: 3px; border-radius: 12px; color: var(--tx3) !important; background: transparent !important; font-size: 10px !important; }
   .navitem svg, .navitem > :first-child { width: 28px !important; height: 28px !important; padding: 5px !important; border-radius: 9px !important; }
   .navitem.on { color: var(--pos) !important; background: var(--posdim) !important; }
   .navitem.on svg, .navitem.on > :first-child { color: var(--apx-lime) !important; background: var(--apx-forest-900) !important; }
