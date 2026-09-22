@@ -80,21 +80,7 @@ select.inp{appearance:none;-webkit-appearance:none;padding-right:32px;background
 .fab svg{transition:transform .35s cubic-bezier(.34,1.56,.64,1)}
 @media(hover:hover){.fab:hover svg{transform:rotate(90deg)}}
 .fab:active{transform:scale(.9)}
-.nav{position:fixed;z-index:55;bottom:0;left:0;right:0;background:rgba(251,251,248,.94);backdrop-filter:blur(18px) saturate(1.4);border-top:1px solid var(--line);box-shadow:0 -8px 30px -18px rgba(18,27,25,.25);padding-bottom:env(safe-area-inset-bottom)}
-.navin{max-width:520px;margin:0 auto;display:grid;grid-template-columns:repeat(6,1fr)}
-.navitem{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 0 7px;background:none;border:none;color:var(--tx3);font-size:9.5px;font-weight:600;position:relative;transition:color .18s;z-index:0}
-.navitem svg{transition:transform .28s cubic-bezier(.34,1.56,.64,1)}
-.navitem:active svg{transform:scale(.82)}
-.navitem.on{color:var(--pos2);font-weight:700}
-.navitem.on svg{transform:translateY(-1.5px)}
-.navitem.on::after{content:"";position:absolute;inset:3px 6px;background:var(--posdim);border-radius:12px;z-index:-1;animation:fadeIn .25s ease}
-.navitem .ind{position:absolute;top:0;width:22px;height:3px;border-radius:99px;background:var(--pos);opacity:0;transition:opacity .2s}
-.navitem.on .ind{opacity:1;box-shadow:var(--glow-pos);animation:navpop .35s cubic-bezier(.34,1.56,.64,1)}
-/* NAV — duotone active: idle icons are clean outlines; the active tab fills into a brand-green pill with a white glyph */
-.navitem svg{padding:5px;box-sizing:content-box;border-radius:13px;transition:transform .28s cubic-bezier(.34,1.56,.64,1),background .22s ease,color .18s ease,box-shadow .22s ease}
-.navitem.on svg{background:linear-gradient(180deg,var(--pos) 4%,var(--pos2));color:var(--onpos);box-shadow:0 7px 16px -6px rgba(11,103,103,.55),inset 0 1px 0 rgba(255,255,255,.22)}
-.navitem.on::after{background:transparent}
-@keyframes navpop{from{transform:scaleX(.25);opacity:0}to{transform:scaleX(1);opacity:1}}
+/* .nav/.navin/.navitem now live in app.css's chrome layer. */
 .composer{position:fixed;z-index:52;left:0;right:0;bottom:calc(56px + env(safe-area-inset-bottom));padding:44px 14px 8px;pointer-events:none;background:linear-gradient(to top,var(--bg) 62%,rgba(242,242,236,.85) 82%,transparent)}
 .composerin{max-width:520px;margin:0 auto;display:flex;gap:8px;align-items:center;background:rgba(255,255,255,.96);backdrop-filter:blur(14px);border:1px solid var(--line2);border-radius:16px;padding:5px 5px 5px 14px;box-shadow:0 12px 30px -12px rgba(18,27,25,.22);pointer-events:auto;transition:border-color .2s,box-shadow .2s}
 .composerin:focus-within{border-color:var(--pos);box-shadow:0 12px 30px -12px rgba(18,27,25,.22),var(--ring)}

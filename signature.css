@@ -254,13 +254,6 @@ textarea.x97-textarea { min-height: 100px !important; }
 
 @media (min-width: 1360px) {
   body { padding-left: 208px; }
-  .nav { top: 18px !important; bottom: 18px !important; left: 18px !important; width: 172px !important; height: calc(100dvh - 36px) !important; max-height: 1000px; transform: none !important; background: var(--s97-green) !important; border: 1px solid #215454 !important; border-radius: 20px !important; padding: 124px 10px 14px !important; box-shadow: none !important; }
-  .nav::before { display: block !important; content: ""; top: 22px; left: 47px; width: 76px; height: 66px; background: url('./icons/mark-97.png') center/contain no-repeat; }
-  .nav::after { position: absolute; display: block; content: "LIVE  ·  FINANCE"; top: 94px; left: 10px; width: 150px; color: #c5d9d7; font: 600 8px/1 var(--fu); letter-spacing: .18em; text-align: center; }
-  .navin { display: flex !important; flex-direction: column; gap: 8px; padding: 0 !important; }
-  .navitem { display: flex !important; flex-direction: row !important; align-items: center; justify-content: flex-start; gap: 12px; padding: 14px !important; height: 52px; min-height: 52px !important; font-size: 14px !important; color: #c5d9d7 !important; border-radius: 11px; }
-  .navitem.on { background: var(--s97-lime) !important; color: var(--s97-green) !important; }
-  .navitem .ind { display: none; }
   #x97-v2-root, .v3-screen { padding-top: 30px !important; }
 }
 @media (max-width: 759px) {
@@ -340,9 +333,6 @@ textarea.x97-textarea { min-height: 100px !important; }
   .x97-sheet-body, .sheet > div:nth-child(3) { padding: 18px !important; }
   .x97-sheet-head { padding: 16px 18px !important; }
   .x97-sheet-foot, .sheet > div:last-child:has(> .btn) { padding-inline: 18px !important; }
-  .nav { box-shadow: 0 -1px 0 var(--line),0 -8px 30px #062d2105 !important; }
-  .navitem.on { background: var(--posdim) !important; color: var(--pos) !important; }
-  .navitem { font-size: 12px !important; }
 }
 @media (max-width: 359px) {
   :root { --s97-space: 12px; }

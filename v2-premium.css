@@ -292,8 +292,7 @@ html[data-v2-theme="dark"] body {
   background: transparent !important;
 }
 
-body.x97-v2-mode .wrap,
-body.x97-v2-mode .navin {
+body.x97-v2-mode .wrap {
   max-width: 1180px !important;
 }
 
@@ -789,73 +788,6 @@ body.x97-v2-mode .navin {
   backdrop-filter: blur(18px) saturate(1.15);
 }
 
-.nav {
-  left: 50% !important;
-  width: min(calc(100% - 20px), 720px) !important;
-  bottom: max(10px, env(safe-area-inset-bottom)) !important;
-  transform: translateX(-50%);
-  overflow: hidden;
-  border: 1px solid rgba(108, 249, 221, 0.12) !important;
-  border-radius: 23px !important;
-  background: color-mix(in srgb, var(--v2-forest) 94%, transparent) !important;
-  box-shadow: 0 24px 64px -26px rgba(2, 25, 28, 0.92) !important;
-  backdrop-filter: blur(24px) saturate(1.3) !important;
-}
-
-.nav::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(115deg, rgba(255, 255, 255, 0.06), transparent 34%, rgba(108, 249, 221, 0.035));
-}
-
-.navin {
-  padding: 5px 7px !important;
-}
-
-.navitem {
-  position: relative;
-  min-height: 58px !important;
-  color: rgba(255, 255, 255, 0.54) !important;
-  border-radius: 16px;
-  font-size: 9px !important;
-  font-weight: 620 !important;
-  transition: color 170ms ease, background 170ms ease, transform 160ms var(--v2-ease) !important;
-}
-
-.navitem:hover {
-  color: #fff !important;
-  background: rgba(255, 255, 255, 0.055);
-}
-
-.navitem:active {
-  transform: scale(0.95);
-}
-
-.navitem.on {
-  color: var(--v2-lime) !important;
-}
-
-.navitem.on::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: 2px;
-  width: 18px;
-  height: 2px;
-  border-radius: 99px;
-  background: var(--v2-lime);
-  transform: translateX(-50%);
-  box-shadow: 0 0 16px rgba(108, 249, 221, 0.8);
-}
-
-.navitem.on svg {
-  color: var(--v2-forest) !important;
-  background: var(--v2-lime) !important;
-  box-shadow: 0 10px 26px -10px rgba(108, 249, 221, 0.75) !important;
-}
-
 .v2-slider-shell {
   position: relative;
 }
@@ -1094,11 +1026,6 @@ body.v2-private [data-v2-privacy-exempt] {
     scroll-snap-align: start;
   }
 
-  .nav {
-    width: calc(100% - 16px) !important;
-    bottom: max(8px, env(safe-area-inset-bottom)) !important;
-    border-radius: 21px !important;
-  }
 }
 
 @media (max-width: 430px) {
@@ -1520,38 +1447,6 @@ body.v2-private [data-v2-privacy-exempt] {
     padding-left: 104px;
   }
 
-  .nav {
-    top: 50% !important;
-    bottom: auto !important;
-    left: 18px !important;
-    width: 76px !important;
-    min-height: 0 !important;
-    border-radius: 27px !important;
-    transform: translateY(-50%) !important;
-  }
-
-  .navin {
-    display: grid !important;
-    grid-template-columns: minmax(0, 1fr) !important;
-    gap: 4px;
-    padding: 8px !important;
-  }
-
-  .navitem {
-    width: 100%;
-    min-height: 66px !important;
-    padding: 8px 4px !important;
-  }
-
-  .navitem.on::after {
-    top: 50%;
-    bottom: auto;
-    left: -1px;
-    width: 3px;
-    height: 22px;
-    transform: translateY(-50%);
-  }
-
   .v3-classic-app[data-v3-page="home"] .v3-screen-stack {
     display: grid !important;
     grid-template-columns: minmax(0, 1.08fr) minmax(310px, 0.92fr);
@@ -1648,24 +1543,8 @@ body.v2-private [data-v2-privacy-exempt] {
 }
 
 
-/* The bar, page reserve and action buttons now share one geometry system. */
-.nav {
-  height: var(--v4-nav-height) !important;
-  min-height: var(--v4-nav-height) !important;
-  bottom: calc(var(--v4-nav-gap) + env(safe-area-inset-bottom)) !important;
-  contain: layout paint;
-}
-
-.navin {
-  height: 100%;
-  align-items: stretch !important;
-}
-
-.navitem {
-  min-height: 0 !important;
-  height: 100%;
-}
-
+/* The page reserve and action buttons now share one geometry system.
+   (.nav/.navin/.navitem themselves live in app.css's chrome layer.) */
 .v3-screen,
 #x97-v2-root {
   padding-bottom: var(--v4-mobile-reserve) !important;
@@ -1675,11 +1554,6 @@ body.v2-private [data-v2-privacy-exempt] {
 body > .x97-fab.x97-fab-viewport,
 .s97-cloud-fab {
   bottom: calc(var(--v4-nav-height) + var(--v4-nav-gap) + 22px + env(safe-area-inset-bottom)) !important;
-}
-
-.navitem.on svg,
-.navitem.on > :first-child {
-  animation: v4-nav-pop 440ms var(--v4-spring) both;
 }
 
 .v4-deal-sheet {
@@ -1725,11 +1599,6 @@ body > .x97-fab.x97-fab-viewport,
 }
 
 @media (min-width: 1180px) {
-  .nav {
-    height: auto !important;
-    min-height: 0 !important;
-  }
-
   .v3-screen,
   #x97-v2-root {
     padding-bottom: 70px !important;
@@ -1741,11 +1610,6 @@ body > .x97-fab.x97-fab-viewport,
     --v4-nav-height: 68px;
     --v4-nav-gap: 10px;
     --v4-mobile-reserve: calc(var(--v4-nav-height) + 102px + env(safe-area-inset-bottom));
-  }
-
-  .nav {
-    width: calc(100% - 24px) !important;
-    border-radius: 22px !important;
   }
 
   .v4-deal-sheet .x97-sheet-body,
@@ -2365,15 +2229,6 @@ html[data-v2-theme="dark"] .x97-command-action.primary { color: #082225 !importa
 .x97-sheet-foot > button { flex: 1 1 auto; }
 :focus-visible { outline: 3px solid var(--accent) !important; outline-offset: 3px; }
 
-/* Navigation is docked to the safe edge, with no floating gap to swallow
-   content. The desktop rail has an intrinsic height, not the phone's 72px. */
-.nav { background: var(--card) !important; border-color: var(--line) !important; box-shadow: 0 -4px 20px #142b4b08 !important; backdrop-filter: none !important; }
-.nav::before, .navitem.on::after { display: none !important; }
-.navitem { color: var(--tx2) !important; font-size: 12px !important; font-weight: 650 !important; border-radius: 12px; transition: color 120ms ease, background-color 120ms ease !important; }
-.navitem.on { background: var(--accent-soft) !important; color: var(--accent) !important; }
-.navitem.on svg, .navitem.on > :first-child { animation: none !important; }
-.navitem:active { transform: none !important; }
-
 /* Incoming uses the document's native scroll at every size. */
 #x97-v2-root[data-screen="upcoming"] { height: auto; min-height: 100svh; padding: 24px 24px var(--v4-mobile-reserve) !important; }
 .ic-shell { position: relative; inset: auto; display: block; overflow: visible; background: transparent; --ig-gut: 18px; }
@@ -2432,9 +2287,6 @@ html[data-v2-theme="dark"] .x97-command-action.primary { color: #082225 !importa
 .ic-filter-chip { min-height: 44px; height: auto; font-size: 14px; }
 
 @media (max-width: 1179px) {
-  .nav { left: 0 !important; bottom: 0 !important; width: 100% !important; transform: none !important; height: calc(72px + env(safe-area-inset-bottom)) !important; min-height: 72px !important; padding-bottom: env(safe-area-inset-bottom) !important; border-radius: 0 !important; border-width: 1px 0 0 !important; }
-  .navin { width: 100%; max-width: 720px !important; margin: auto; padding: 8px !important; gap: 2px; }
-  .navitem { flex: 1 1 0; min-width: 0; padding: 5px 2px !important; font-size: 12px !important; }
   body > .x97-fab.x97-fab-viewport, .fab, .s97-cloud-fab { bottom: calc(88px + env(safe-area-inset-bottom)) !important; }
   .ic-row-head { display: none; }
   .ic-row {
@@ -2492,9 +2344,6 @@ html[data-v2-theme="dark"] .x97-command-action.primary { color: #082225 !importa
 }
 @media (min-width: 1180px) {
   body { padding-left: 110px; }
-  .nav { top: 50% !important; bottom: auto !important; left: 16px !important; width: 84px !important; height: auto !important; min-height: 0 !important; padding: 0 !important; border-radius: 20px !important; transform: translateY(-50%) !important; }
-  .navin { display: grid !important; height: auto; padding: 8px !important; }
-  .navitem { height: 64px; min-height: 64px !important; }
   .ic-row { grid-template-columns: 44px minmax(120px, 1.5fr) 90px minmax(88px,1fr) minmax(80px,1fr) minmax(90px,1fr) 52px 90px 96px 94px; gap: 6px; padding: 12px; background: var(--card); }
   .ic-row-part { padding-left: 12px; background: var(--bg2); }
   .ic-row .ic-c-structure, .ic-row .ic-c-due small { font-size: 12px; }

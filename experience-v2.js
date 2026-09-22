@@ -1488,7 +1488,6 @@
     style.textContent = `
       body.x97-v2-mode{overflow-x:visible}
       body.x97-v2-mode .wrap{max-width:1040px!important;background:var(--bg)!important}
-      body.x97-v2-mode .navin{max-width:1040px!important}
       #x97-v2-root{display:none;min-height:100vh;color:var(--tx);font-family:var(--fu);padding:18px 16px calc(var(--x97-nav-h, 67px) + 65px + env(safe-area-inset-bottom));position:relative;z-index:10;background:radial-gradient(80% 45% at 50% -8%,rgba(14,117,117,.06),transparent 66%),var(--bg)}
       #x97-v2-root.on{display:block}
       .x97-page{max-width:1000px;margin:0 auto;animation:x97-in .32s cubic-bezier(.22,1,.36,1) both}
@@ -1626,10 +1625,6 @@
     style.textContent = `
       /* 97 LIVE command-centre pass: calmer hierarchy, stronger actions, less repetition. */
       body.x97-v2-mode .wrap{background:var(--bg)!important}
-      body.x97-v2-mode .nav{background:rgba(251,251,248,.9);backdrop-filter:blur(22px) saturate(1.35);box-shadow:0 -14px 38px -24px rgba(18,27,25,.35);border-top-color:var(--line2)}
-      body.x97-v2-mode .navin{padding:0 8px}
-      body.x97-v2-mode .navitem{min-height:67px;padding-top:9px;font-size:9px;letter-spacing:.01em}
-      body.x97-v2-mode .navitem.on svg{box-shadow:0 8px 19px -8px rgba(11,103,103,.72),inset 0 1px 0 rgba(255,255,255,.28)}
       #x97-v2-root{background:radial-gradient(70% 25% at 50% 0%,rgba(14,117,117,.075),transparent 75%),var(--bg)}
       .x97-top{align-items:center;margin:8px 0 24px;padding:0 2px}
       .x97-top-copy{min-width:0}
@@ -1785,11 +1780,6 @@
       html,body,.app,input,select,button,textarea{font-family:var(--fu)}
       .tabnum,.x97-money{font-family:var(--fnum)!important;font-weight:500!important;letter-spacing:-.055em!important}
       body::before{opacity:.72}
-      .nav{background:rgba(4,42,47,.96)!important;border-top-color:rgba(108,249,221,.12)!important;box-shadow:0 -16px 42px -24px rgba(4,42,47,.82)!important;backdrop-filter:blur(24px) saturate(1.25)!important}
-      .navitem{color:rgba(255,255,255,.58)!important}
-      .navitem.on{color:var(--lime)!important}
-      .navitem svg{color:inherit!important}
-      .navitem.on svg{background:var(--lime)!important;color:var(--forest)!important;box-shadow:0 8px 22px -8px rgba(108,249,221,.55)!important}
       #x97-v2-root{background:
         radial-gradient(80% 28% at 50% -4%,rgba(13,128,128,.10),transparent 72%),
         linear-gradient(180deg,var(--bg2) 0%,var(--bg) 34%,var(--bg) 100%)}
@@ -1944,12 +1934,10 @@
       #x97-v2-root .x97-card,#x97-v2-root .x97-row,#x97-v2-root .x97-item-top,
       #x97-v2-root .x97-item-main,#x97-v2-root .x97-facility-head,#x97-v2-root .x97-facility-main,
       #x97-v2-root .x97-payment-target-row,#x97-v2-root .x97-tl-body{min-width:0}
-      #x97-v2-root button,.navitem,.btn,.press,.x97-btn,.x97-link,.x97-icon-btn,.x97-fab,.fab{touch-action:manipulation}
+      #x97-v2-root button,.btn,.press,.x97-btn,.x97-link,.x97-icon-btn,.x97-fab,.fab{touch-action:manipulation}
       :focus-visible{outline:3px solid rgba(13,128,128,.58);outline-offset:3px}
 
       /* A single bottom-nav token keeps the composer, floating action and content clear of each other. */
-      .nav{min-height:var(--x97-nav-h)}
-      .navitem{min-height:var(--x97-nav-h)}
       .composer{bottom:calc(var(--x97-nav-h) + env(safe-area-inset-bottom))}
       .fab,.x97-fab,.s97-cloud-fab{bottom:calc(var(--x97-nav-h) + 12px + env(safe-area-inset-bottom))}
       .x97-toast-wrap{bottom:calc(var(--x97-nav-h) + 74px + env(safe-area-inset-bottom))}
@@ -2110,8 +2098,6 @@
       .x97-btn,.x97-link,.x97-icon-btn,.x97-chip{border-radius:13px!important}
       .x97-btn.primary{background:linear-gradient(135deg,#119393,var(--pos2))!important;box-shadow:0 12px 24px -15px var(--pos2)!important}
       .x97-progress i,.x97-pay-bar i,.x97-collection-progress i{background:linear-gradient(90deg,var(--pos2),#4FD4C7,var(--lime),#4FD4C7)!important;background-size:220% 100%!important;animation:x97-progress-sheen 2.4s linear infinite!important}
-      .nav{border-top-color:color-mix(in srgb,var(--pos) 18%,var(--line))!important;box-shadow:0 -14px 38px -26px rgba(2,25,28,.55)!important}
-      .navitem.on svg{box-shadow:0 10px 24px -12px rgba(108,249,221,.64)!important}
       @media(hover:hover){
         .x97-card:hover,.x97-item:hover,.x97-month-card:hover{transform:translateY(-4px)!important;border-color:color-mix(in srgb,var(--pos) 42%,var(--line2))!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.6),0 25px 48px -30px rgba(2,25,28,.58)!important}
         .x97-command-action:hover{transform:translateY(-3px)!important;border-color:color-mix(in srgb,var(--pos) 48%,var(--line2))!important;box-shadow:0 17px 30px -24px rgba(2,25,28,.52)!important}
@@ -2152,56 +2138,15 @@
         .x97-hero-part b{font-size:12.5px}
       }
 
-      /* ── Navigation dock ──────────────────────────────────────────────
-         A floating dock rather than an edge-to-edge bar, and one confident
-         active signal — a lime capsule around the whole item — instead of
-         the three that used to fire at once (icon chip, underline, colour).
-         Flex tracks however many items exist; the base grid was still cut
-         for six while only five are rendered, which left the row lopsided.
-         Desktop keeps its sidebar, so this stops before 1200px. */
+      /* .nav/.navin/.navitem now live in app.css's chrome layer (a "floating
+         dock" design used to live here, but it never actually won the
+         cascade against apex.css's plain bar/rail in production — deleted
+         rather than kept as dead weight; see app.css for the decision).
+         --x97-nav-h stays defined: .composer and #x97-v2-root's padding
+         still read it (composer/FAB consolidation is a separate step). */
       @media(max-width:1199px){
         :root{--x97-nav-h:86px}
-        .nav{
-          position:fixed!important;z-index:55!important;
-          left:50%!important;right:auto!important;transform:translateX(-50%)!important;
-          bottom:max(12px,env(safe-area-inset-bottom))!important;
-          width:min(calc(100% - 24px),480px)!important;
-          min-height:0!important;padding:0!important;overflow:hidden!important;
-          border:1px solid rgba(108,249,221,.16)!important;border-radius:27px!important;
-          background:linear-gradient(168deg,#084951 0%,#042A2F 56%,#031F22 100%)!important;
-          box-shadow:0 1px 2px rgba(2,25,28,.3),0 20px 46px -20px rgba(2,25,28,.95),inset 0 1px 0 rgba(255,255,255,.08)!important;
-          backdrop-filter:blur(22px) saturate(1.3)!important;
-        }
-        .nav::before{content:""!important;display:block!important;position:absolute!important;inset:0!important;pointer-events:none!important;
-          background:linear-gradient(118deg,rgba(255,255,255,.08),transparent 40%,rgba(108,249,221,.05))!important}
-        .navin{position:relative;z-index:1;display:flex!important;grid-template-columns:none!important;
-          max-width:none!important;margin:0!important;gap:2px!important;padding:6px!important}
-        .navitem{
-          flex:1 1 0!important;min-width:0!important;
-          display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;
-          gap:5px!important;min-height:58px!important;padding:9px 3px 8px!important;
-          border:0!important;border-radius:21px!important;background:transparent!important;
-          color:rgba(232,245,244,.58)!important;
-          font-size:10px!important;font-weight:700!important;letter-spacing:.015em!important;line-height:1!important;
-          transition:color .18s ease,background-color .24s cubic-bezier(.34,1.26,.52,1),box-shadow .24s ease,transform .15s ease!important;
-        }
-        .navitem .ind{display:none!important}
-        .navitem svg{width:21px!important;height:21px!important;padding:0!important;border-radius:0!important;
-          background:none!important;box-shadow:none!important;color:inherit!important;
-          transition:transform .26s cubic-bezier(.34,1.5,.5,1)!important}
-        .navitem:active{transform:scale(.94)!important}
-        .navitem.on{color:#042A2F!important;
-          background:linear-gradient(180deg,#93FAE6 0%,#6CF9DD 100%)!important;
-          box-shadow:0 9px 20px -9px rgba(108,249,221,.65),inset 0 1px 0 rgba(255,255,255,.5)!important}
-        .navitem.on svg{color:#042A2F!important;background:none!important;box-shadow:none!important;
-          transform:translateY(-1px) scale(1.04)!important}
-        .navitem.on::after{display:none!important}
-        /* The floating dock is taller than the old flush bar, so the action
-           button rides the shared token instead of its own fixed offset. */
         body>.x97-fab.x97-fab-viewport{bottom:calc(var(--x97-nav-h) + 12px + env(safe-area-inset-bottom))!important}
-      }
-      @media(max-width:1199px) and (prefers-reduced-motion:reduce){
-        .navitem,.navitem svg{transition:none!important}
       }
     `;
     document.head.appendChild(style);
