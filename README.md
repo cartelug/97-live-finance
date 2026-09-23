@@ -262,8 +262,12 @@ still wakes up on the new day's rate. Nothing to press.
   it's unreachable. Nothing about your finances is sent — the request only asks
   "what are today's rates".
 - **Works offline.** The last good rate table is saved on the device, so the
-  converter keeps working with no connection; the card just says *Last known*
+  converter keeps working with no connection; the card says *Last known*
   instead of *Live*.
+- **Says when rates are old.** If a refresh fails (or you're offline) once the
+  saved rates are due for renewal, the currency card turns amber and says why
+  and how old they are, and the Home total notes the rate its USD part used.
+  It keeps retrying on its own and clears as soon as a refresh succeeds.
 - **Your USD rate stays in step.** The daily rate updates the **USD rate** in
   Settings, so the dashboard's *This month USD* tile shows its shilling value
   and every finance calculation uses today's number instead of a stale one.

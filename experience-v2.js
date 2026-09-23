@@ -58,6 +58,7 @@
   var EMOJIS = ["😀","😁","😅","😂","🙂","😉","😍","😘","😎","🤩","🥳","🙏","👍","👌","👏","🙌","💪","🔥","✨","🎉","💯","✅","❗","❓","⚠️","💰","💸","🧾","📅","⏰","📌","📞","📱","💬","➡️","👉","❤️","🧡","💚","💙","🙏🏾","😊","😄","🤝","🎬","🎥","📸","🌟"];
 
   var FX_KEY = "ns97.v2.fx";
+  var FX_FAIL_KEY = "ns97.v2.fx-fail";
   var THEME_KEY = "ns97.v2.theme";
   var FX_BASE = "USD";
   var FX_HOME = "UGX";
@@ -841,6 +842,35 @@
     return false;
   }
 
+  // Background refreshes used to fail without a trace. The last failure is kept
+  // so the app can say why its rates are old, and cleared by the next success.
+  function fxFailure() {
+    try { return JSON.parse(localStorage.getItem(FX_FAIL_KEY) || "null"); } catch (_) { return null; }
+  }
+  function fxRecordFailure() {
+    try { localStorage.setItem(FX_FAIL_KEY, JSON.stringify({ at: Date.now() })); } catch (_) {}
+  }
+  function fxClearFailure() {
+    try { localStorage.removeItem(FX_FAIL_KEY); } catch (_) {}
+  }
+
+  // Why the saved rates are out of date, once that is worth saying: "offline",
+  // or "unreachable" after a refresh has been tried and failed. Null while the
+  // rates are current or simply haven't been due for a refresh yet.
+  function fxStaleReason(store) {
+    if (!store || !fxStale(store)) return null;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return "offline";
+    var failure = fxFailure();
+    return failure && num(failure.at) >= num(store.fetchedAt) ? "unreachable" : null;
+  }
+
+  function fxStaleText(store) {
+    var reason = fxStaleReason(store);
+    if (reason === "offline") return "Offline. Using rates saved " + fxAgo(store) + ".";
+    if (reason === "unreachable") return "Couldn't reach the rate service. Using rates saved " + fxAgo(store) + " — retrying automatically.";
+    return "";
+  }
+
   function fxRate(code, store) {
     var s = store || fxLoad();
     if (!s) return 0;
@@ -959,6 +989,7 @@
     fxFetch().then(function (next) {
       fxBusy = false;
       fxSave(next);
+      fxClearFailure();
       fxSyncDoc(next);
       fxPaint();
       scheduleRender(0);
@@ -966,7 +997,9 @@
       if (onDone) onDone(next, null);
     }, function (err) {
       fxBusy = false;
+      fxRecordFailure();
       fxPaint();
+      scheduleRender(0);
       if (force) toast("Could not reach the rate service", "error");
       if (onDone) onDone(fxLoad(), err);
     });
@@ -1208,6 +1241,12 @@
     return (live ? "Live" : "Last known") + " · " + fxAgo(store);
   }
 
+  function fxBadgeState(store) {
+    if (fxBusy) return " busy";
+    if (store && !fxStale(store)) return " live";
+    return fxStaleReason(store) ? " stale" : "";
+  }
+
   function fxCardHTML(doc) {
     var store = fxLoad();
     var manual = !!(doc.settings && doc.settings.fxManual);
@@ -1221,10 +1260,11 @@
         '<div class="x97-fx-top">' +
           '<div><div class="x97-fx-label">1 USD buys</div>' +
           '<div class="x97-fx-value x97-money">' + headline + ' <em>UGX</em></div></div>' +
-          '<div class="x97-fx-badge' + (fxBusy ? " busy" : (store && !fxStale(store) ? " live" : "")) + '" data-x97-fx="stamp">' + esc(fxStamp(store)) + '</div>' +
+          '<div class="x97-fx-badge' + fxBadgeState(store) + '" data-x97-fx="stamp">' + esc(fxStamp(store)) + '</div>' +
         '</div>' +
         '<div class="x97-fx-ticks">' + rows + '</div>' +
         (manual ? '<div class="x97-fx-note">Manual rate on — auto-update is paused</div>' : '') +
+        (fxStaleText(store) ? '<div class="x97-fx-note" data-x97-fx="stale">' + esc(fxStaleText(store)) + '</div>' : '') +
       '</button></section>';
   }
 
@@ -1262,10 +1302,12 @@
   // Repaints the live parts in place so typing never rebuilds the sheet.
   function fxPaint() {
     var store = fxLoad();
+    var state = fxBadgeState(store).trim();
     document.querySelectorAll('[data-x97-fx="stamp"]').forEach(function (el) {
       el.textContent = fxStamp(store);
-      el.classList.toggle("busy", fxBusy);
-      el.classList.toggle("live", !fxBusy && !!store && !fxStale(store));
+      el.classList.toggle("busy", state === "busy");
+      el.classList.toggle("live", state === "live");
+      el.classList.toggle("stale", state === "stale");
     });
     var out = document.getElementById("x97-fx-result");
     if (!out) return;
@@ -1279,7 +1321,7 @@
     var meta = document.getElementById("x97-fx-meta");
     if (meta) {
       meta.textContent = store
-        ? fxStamp(store) + " · " + (store.sourceLabel || store.source || "rate service") + " · refreshes automatically each day"
+        ? (fxStaleText(store) || fxStamp(store) + " · " + (store.sourceLabel || store.source || "rate service") + " · refreshes automatically each day")
         : (navigator.onLine ? "No rates saved yet — tap Refresh" : "Offline — connect once to load rates");
     }
   }
@@ -1952,7 +1994,7 @@
           '<div class="x97-hero-split">' +
             '<div class="x97-hero-part"><span class="x97-hero-part-k">Cash on hand</span><b class="x97-money">' + money(a.cash, "UGX") + '</b></div>' +
             '<div class="x97-hero-part"><span class="x97-hero-part-k">Available credit</span><b class="x97-money is-credit">' + money(a.creditAvailable, "UGX") + '</b></div>' +
-            '<div class="x97-hero-part"><span class="x97-hero-part-k">Incoming</span><b class="x97-money is-incoming">' + money(incomingTotal, "UGX") + (outstandingUSD ? '<small>incl. ' + esc(money(outstandingUSD, "USD", true)) + '</small>' : '') + '</b></div>' +
+            '<div class="x97-hero-part"><span class="x97-hero-part-k">Incoming</span><b class="x97-money is-incoming">' + money(incomingTotal, "UGX") + (outstandingUSD ? '<small>incl. ' + esc(money(outstandingUSD, "USD", true)) + (fxStaleReason(fxLoad()) ? ' · rate saved ' + esc(fxAgo(fxLoad())) : '') + '</small>' : '') + '</b></div>' +
           '</div>' +
           '<div class="x97-hero-caption">Money you hold, credit you can draw and invoices still owed — tap the total to edit balances and credit lines.</div></section>' +
         '<section class="x97-command-actions x97-dashboard-wide"><button class="x97-command-action primary" data-x97-action="record-payment"><span class="x97-command-icon">' + icon("wallet", 17) + '</span><span><b>Record payment</b><small>Money received</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="add-upcoming"><span class="x97-command-icon teal">' + icon("plus", 17) + '</span><span><b>Add deal</b><small>Money expected</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="go-expenses"><span class="x97-command-icon warn">' + icon("trend", 17) + '</span><span><b>Add expense</b><small>Money spent</small></span>' + icon("chevron", 14) + '</button></section>' +
