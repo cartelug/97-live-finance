@@ -257,6 +257,7 @@
     if (!doc.settings || typeof doc.settings !== "object") doc.settings = {};
     if (!Array.isArray(doc.creditLoans)) doc.creditLoans = [];
     if (!Array.isArray(doc.payments)) doc.payments = [];
+    migrateFacilityLoans(doc);
     // Recalculate structured deals in memory whenever a screen reads the
     // document. This keeps old records compatible while making the derived
     // amount/status/next-date fields agree with the payment ledger.
@@ -1671,30 +1672,62 @@
     return roundMoney(principal * (1 + base));
   }
 
-  function virtualLegacyLoans(doc) {
-    var loans = Array.isArray(doc.creditLoans) ? doc.creditLoans.slice() : [];
-    var facilities = doc.credit || [];
-    facilities.forEach(function (f) {
-      if (num(f.borrowed) <= 0 || !f.borrowDate) return;
-      var exists = loans.some(function (l) { return String(l.facilityId) === String(f.id) && !/repaid|cancel/i.test(String(l.status)); });
-      if (exists) return;
-      loans.push({
-        id: "legacy-" + f.id,
-        facilityId: f.id,
-        principal: num(f.borrowed),
-        borrowDate: f.borrowDate,
-        dueDate: dateISO(addDays(f.borrowDate, num(f.termDays || 30))),
-        feeModelSnapshot: f.feeModel,
-        baseFeeSnapshot: num(f.baseFee),
-        dailyRateSnapshot: num(f.dailyRate),
-        termDaysSnapshot: num(f.termDays || 30),
-        manualDue: num(f.manualDue),
-        status: "Active",
-        legacy: true,
-        notes: f.notes || ""
-      });
+  // Loans live in doc.creditLoans and nowhere else. Before that array existed a
+  // facility carried at most one loan in its own borrowed / borrowDate /
+  // manualDue fields; readDoc() moves such a loan into creditLoans once, so no
+  // other code needs to know the old shape. Borrowing again on that facility
+  // used to overwrite those fields, silently dropping the older loan.
+  function loansOf(doc) { return (doc && doc.creditLoans) || []; }
+
+  function sameLoan(a, facilityId, principal, borrowDate) {
+    return String(a.facilityId) === String(facilityId) && num(a.principal) === num(principal) && String(a.borrowDate || "") === String(borrowDate || "");
+  }
+
+  // Returns true when it changed the document. Safe to run on every read.
+  function migrateFacilityLoans(doc) {
+    var loans = doc.creditLoans, changed = false;
+    (doc.credit || []).forEach(function (f) {
+      var principal = num(f.borrowed), date = String(f.borrowDate || "");
+      if (principal <= 0 || !date) return;
+      var recorded = loans.some(function (l) { return sameLoan(l, f.id, principal, date); });
+      if (!recorded) {
+        // These fields match no loan while another one is open on this facility.
+        // Earlier versions never showed such fields as debt; leave them untouched.
+        if (loans.some(function (l) { return isActiveLoan(l) && String(l.facilityId) === String(f.id); })) return;
+        loans.push({
+          // Derived from the loan itself, so two devices migrating the same
+          // document produce the same record and sync merges them into one.
+          id: "legacy-" + f.id + "-" + date + "-" + principal,
+          facilityId: f.id,
+          principal: principal,
+          borrowDate: date,
+          dueDate: dateISO(addDays(date, num(f.termDays || 30))),
+          feeModelSnapshot: f.feeModel,
+          baseFeeSnapshot: num(f.baseFee),
+          dailyRateSnapshot: num(f.dailyRate),
+          termDaysSnapshot: num(f.termDays || 30),
+          manualDue: num(f.manualDue),
+          status: "Active",
+          notes: f.notes || "",
+          migratedFrom: "facility"
+        });
+      }
+      f.borrowed = 0;
+      f.borrowDate = "";
+      f.manualDue = 0;
+      changed = true;
     });
-    return loans;
+    // A version from before this migration repays such a loan by saving its own
+    // copy. If that copy arrives beside the migrated one, the repaid copy wins.
+    for (var i = loans.length - 1; i >= 0; i--) {
+      var m = loans[i];
+      if (m.migratedFrom !== "facility" || !isActiveLoan(m)) continue;
+      if (loans.some(function (l) { return l !== m && !isActiveLoan(l) && sameLoan(l, m.facilityId, m.principal, m.borrowDate); })) {
+        loans.splice(i, 1);
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   function isActiveLoan(loan) { return !/repaid|cancel/i.test(String(loan.status || "Active")); }
@@ -1727,7 +1760,7 @@
   function analytics(doc) {
     var balances = doc.balances || [];
     var cash = balances.reduce(function (a, b) { return a + num(b.balance); }, 0);
-    var loans = virtualLegacyLoans(doc);
+    var loans = loansOf(doc);
     var activeLoans = loans.filter(isActiveLoan);
     var debt = activeLoans.reduce(function (a, loan) { return a + estimateLoan(loan, todayISO()); }, 0);
     var open = (doc.followups || []).filter(isOpenFollowup);
@@ -2526,7 +2559,7 @@
   }
 
   function renderCredit(doc) {
-    var loans = virtualLegacyLoans(doc);
+    var loans = loansOf(doc);
     var active = loans.filter(isActiveLoan);
     var history = loans.filter(function (l) { return !isActiveLoan(l); }).sort(function(a,b){return String(b.repaidDate||b.borrowDate).localeCompare(String(a.repaidDate||a.borrowDate));});
     var live = (doc.credit || []).filter(isFacilityLive);
@@ -2873,7 +2906,7 @@
 
   function openBorrowForm(id) {
     var doc=readDoc(), f=facilityById(doc,id); if(!f)return;
-    var loans=virtualLegacyLoans(doc), available=Math.max(0,num(f.limitOffer)-activePrincipalForFacility(loans,f.id));
+    var loans=loansOf(doc), available=Math.max(0,num(f.limitOffer)-activePrincipalForFacility(loans,f.id));
     var accounts=(doc.balances||[]).map(function(b){return option(b.id,b.account+' · '+money(b.balance,"UGX"),"");}).join("");
     var manual=/manual/i.test(String(f.feeModel));
     var body='<form id="x97-borrow-form" data-x97-form="borrow"><input type="hidden" name="facilityId" value="'+attr(f.id)+'"><div class="x97-card x97-pad" style="margin-bottom:14px"><div class="x97-row-sub">Available from '+esc(f.service)+'</div><div class="x97-money x97-teal" style="font-size:28px;margin-top:5px">'+money(available,"UGX")+'</div><div class="x97-row-sub">'+esc(facilityFeeText(f))+'</div></div>'+field("Amount borrowed",'<input class="x97-input" name="amount" required type="number" min="1" max="'+attr(available)+'" step="1" value=""><div class="x97-chips" style="padding-top:7px"><button type="button" class="x97-chip" data-x97-action="borrow-percent" data-value="25">25%</button><button type="button" class="x97-chip" data-x97-action="borrow-percent" data-value="50">50%</button><button type="button" class="x97-chip" data-x97-action="borrow-percent" data-value="75">75%</button><button type="button" class="x97-chip" data-x97-action="borrow-percent" data-value="100">Maximum</button></div>')+field("Borrowing date",'<input class="x97-input" name="borrowDate" type="date" required value="'+todayISO()+'">')+(manual?field("Amount due",'<input class="x97-input" name="manualDue" type="number" min="0" step="1" required>','Enter the provider’s total repayment amount.'):'')+field("Add money to account",'<select class="x97-select" name="destinationAccount"><option value="">No — record debt only</option>'+accounts+'</select>','An account balance changes only when you select it explicitly.')+'<div class="x97-preview" id="x97-borrow-preview"></div></form>';
@@ -2881,7 +2914,7 @@
     openSheet("Record borrowing",body,foot,{afterOpen:function(){var form=document.getElementById("x97-borrow-form");renderBorrowPreview(form,f);}});
   }
 
-  function findLoan(doc,id) { return virtualLegacyLoans(doc).find(function(l){return String(l.id)===String(id);}); }
+  function findLoan(doc,id) { return loansOf(doc).find(function(l){return String(l.id)===String(id);}); }
 
   function openRepayForm(id) {
     var doc=readDoc(), loan=findLoan(doc,id); if(!loan)return;
@@ -4123,16 +4156,44 @@
   }
 
   function submitBorrow(form) {
-    var v=formValues(form),doc=readDoc(),f=facilityById(doc,v.facilityId);if(!f)return;var loans=virtualLegacyLoans(doc),available=Math.max(0,num(f.limitOffer)-activePrincipalForFacility(loans,f.id)),amount=roundMoney(v.amount);if(amount<=0||amount>available){toast("Enter an amount within the available offer","error");return;}var p=facilityPreview(f,amount,v.borrowDate,v.manualDue);updateDoc(function(next){var facility=facilityById(next,f.id);var loan={id:uid("loan"),facilityId:f.id,principal:amount,borrowDate:v.borrowDate,dueDate:p.dueDate,feeModelSnapshot:f.feeModel,baseFeeSnapshot:num(f.baseFee),dailyRateSnapshot:num(f.dailyRate),termDaysSnapshot:num(f.termDays||30),estimatedDue:p.estimated,manualDue:num(v.manualDue),status:"Active",destinationAccountId:v.destinationAccount||"",notes:"",createdAt:new Date().toISOString()};next.creditLoans.push(loan);facility.borrowed=amount;facility.borrowDate=v.borrowDate;facility.manualDue=p.estimated;if(v.destinationAccount){var account=next.balances.find(function(b){return String(b.id)===String(v.destinationAccount);});if(account)account.balance=num(account.balance)+amount;}},"credit-borrow");closeSheet();state.creditView="borrowed";scheduleRender(0);
+    var v=formValues(form),doc=readDoc(),f=facilityById(doc,v.facilityId);if(!f)return;var available=Math.max(0,num(f.limitOffer)-activePrincipalForFacility(loansOf(doc),f.id)),amount=roundMoney(v.amount);if(amount<=0||amount>available){toast("Enter an amount within the available offer","error");return;}updateDoc(function(next){recordBorrow(next,f.id,amount,v);},"credit-borrow");closeSheet();state.creditView="borrowed";scheduleRender(0);
   }
 
-  function materializeLegacy(next, loan) {
-    if (!loan.legacy) return next.creditLoans.find(function(l){return String(l.id)===String(loan.id);});
-    var copy=clone(loan);delete copy.legacy;copy.id=uid("loan");next.creditLoans.push(copy);return copy;
+  // The document changes behind borrowing and repaying, kept apart from the
+  // forms so they can be tested. A loan is only ever written to creditLoans.
+  function recordBorrow(doc, facilityId, amount, v) {
+    var f = facilityById(doc, facilityId);
+    if (!f) return false;
+    var p = facilityPreview(f, amount, v.borrowDate, v.manualDue);
+    doc.creditLoans.push({ id: uid("loan"), facilityId: f.id, principal: amount, borrowDate: v.borrowDate, dueDate: p.dueDate, feeModelSnapshot: f.feeModel, baseFeeSnapshot: num(f.baseFee), dailyRateSnapshot: num(f.dailyRate), termDaysSnapshot: num(f.termDays || 30), estimatedDue: p.estimated, manualDue: num(v.manualDue), status: "Active", destinationAccountId: v.destinationAccount || "", notes: "", createdAt: new Date().toISOString() });
+    if (v.destinationAccount) {
+      var account = doc.balances.find(function (b) { return String(b.id) === String(v.destinationAccount); });
+      if (account) account.balance = num(account.balance) + amount;
+    }
+    return true;
+  }
+
+  function recordRepay(doc, loanId, amount, v) {
+    var stored = loansOf(doc).find(function (l) { return String(l.id) === String(loanId); });
+    if (!stored) return false;
+    stored.status = "Repaid";
+    stored.actualPaid = amount;
+    stored.repaidDate = v.repaidDate;
+    stored.repaymentAccountId = v.repaymentAccount || "";
+    stored.updatedAt = new Date().toISOString();
+    // Older versions cleared these fields on every repayment; keep doing so, so
+    // anything they left on the facility can't reappear as a loan afterwards.
+    var facility = facilityById(doc, stored.facilityId);
+    if (facility) { facility.borrowed = 0; facility.borrowDate = ""; facility.manualDue = 0; }
+    if (v.repaymentAccount) {
+      var account = doc.balances.find(function (b) { return String(b.id) === String(v.repaymentAccount); });
+      if (account) account.balance = num(account.balance) - amount;
+    }
+    return true;
   }
 
   function submitRepay(form) {
-    var v=formValues(form),snapshot=readDoc(),loan=findLoan(snapshot,v.loanId);if(!loan)return;var amount=roundMoney(v.actualPaid);updateDoc(function(next){var stored=materializeLegacy(next,loan)||next.creditLoans.find(function(l){return String(l.id)===String(loan.id);});if(!stored)return;stored.status="Repaid";stored.actualPaid=amount;stored.repaidDate=v.repaidDate;stored.repaymentAccountId=v.repaymentAccount||"";stored.updatedAt=new Date().toISOString();var facility=facilityById(next,stored.facilityId);if(facility){facility.borrowed=0;facility.borrowDate="";facility.manualDue=0;}if(v.repaymentAccount){var account=next.balances.find(function(b){return String(b.id)===String(v.repaymentAccount);});if(account)account.balance=num(account.balance)-amount;}},"credit-repay");closeSheet();state.creditView="history";scheduleRender(0);
+    var v=formValues(form),loan=findLoan(readDoc(),v.loanId);if(!loan)return;var amount=roundMoney(v.actualPaid);updateDoc(function(next){recordRepay(next,loan.id,amount,v);},"credit-repay");closeSheet();state.creditView="history";scheduleRender(0);
   }
 
   document.addEventListener("submit", function (e) {
@@ -4182,7 +4243,7 @@
     if(action==="toggle-unavailable"){unavailableOpen=!unavailableOpen;scheduleRender(0);return;}
     if(action==="add-facility"){openFacilityForm();return;}
     if(action==="edit-facility"){openFacilityForm(btn.dataset.id);return;}
-    if(action==="delete-facility"){var doc=readDoc(),has=virtualLegacyLoans(doc).some(function(l){return isActiveLoan(l)&&String(l.facilityId)===String(btn.dataset.id);});if(has){toast("Repay or cancel the active borrowing first","error");return;}if(confirm("Delete this credit facility?")){updateDoc(function(next){next.credit=next.credit.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"facility-delete");closeSheet();}return;}
+    if(action==="delete-facility"){var doc=readDoc(),has=loansOf(doc).some(function(l){return isActiveLoan(l)&&String(l.facilityId)===String(btn.dataset.id);});if(has){toast("Repay or cancel the active borrowing first","error");return;}if(confirm("Delete this credit facility?")){updateDoc(function(next){next.credit=next.credit.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"facility-delete");closeSheet();}return;}
     if(action==="borrow"){openBorrowForm(btn.dataset.id);return;}
     if(action==="borrow-percent"){var form=document.getElementById("x97-borrow-form");if(form){var max=num(form.amount.max);form.amount.value=Math.floor(max*num(btn.dataset.value)/100);form.amount.dispatchEvent(new Event("input",{bubbles:true}));}return;}
     if(action==="repay"){openRepayForm(btn.dataset.id);return;}
@@ -4223,6 +4284,24 @@
     },100);
   }
 
+  // Store the credit migration (see migrateFacilityLoans) once, on the stored
+  // document as-is, so the cloud copy and every device converge on one shape.
+  // Runs after resumeOriginalTab, which resets the refresh flag set here.
+  function persistCreditMigration() {
+    var raw = "", doc;
+    try { raw = localStorage.getItem(DATA_KEY) || ""; } catch (_) {}
+    try { doc = JSON.parse(raw); } catch (_) { return; }
+    if (!doc || typeof doc !== "object" || !Array.isArray(doc.credit)) return;
+    if (!Array.isArray(doc.creditLoans)) doc.creditLoans = [];
+    if (!migrateFacilityLoans(doc)) return;
+    var value = JSON.stringify(doc);
+    try { localStorage.setItem(DATA_KEY, value); } catch (_) { return; }
+    lastRaw = value;
+    // The legacy screens loaded the old shape; reload before they are used again.
+    needsReactRefresh = true;
+    try { sessionStorage.setItem(REFRESH_KEY, "1"); } catch (_) {}
+  }
+
   function watchData() {
     setInterval(function () {
       updateCloudPill();
@@ -4235,7 +4314,7 @@
   function boot() {
     try { localStorage.removeItem("ns97-ai-cfg-v1"); } catch (_) {}
     applyTheme(loadTheme());
-    loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();
+    loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();persistCreditMigration();
     var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
     var observer=new MutationObserver(function(mutations){
       var relevant=mutations.some(function(m){
@@ -4251,7 +4330,7 @@
     observer.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:["class"]});
     watchData();
     window.addEventListener("pageshow",syncMode);window.addEventListener("focus",function(){setTimeout(syncMode,30);});
-    window.__x97v2={version:VERSION,render:scheduleRender,read:readDoc,analytics:function(){var d=readDoc();return d?analytics(d):null;},fx:{rates:fxLoad,refresh:function(){fxRefresh(true);},convert:fxConvert},money:{gross:grossOf,paid:paidOf,outstanding:outstandingOf,earned:earnedIn,series:earningsSeries,csv:function(kind){return csvFor(readDoc(),kind).csv;},doc:function(id,kind){var d=readDoc();var i=(d.followups||[]).find(function(x){return String(x.id)===String(id);});return i?documentText(i,d,kind):"";}},selfTest:function(){var d=readDoc(),fx=fxLoad();return {version:VERSION,dataReady:!!d,followups:d?d.followups.length:0,payments:d?d.payments.length:0,facilities:d?d.credit.length:0,loans:d?virtualLegacyLoans(d).length:0,screen:currentScreen,fx:fx?{source:fx.source,day:fx.day,ugx:fx.rates.UGX,currencies:Object.keys(fx.rates).length,stale:fxStale(fx)}:null};}};
+    window.__x97v2={version:VERSION,render:scheduleRender,read:readDoc,analytics:function(){var d=readDoc();return d?analytics(d):null;},fx:{rates:fxLoad,refresh:function(){fxRefresh(true);},convert:fxConvert},money:{gross:grossOf,paid:paidOf,outstanding:outstandingOf,earned:earnedIn,series:earningsSeries,csv:function(kind){return csvFor(readDoc(),kind).csv;},doc:function(id,kind){var d=readDoc();var i=(d.followups||[]).find(function(x){return String(x.id)===String(id);});return i?documentText(i,d,kind):"";}},selfTest:function(){var d=readDoc(),fx=fxLoad();return {version:VERSION,dataReady:!!d,followups:d?d.followups.length:0,payments:d?d.payments.length:0,facilities:d?d.credit.length:0,loans:d?loansOf(d).length:0,screen:currentScreen,fx:fx?{source:fx.source,day:fx.day,ugx:fx.rates.UGX,currencies:Object.keys(fx.rates).length,stale:fxStale(fx)}:null};}};
   }
 
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();
