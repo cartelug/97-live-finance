@@ -190,7 +190,9 @@ queue for you at a **human pace** with safety rails — **Antiblock** presets
 - a **daily cap** and optional warm-up ramp
 - batch breaks (e.g. pause after every 8)
 - **quiet hours** (won't message late at night)
-- auto-skips numbers WhatsApp reports as invalid/unsaved
+- auto-skips numbers WhatsApp reports as invalid
+- optional **Only known contacts** (Safety): reminders go only to numbers in
+  **Contacts & lists**; anyone else is skipped and marked in the list
 - a **risk meter** on the hub showing today's count vs your cap
 
 Every campaign gets a **report** — per-recipient sent / failed / skipped,

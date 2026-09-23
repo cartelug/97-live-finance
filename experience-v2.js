@@ -3087,7 +3087,7 @@
     if (s < 60) return "just now"; if (s < 3600) return Math.floor(s / 60) + "m ago";
     if (s < 86400) return Math.floor(s / 3600) + "h ago"; return Math.floor(s / 86400) + "d ago";
   }
-  function progLabel(p) { return ({ queued: "Queued", sending: "Sending…", typing: "Typing…", sent: "Sent ✓", error: "Failed", skipped: "Skipped", paused: "Paused" })[p] || p; }
+  function progLabel(p) { return ({ queued: "Queued", sending: "Sending…", typing: "Typing…", sent: "Sent ✓", error: "Failed", skipped: "Skipped", "not-contact": "Skipped · not in contacts", paused: "Paused" })[p] || p; }
   function safeJson(text) { try { return JSON.parse(text); } catch (_) {} var a = text.indexOf("{"), b = text.lastIndexOf("}"); if (a >= 0 && b > a) { try { return JSON.parse(text.slice(a, b + 1)); } catch (_) {} } return null; }
 
   function openReminders() {
@@ -3190,15 +3190,32 @@
     refreshRemind();
   }
 
+  // "Only known contacts": Auto mode sends only to numbers in the contacts you
+  // imported. Messages to numbers that don't have yours saved are what WhatsApp
+  // treats as spam, and the imported contacts are this app's record of who does.
+  function knownContactFilter(doc, jobs) {
+    if (!safety(doc).knownOnly) return { send: jobs, skipped: [], noContacts: false };
+    var known = {};
+    campContacts(doc).forEach(function (c) { var k = waNumber(c.phone, doc); if (k) known[k] = true; });
+    var send = [], skipped = [];
+    jobs.forEach(function (j) { (known[j.phone] ? send : skipped).push(j); });
+    return { send: send, skipped: skipped, noContacts: !Object.keys(known).length };
+  }
+
   function sendAuto(doc) {
     if (!remindExt.ready) { toast("Install the 97 Sender extension first", "error"); return; }
     var jobs = selectedSendable(doc).map(function (item) { return { id: String(item.id), phone: waNumber(item.phone, doc), name: firstName(item.client), message: messageFor(item, doc) }; });
     if (!jobs.length) { toast("Select at least one client with a number", "error"); return; }
-    jobs.forEach(function (j) { remindState.progress[j.id] = "queued"; });
+    var gate = knownContactFilter(doc, jobs);
+    if (gate.noContacts) { toast("“Only known contacts” is on but Contacts & lists is empty. Import your contacts there, or turn the setting off in Safety.", "error"); return; }
+    gate.skipped.forEach(function (j) { remindState.progress[j.id] = "not-contact"; });
+    if (!gate.send.length) { refreshRemind(); toast("None of the selected numbers are in your contacts, so nothing was sent", "error"); return; }
+    gate.send.forEach(function (j) { remindState.progress[j.id] = "queued"; });
     remindExt.sending = true;
-    window.postMessage({ source: "x97-wa-app", type: "enqueue", jobs: jobs, safety: safety(doc) }, "*");
+    window.postMessage({ source: "x97-wa-app", type: "enqueue", jobs: gate.send, safety: safety(doc) }, "*");
     refreshRemind();
-    toast("Sending " + jobs.length + " reminder" + (jobs.length === 1 ? "" : "s") + " — keep WhatsApp Web open", "");
+    var n = gate.send.length, k = gate.skipped.length;
+    toast("Sending " + n + " reminder" + (n === 1 ? "" : "s") + (k ? " · " + k + " skipped, not in your contacts" : "") + " — keep WhatsApp Web open", "");
   }
 
   function openTemplateManager() {
@@ -3401,7 +3418,7 @@
       '<div class="x97-fields-2">' + field("Min gap (seconds)", '<input class="x97-input" type="number" min="5" name="minDelay" value="' + attr(s.minDelay) + '">') + field("Max gap (seconds)", '<input class="x97-input" type="number" min="10" name="maxDelay" value="' + attr(s.maxDelay) + '">') + '</div>' +
       '<div class="x97-fields-2">' + field("Batch size", '<input class="x97-input" type="number" min="1" name="batchSize" value="' + attr(s.batchSize) + '">') + field("Break after batch (min)", '<input class="x97-input" type="number" min="0" name="batchBreak" value="' + attr(s.batchBreak) + '">') + '</div>' +
       '<div class="x97-fields-2">' + field("Quiet hours from", '<input class="x97-input" type="time" name="quietStart" value="' + attr(s.quietStart) + '">') + field("Quiet hours to", '<input class="x97-input" type="time" name="quietEnd" value="' + attr(s.quietEnd) + '">') + '</div>' +
-      field("Only known contacts", '<select class="x97-select" name="knownOnly">' + option("false", "No — send to any number", String(s.knownOnly)) + option("true", "Yes — safest, skip unsaved", String(s.knownOnly)) + '</select>') + '</form>';
+      field("Only known contacts", '<select class="x97-select" name="knownOnly">' + option("false", "No — send to any number", String(s.knownOnly)) + option("true", "Yes — safest, skip unsaved", String(s.knownOnly)) + '</select>', "Known means the number is in Contacts & lists. Anyone else is skipped and marked in the reminder list.") + '</form>';
     var foot = '<button class="x97-btn" data-x97-action="close-sheet">Cancel</button><button class="x97-btn primary" type="submit" form="x97-safety-form">' + icon("check") + ' Save safety settings</button>';
     openSheet("Sending safety", body, foot);
   }
