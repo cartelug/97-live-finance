@@ -77,6 +77,16 @@ Then open `http://localhost:8080`.
 (Open it through a server, not by double-clicking the file — the service worker
 and offline features need an `http(s)://` origin.)
 
+### Automated checks
+The finance and cloud-sync logic has tests that need only Node 18+ (nothing to
+install, no network, no real data):
+```
+node --test tests/*.test.cjs
+```
+`tests/sync.test.cjs` runs the real sync engine through stalled requests,
+conflicting edits from two devices, offline edits and realtime drops on a
+simulated clock.
+
 ---
 
 ## 2. Install it on your phone
