@@ -332,26 +332,6 @@
     document.querySelectorAll("[data-v2-slider]").forEach(enhanceSlider);
   }
 
-  function ensureStyleLast() {
-    var base = document.querySelector('link[data-v2-premium="true"]');
-    var signature = document.querySelector('link[data-97-signature="true"]');
-    var apex = document.querySelector('link[data-97-apex="true"]');
-    // Move the presentation stack only when out of order; otherwise the
-    // observer would schedule itself forever as each link fought to be last.
-    if (apex) {
-      if (apex !== document.head.lastElementChild || (signature && signature.nextElementSibling !== apex) || (base && signature && base.nextElementSibling !== signature)) {
-        if (base) document.head.appendChild(base);
-        if (signature) document.head.appendChild(signature);
-        document.head.appendChild(apex);
-      }
-    } else if (signature) {
-      if (signature !== document.head.lastElementChild || (base && base.nextElementSibling !== signature)) {
-        if (base) document.head.appendChild(base);
-        document.head.appendChild(signature);
-      }
-    } else if (base && base !== document.head.lastElementChild) document.head.appendChild(base);
-  }
-
   function enhance() {
     frame = 0;
     stripCopilot();
@@ -361,7 +341,6 @@
     setPrivacy(privacyOn());
     animateNumbers();
     enhanceSliders();
-    ensureStyleLast();
     document.documentElement.classList.add("v2-ready");
   }
 
