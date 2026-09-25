@@ -1968,7 +1968,10 @@
     var runway = runwayDays(doc, cash);
     var key = monthKey(todayDate());
     var earned = earnedIn(doc, key), spent = spentIn(doc, key);
-    var summary = items.length ? items.filter(function (x) { return x.tone === "bad"; }).length ? "A few things need you today." : "Nothing urgent — a few things coming up." : "Everything is on track.";
+    // One line under the greeting that says what the list below says, with numbers.
+    var summary = items.length ? items.slice(0, 2).map(function (x) {
+      return x.count != null ? x.count + " " + x.title.charAt(0).toLowerCase() + x.title.slice(1) : x.title;
+    }).join(" · ") + (items.length > 2 ? " · and more" : "") : "Everything is on track — nothing overdue or due this week.";
     var dateLine = todayDate().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
     var stale = outUSD && fxStaleReason(fxLoad()) ? " · rate saved " + fxAgo(fxLoad()) : "";
 
