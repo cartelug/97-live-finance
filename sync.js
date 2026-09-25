@@ -19,7 +19,9 @@
   var RELOAD_VERSION_KEY = "ns97.cloud.reload_version";
   var URL = "https://rytbeijznlqofstfrmwf.supabase.co";
   var PUBLISHABLE_KEY = "sb_publishable_M5P58fOgzRv5_28qZXmwYg_wiYVhMQ-";
-  var SDK_URL = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js";
+  // Shipped with the app and pinned, so sync starts offline from the service worker's
+  // cache and an upstream release can never change behaviour underneath us.
+  var SDK_URL = "./vendor/supabase-js-2.117.0.js";
   // Where supabase-js keeps the signed-in session (its default storage key for this project).
   var AUTH_KEY = "sb-" + URL.split("//")[1].split(".")[0] + "-auth-token";
   var SAVE_DELAY = 650;
@@ -642,6 +644,12 @@
   // merged safely. A failed load retries itself (see scheduleRetry and wake).
   function loadCloud() {
     if (loading) return loading;
+    if (!navigator.onLine) {
+      // A request now would only wait out its retries before failing. The online
+      // event (see boot) resumes loading as soon as there is a connection.
+      setStatus("offline");
+      return Promise.resolve();
+    }
     var gen = generation;
     function current() { if (gen !== generation) throw STALE; }
     setStatus("loading");

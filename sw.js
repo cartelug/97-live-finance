@@ -1,8 +1,9 @@
 /* 97 LIVE service worker.
    Network-first for the app shell so new versions actually reach every device;
    stale-while-revalidate for static assets; cache is the offline fallback only.
-   Cross-origin requests (Supabase and live rates) are never intercepted. */
-const CACHE = "ns97-live-v29-fx";
+   Cross-origin requests (Supabase's API and live rates) are never intercepted;
+   the Supabase client library itself ships in vendor/ and is precached. */
+const CACHE = "ns97-live-v30-vendor";
 const ASSETS = [
   "./",
   "./index.html",
@@ -19,7 +20,8 @@ const ASSETS = [
   "./fonts/fraunces-500.woff2",
   "./fonts/fraunces-600.woff2",
   "./fonts/fraunces-700.woff2",
-  "./sync.js?v=30",
+  "./sync.js?v=31",
+  "./vendor/supabase-js-2.117.0.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

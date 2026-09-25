@@ -11,7 +11,7 @@ const path = require('node:path');
 const SYNC = process.env.SYNC_FILE || path.join(__dirname, '../sync.js');
 const DATA_KEY = 'ns97-finance-v1';
 const AUTH_KEY = 'sb-rytbeijznlqofstfrmwf-auth-token';
-const SDK_URL = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js';
+const SDK_URL = './vendor/supabase-js-2.117.0.js';
 const SEC = 1000, MIN = 60 * SEC;
 
 function doc(items, extra) {
@@ -254,7 +254,7 @@ function world(opts = {}) {
     else if (w.sdk === 'error') Promise.resolve().then(() => node.onerror && node.onerror());
   });
   if (w.sdk === 'ready' && !opts.sdkLoadsLater) window.supabase = F.module;
-  const navigator = { onLine: true, userAgent: 'test' };
+  const navigator = { onLine: opts.online !== false, userAgent: 'test' };
   const context = {
     window, document, navigator, localStorage, Storage,
     location: { reload: () => { w.reloads++; }, origin: 'https://app.test', pathname: '/' },
@@ -525,6 +525,19 @@ test('a stalled sign-in check retries without creating a second client or listen
   assert.equal(w.state().status, 'online');
   assert.equal(w.supabase.clients, 1);
   assert.equal(w.supabase.authListeners.length, 1);
+});
+
+test('starting offline says so at once, then loads when the connection returns', async () => {
+  const w = synced({ online: false });
+  await w.advance(0);
+  assert.equal(w.state().status, 'offline');
+  assert.equal(w.supabase.count('select'), 0, 'no request is made just to wait out its retries');
+  w.edit((d) => { d.followups[0].amount = 12; });
+  await w.advance(1 * SEC);
+  w.online();
+  await w.advance(1 * SEC);
+  assert.equal(w.state().status, 'online');
+  assert.equal(w.supabase.row.data.followups[0].amount, 12, 'the offline edit went up');
 });
 
 test('edits made offline go up as soon as the device is back online', async () => {
