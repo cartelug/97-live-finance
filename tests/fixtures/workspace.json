@@ -1,0 +1,253 @@
+{
+  "meta": {
+    "appName": "97 LIVE",
+    "usdRate": 3800
+  },
+  "followups": [
+    {
+      "id": "f1",
+      "client": "Apollo Studios",
+      "category": "Film",
+      "currency": "UGX",
+      "amount": 8400000,
+      "paid": 2100000,
+      "status": "Part Paid",
+      "dealType": "custom",
+      "expectedBy": "2026-09-18",
+      "phone": "0772123456",
+      "parts": [
+        {
+          "id": "p1",
+          "label": "Scene 3 deposit",
+          "amount": 4200000,
+          "paid": 2100000,
+          "dueDate": "2026-09-18",
+          "status": "Part Paid"
+        },
+        {
+          "id": "p2",
+          "label": "Scene 4 balance",
+          "amount": 4200000,
+          "paid": 0,
+          "dueDate": "2026-09-30",
+          "status": "Pending"
+        }
+      ]
+    },
+    {
+      "id": "f2",
+      "client": "Kaleidoscope Media International Ltd",
+      "category": "Retainer",
+      "currency": "USD",
+      "amount": 1500,
+      "paid": 0,
+      "status": "Pending",
+      "dealType": "one",
+      "expectedBy": "2026-09-05",
+      "parts": [
+        {
+          "id": "p3",
+          "label": "Monthly retainer",
+          "amount": 1500,
+          "paid": 0,
+          "dueDate": "2026-09-05",
+          "status": "Pending"
+        }
+      ]
+    },
+    {
+      "id": "f3",
+      "client": "Nile Collective",
+      "category": "Design",
+      "currency": "UGX",
+      "amount": 12750000,
+      "paid": 0,
+      "status": "Pending",
+      "dealType": "one",
+      "expectedBy": "",
+      "parts": [
+        {
+          "id": "p4",
+          "label": "Full payment",
+          "amount": 12750000,
+          "paid": 0,
+          "dueDate": "",
+          "status": "Pending"
+        }
+      ]
+    },
+    {
+      "id": "f4",
+      "client": "Sunbird Events",
+      "category": "Events",
+      "currency": "UGX",
+      "amount": 3000000,
+      "paid": 3000000,
+      "status": "Paid",
+      "dealType": "one",
+      "expectedBy": "2026-08-28",
+      "parts": [
+        {
+          "id": "p5",
+          "label": "Full payment",
+          "amount": 3000000,
+          "paid": 3000000,
+          "dueDate": "2026-08-28",
+          "status": "Paid"
+        }
+      ]
+    }
+  ],
+  "balances": [
+    {
+      "id": "b1",
+      "account": "Equity Bank",
+      "line": "Business current",
+      "balance": 4120000,
+      "notes": ""
+    },
+    {
+      "id": "b2",
+      "account": "Airtel Money",
+      "line": "0772",
+      "balance": 2850000,
+      "notes": ""
+    },
+    {
+      "id": "b3",
+      "account": "MTN MoMo",
+      "line": "0703",
+      "balance": 1450000,
+      "notes": ""
+    }
+  ],
+  "credit": [
+    {
+      "id": "c1",
+      "network": "MTN",
+      "line": "0703",
+      "service": "XtraCash",
+      "limitOffer": 1340000,
+      "status": "Live",
+      "feeModel": "Fixed fee",
+      "baseFee": 0.09,
+      "dailyRate": 0,
+      "termDays": 30,
+      "borrowed": 0,
+      "borrowDate": "",
+      "manualDue": 0
+    },
+    {
+      "id": "c2",
+      "network": "Airtel",
+      "line": "0772",
+      "service": "Overdraft",
+      "limitOffer": 500000,
+      "status": "Live",
+      "feeModel": "Daily fee",
+      "baseFee": 0,
+      "dailyRate": 0.01,
+      "termDays": 30,
+      "borrowed": 0,
+      "borrowDate": "",
+      "manualDue": 0
+    }
+  ],
+  "creditLoans": [
+    {
+      "id": "legacy-c1-2026-09-01-480000",
+      "facilityId": "c1",
+      "principal": 480000,
+      "borrowDate": "2026-09-01",
+      "dueDate": "2026-10-01",
+      "feeModelSnapshot": "Fixed fee",
+      "baseFeeSnapshot": 0.09,
+      "dailyRateSnapshot": 0,
+      "termDaysSnapshot": 30,
+      "manualDue": 523200,
+      "status": "Active",
+      "notes": "",
+      "migratedFrom": "facility"
+    }
+  ],
+  "payments": [
+    {
+      "id": "pay1",
+      "followupId": "f1",
+      "amount": 2100000,
+      "currency": "UGX",
+      "date": "2026-09-08",
+      "accountId": "b1",
+      "accountName": "Equity Bank"
+    }
+  ],
+  "expenses": {
+    "entries": [
+      {
+        "id": "e1",
+        "date": "2026-09-21",
+        "type": "Business",
+        "kind": "Planned",
+        "item": "Studio rent",
+        "amount": 900000,
+        "note": ""
+      },
+      {
+        "id": "e2",
+        "date": "2026-09-10",
+        "type": "Personal",
+        "kind": "Actual",
+        "item": "Transport",
+        "amount": 185000,
+        "note": "Boda"
+      }
+    ],
+    "personalBudget": 1200000,
+    "businessBudget": 2500000,
+    "personalCeiling": 1500000,
+    "businessCeiling": 3000000,
+    "monthStart": "2026-09-01"
+  },
+  "settings": {
+    "categories": [
+      "Retainer",
+      "Design",
+      "One Time",
+      "Website",
+      "Social Media",
+      "Ads",
+      "Video",
+      "Branding",
+      "Other"
+    ],
+    "fuStatuses": [
+      "Pending",
+      "Invoice Sent",
+      "Follow Up",
+      "In Progress",
+      "Part Paid",
+      "Paid",
+      "On Hold",
+      "Cancelled"
+    ],
+    "creditStatuses": [
+      "Live",
+      "Ready",
+      "Paid",
+      "Closed",
+      "Currently Unavailable",
+      "Manual"
+    ],
+    "networks": [
+      "Airtel",
+      "MTN"
+    ],
+    "currencies": [
+      "UGX",
+      "USD"
+    ]
+  },
+  "waContacts": [],
+  "waLists": [],
+  "waCampaigns": []
+}

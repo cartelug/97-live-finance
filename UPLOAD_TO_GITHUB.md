@@ -7,17 +7,20 @@ Keep this structure:
 
 ```text
 index.html
-experience-v2.js
+app.js
+app.css
 sync.js
 sw.js
 manifest.webmanifest
 reset.html
 .nojekyll
 icons/
+fonts/
+vendor/
 extension/
 ```
 
-`index.html` must be in the root. Keep the `icons/` and `extension/` folders beside it; do not rename them or put the files inside another folder.
+`index.html` must be in the root. Keep the `icons/`, `fonts/`, `vendor/` and `extension/` folders beside it; do not rename them or put the files inside another folder.
 
 On GitHub:
 

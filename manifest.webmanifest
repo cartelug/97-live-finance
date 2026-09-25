@@ -1,16 +1,31 @@
 {
-  "name": "97 LIVE V2 — Finance Command Centre",
+  "name": "97 LIVE Finance",
   "short_name": "97 LIVE",
-  "description": "A premium command centre for receivables, payments, cash, expenses, credit, messaging and FX.",
+  "description": "Money in, money out, credit and cash for a creative business, on every device.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#F3F6F2",
-  "theme_color": "#062D21",
+  "background_color": "#F4F5F1",
+  "theme_color": "#F4F5F1",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }

@@ -17,7 +17,7 @@ function runtime(doc) {
     localStorage: { getItem: k => storage.has(k) ? storage.get(k) : null, setItem: (k, v) => storage.set(k, String(v)) },
     console, setTimeout, clearTimeout, Date, Intl,
   };
-  const filename = path.join(__dirname, '../experience-v2.js');
+  const filename = path.join(__dirname, '../app.js');
   const source = fs.readFileSync(filename, 'utf8').replace(
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();',
     'window.testApi = { readDoc, migrateFacilityLoans, recordBorrow, recordRepay, analytics, persistCreditMigration };'

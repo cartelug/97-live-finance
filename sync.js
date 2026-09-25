@@ -16,7 +16,6 @@
   var BASE_KEY = "ns97.cloud.base";
   var VERSION_KEY = "ns97.cloud.version";
   var DIRTY_KEY = "ns97.cloud.dirty";
-  var RELOAD_VERSION_KEY = "ns97.cloud.reload_version";
   var URL = "https://rytbeijznlqofstfrmwf.supabase.co";
   var PUBLISHABLE_KEY = "sb_publishable_M5P58fOgzRv5_28qZXmwYg_wiYVhMQ-";
   // Shipped with the app and pinned, so sync starts offline from the service worker's
@@ -55,8 +54,6 @@
   var retryTimer = null;
   var retryDelay = 0;
   var lastSync = 0;          // last time the server confirmed our view of the cloud copy
-  var pendingReload = false;
-  var reloadWanted = false;  // a conflict merge changed this device's copy underneath the running app
   var cloudData = null;
   var cloudVersion = 0;
   var cloudUpdatedAt = null;
@@ -105,31 +102,25 @@
   function localData() {
     return parseData(get(DATA_KEY));
   }
-  function setLocal(data, reload) {
+  // Replace this device's copy with the cloud's, keeping the one it replaces.
+  function setLocal(data) {
     if (!parseData(data)) throw new Error("Cloud data is incomplete");
     var current = get(DATA_KEY);
     var currentData = parseData(current);
     if (currentData && equal(currentData, data)) return false;
     if (current) put("ns97.cloud.device_backup", current);
-    applying = true;
-    put(DATA_KEY, JSON.stringify(data));
-    applying = false;
-    if (reload) requestReload(cloudVersion);
+    writeLocal(data, "cloud");
     return true;
   }
-  function idle() {
-    // Open sheets and panels hold unsaved input or send progress; a reload would throw it away.
-    if (document.querySelector(".backdrop, #s97-cloud-modal, #x97-sheet, #x97-remind, #x97-msg, #x97-camp")) return false;
-    var a = document.activeElement;
-    return !(a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable));
+  // Every change the cloud makes to this device's copy goes through here. The app
+  // redraws from storage when told, so nothing is reloaded and nothing typed is lost.
+  function writeLocal(data, reason) {
+    applying = true;
+    try { put(DATA_KEY, JSON.stringify(data)); } finally { applying = false; }
+    notifyApp(reason);
   }
-  function requestReload(version) {
-    // Reload at most once for a committed cloud version. This breaks reload feedback loops.
-    var v = Number(version || cloudVersion) || 0;
-    if (v && Number(get(RELOAD_VERSION_KEY)) === v) return;
-    if (v) put(RELOAD_VERSION_KEY, String(v));
-    if (idle()) location.reload();
-    else pendingReload = true;
+  function notifyApp(reason) {
+    try { window.dispatchEvent(new CustomEvent("s97:data", { detail: { reason: reason } })); } catch (_) {}
   }
   function setStatus(next, err) {
     status = next;
@@ -139,6 +130,7 @@
     renderLauncher();
     renderPanel();
     renderGateMessage();
+    try { window.dispatchEvent(new CustomEvent("s97:cloud", { detail: { status: next } })); } catch (_) {}
   }
   function resetRetry() {
     retryDelay = 0;
@@ -419,10 +411,6 @@
       if (savePromise !== run) return ok;   // the account changed while this was running
       saving = false;
       savePromise = null;
-      if (ok && reloadWanted) {
-        reloadWanted = false;
-        requestReload(cloudVersion);
-      }
       if (ok && dirty) return saveNow();
       settle();
       return ok;
@@ -475,12 +463,7 @@
       var merged = merge3(cloudData || parseData(get(BASE_KEY)) || {}, mine, latest.data);
       rememberCloud(latest);
       synced();
-      if (!equal(merged, mine)) {
-        applying = true;
-        put(DATA_KEY, JSON.stringify(merged));
-        applying = false;
-        reloadWanted = true;
-      }
+      if (!equal(merged, mine)) writeLocal(merged, "merge");
       markDirty(!equal(merged, latest.data));
       return attemptSave(attempt + 1, gen);
     });
@@ -552,33 +535,22 @@
       rememberCloud(row);
       markDirty(false);
       setStatus("online");
-      setLocal(row.data, true);
+      setLocal(row.data);
       return true;
     }
     if (dirty || (cloudData && !equal(mine, cloudData))) {
       var merged = merge3(cloudData || parseData(get(BASE_KEY)) || {}, mine, row.data);
-      var changedLocal = !equal(merged, mine);
       rememberCloud(row);
-      if (changedLocal) {
-        applying = true;
-        put(DATA_KEY, JSON.stringify(merged));
-        applying = false;
-      }
+      if (!equal(merged, mine)) writeLocal(merged, "merge");
       markDirty(!equal(merged, row.data));
-      if (dirty) {
-        return saveNow().then(function (ok) {
-          if (ok && changedLocal) requestReload(cloudVersion);
-          return ok;
-        });
-      }
+      if (dirty) return saveNow();
       setStatus("online");
-      if (changedLocal) requestReload(row.version);
       return true;
     }
     rememberCloud(row);
     markDirty(false);
     setStatus("online");
-    if (!equal(mine, row.data)) setLocal(row.data, true);
+    if (!equal(mine, row.data)) setLocal(row.data);
     return true;
   }
 
@@ -657,7 +629,6 @@
     var cachedBase = parseData(get(BASE_KEY));
     var cachedVersion = Number(get(VERSION_KEY)) || 0;
     var hadQueuedChanges = get(DIRTY_KEY) === "1";
-    var reloadAfterInit = false;
     if (cachedBase) {
       cloudData = clone(cachedBase);
       cloudVersion = cachedVersion;
@@ -667,7 +638,9 @@
       current();
       var mine = localData();
       if (!row) {
-        if (!mine) throw new Error("This device has no valid finance data to upload");
+        // A new account on a device with nothing yet: there is nothing to upload
+        // or download. The first edit creates the cloud copy (see attemptSave).
+        if (!mine) { cloudData = null; cloudVersion = 0; markDirty(false); return; }
         return insertFirst(mine).then(function (created) {
           current();
           rememberCloud(created);
@@ -679,12 +652,7 @@
             if (!existing) throw err;
             var merged = cachedBase ? merge3(cachedBase, mine, existing.data) : existing.data;
             rememberCloud(existing);
-            if (!equal(mine, merged)) {
-              applying = true;
-              put(DATA_KEY, JSON.stringify(merged));
-              applying = false;
-              reloadAfterInit = true;
-            }
+            if (!equal(mine, merged)) writeLocal(merged, "merge");
             markDirty(cachedBase ? !equal(merged, existing.data) : false);
           });
           throw err;
@@ -694,7 +662,7 @@
       if (!mine) {
         rememberCloud(row);
         markDirty(false);
-        reloadAfterInit = setLocal(row.data, false) || reloadAfterInit;
+        setLocal(row.data);
         return;
       }
 
@@ -702,19 +670,14 @@
       if (localChanged) {
         var merged = merge3(cachedBase || {}, mine, row.data);
         rememberCloud(row);
-        if (!equal(mine, merged)) {
-          applying = true;
-          put(DATA_KEY, JSON.stringify(merged));
-          applying = false;
-          reloadAfterInit = true;
-        }
+        if (!equal(mine, merged)) writeLocal(merged, "merge");
         markDirty(!equal(merged, row.data));
         return;
       }
 
       rememberCloud(row);
       markDirty(false);
-      if (!equal(mine, row.data)) reloadAfterInit = setLocal(row.data, false) || reloadAfterInit;
+      if (!equal(mine, row.data)) setLocal(row.data);
     }).then(function () {
       current();
       ready = true;
@@ -722,13 +685,9 @@
       subscribe();
       if (dirty) {
         setStatus(navigator.onLine ? "saving" : "offline");
-        return saveNow().then(function (ok) {
-          if (ok && reloadAfterInit) requestReload(cloudVersion);
-          return ok;
-        });
+        return saveNow();
       }
       setStatus("online");
-      if (reloadAfterInit) requestReload(cloudVersion);
     }).catch(function (err) {
       if (err === STALE || gen !== generation) return;
       var mine = localData();
@@ -757,8 +716,17 @@
     var gate = document.createElement("div");
     gate.id = "s97-cloud-gate";
     gate.className = "s97-cloud-gate";
-    gate.innerHTML = '<div class="s97-cloud-card"><h1 class="s97-cloud-brand"><img src="./icons/mark-97.png" alt="97" class="s97-brand-mark">LIVE</h1><div class="s97-cloud-sub">Your live finance sheet is private. Sign in with the same account on your phone and computer; both devices will use one cloud copy.</div><label class="s97-cloud-label" for="s97-cloud-email">Email</label><input id="s97-cloud-email" class="s97-cloud-input" type="email" autocomplete="email" placeholder="you@example.com"><label class="s97-cloud-label" for="s97-cloud-password">Password</label><input id="s97-cloud-password" class="s97-cloud-input" type="password" autocomplete="current-password" placeholder="At least 6 characters"><div class="s97-cloud-actions"><button class="s97-cloud-btn primary" data-cloud-action="signin">Sign in</button><button class="s97-cloud-btn" data-cloud-action="signup">Create account</button></div><div id="s97-cloud-gate-msg" class="s97-cloud-msg"></div><div class="s97-cloud-fine">Use the same account on every device to keep your workspace in sync.</div></div>';
+    gate.setAttribute("role", "dialog");
+    gate.setAttribute("aria-modal", "true");
+    gate.setAttribute("aria-labelledby", "s97-cloud-gate-title");
+    gate.innerHTML = '<div class="s97-cloud-card"><div class="s97-cloud-brand"><span class="brand-mark"><img src="./icons/mark-97.png" alt="" width="22" height="19"></span><span class="brand-word">LIVE<small>Finance</small></span></div><h1 id="s97-cloud-gate-title" class="s97-cloud-title">Sign in to your books</h1><p class="s97-cloud-sub">Your finance sheet is private. Use the same account on your phone and computer and both work from one cloud copy.</p><label class="s97-cloud-label" for="s97-cloud-email">Email</label><input id="s97-cloud-email" class="s97-cloud-input" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com"><label class="s97-cloud-label" for="s97-cloud-password">Password</label><input id="s97-cloud-password" class="s97-cloud-input" type="password" autocomplete="current-password" placeholder="At least 6 characters"><div class="s97-cloud-actions"><button type="button" class="s97-cloud-btn primary" data-cloud-action="signin">Sign in</button><button type="button" class="s97-cloud-btn" data-cloud-action="signup">Create account</button></div><div id="s97-cloud-gate-msg" class="s97-cloud-msg" role="status" aria-live="polite"></div><p class="s97-cloud-fine">Everything you enter stays on this device too, so it keeps working offline.</p></div>';
     document.body.appendChild(gate);
+    // Enter in either field signs in, the way every other sign-in form works.
+    gate.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter" || !e.target || e.target.tagName !== "INPUT") return;
+      var primary = gate.querySelector('[data-cloud-action="signin"]');
+      if (primary && !primary.disabled) primary.click();
+    });
     gate.addEventListener("click", function (e) {
       var b = e.target.closest("[data-cloud-action]");
       if (!b) return;
@@ -806,21 +774,38 @@
     if ((status === "error" || status === "offline") && lastError) gateMessage(lastError, true);
     else if (el.dataset.fromStatus) gateMessage("");
   }
+  // The app's header carries a status chip (#s97-cloud-status). Anywhere without
+  // one gets a small floating button instead, so sync is never invisible.
   function renderLauncher() {
     if (!launcher) {
-      launcher = document.createElement("button");
-      launcher.className = "s97-cloud-fab";
-      launcher.title = "Cloud sync";
-      launcher.setAttribute("aria-label", "Cloud sync");
-      launcher.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg><span class="s97-cloud-dot"></span>';
+      launcher = document.getElementById("s97-cloud-status");
+      if (!launcher) {
+        launcher = document.createElement("button");
+        launcher.className = "s97-cloud-fab";
+        launcher.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg><span class="s97-cloud-dot"></span>';
+        document.body.appendChild(launcher);
+      }
       launcher.addEventListener("click", openPanel);
-      document.body.appendChild(launcher);
     }
     var dot = launcher.querySelector(".s97-cloud-dot");
-    dot.className = "s97-cloud-dot " + status;
+    if (dot) dot.className = "s97-cloud-dot " + status;
+    var text = launcher.querySelector(".s97-cloud-text");
+    if (text) text.textContent = shortText();
+    launcher.dataset.status = status;
     var label = "Cloud sync: " + statusText();
     launcher.title = label;
     launcher.setAttribute("aria-label", label);
+  }
+  // Two or three words for the header chip; statusText() is the full sentence.
+  function shortText() {
+    if (!booted) return status === "offline" ? "Offline" : status === "error" ? "Retrying" : "Connecting…";
+    if (!session) return "Sign in";
+    if (status === "saving") return "Saving…";
+    if (status === "offline") return dirty ? "Offline · queued" : "Offline";
+    if (status === "reconnecting") return "Reconnecting…";
+    if (status === "loading") return "Loading…";
+    if (status === "error") return "Retrying";
+    return "Saved";
   }
   function statusText() {
     if (!booted) {
@@ -838,15 +823,23 @@
   }
   function openPanel() {
     if (document.getElementById("s97-cloud-modal")) return;
+    var opener = document.activeElement;
     var back = document.createElement("div");
     back.className = "s97-cloud-back";
     back.id = "s97-cloud-modal";
-    back.innerHTML = '<div class="s97-cloud-modal"><button class="s97-cloud-x">✕</button><div class="s97-cloud-body"></div></div>';
+    back.innerHTML = '<div class="s97-cloud-modal" role="dialog" aria-modal="true" aria-labelledby="s97-cloud-panel-title"><button type="button" class="s97-cloud-x" aria-label="Close">✕</button><div class="s97-cloud-body"></div></div>';
     document.body.appendChild(back);
     renderPanel();
-    back.addEventListener("mousedown", function (e) { if (e.target === back) back.remove(); });
+    function close() {
+      back.remove();
+      if (opener && opener.focus) try { opener.focus(); } catch (_) {}
+    }
+    back.addEventListener("mousedown", function (e) { if (e.target === back) close(); });
+    back.addEventListener("keydown", function (e) { if (e.key === "Escape") close(); });
+    var x = back.querySelector(".s97-cloud-x");
+    if (x && x.focus) try { x.focus(); } catch (_) {}
     back.addEventListener("click", function (e) {
-      if (e.target.classList.contains("s97-cloud-x")) { back.remove(); return; }
+      if (e.target.classList.contains("s97-cloud-x")) { close(); return; }
       var b = e.target.closest("[data-cloud-panel]");
       if (!b) return;
       var action = b.dataset.cloudPanel;
@@ -862,14 +855,13 @@
     var body = document.querySelector("#s97-cloud-modal .s97-cloud-body");
     if (!body) return;
     var email = session && session.user ? session.user.email : "Not signed in";
-    body.innerHTML = '<h3>Cloud Sync</h3><p>' + esc(statusText()) + '</p><div class="s97-cloud-meta"><b>Account:</b> ' + esc(email) + '<br><b>Device:</b> ' + esc(deviceName()) + '<br><b>Cloud version:</b> ' + esc(cloudVersion || "—") + '<br><b>Last committed:</b> ' + esc(relativeTime(cloudUpdatedAt)) + '<br><b>Last checked:</b> ' + esc(lastSync ? relativeTime(new Date(lastSync).toISOString()) : "not yet") + '<br><b>Engine:</b> ' + ENGINE + (lastError ? '<br><span class="s97-cloud-error">' + esc(lastError) + '</span>' : '') + '</div><div class="s97-cloud-row"><button class="s97-cloud-btn primary" data-cloud-panel="sync">Sync now</button><button class="s97-cloud-btn" data-cloud-panel="rename">Rename device</button></div>' + (session ? '<div class="s97-cloud-row"><button class="s97-cloud-btn" data-cloud-panel="signout">Sign out</button></div>' : '');
+    body.innerHTML = '<h2 id="s97-cloud-panel-title">Cloud sync</h2><p class="s97-cloud-state" data-status="' + esc(status) + '"><span class="s97-cloud-dot ' + esc(status) + '"></span>' + esc(statusText()) + '</p><dl class="s97-cloud-meta"><dt>Account</dt><dd>' + esc(email) + '</dd><dt>This device</dt><dd>' + esc(deviceName()) + '</dd><dt>Cloud version</dt><dd>' + esc(cloudVersion || "—") + '</dd><dt>Last saved</dt><dd>' + esc(relativeTime(cloudUpdatedAt)) + '</dd><dt>Last checked</dt><dd>' + esc(lastSync ? relativeTime(new Date(lastSync).toISOString()) : "not yet") + '</dd></dl>' + (lastError ? '<p class="s97-cloud-error">' + esc(lastError) + '</p>' : '') + '<div class="s97-cloud-row"><button type="button" class="s97-cloud-btn primary" data-cloud-panel="sync">Sync now</button><button type="button" class="s97-cloud-btn" data-cloud-panel="rename">Rename device</button></div>' + (session ? '<div class="s97-cloud-row"><button type="button" class="s97-cloud-btn danger" data-cloud-panel="signout">Sign out</button></div>' : '') + '<p class="s97-cloud-engine">' + ENGINE + '</p>';
   }
 
   // Do whatever sync needs right now: finish booting, load the cloud copy,
   // send local changes, or check for remote ones. Safe to call at any time;
   // every step below dedupes itself.
   function wake() {
-    if (pendingReload && idle()) { pendingReload = false; location.reload(); return; }
     if (!navigator.onLine) return;
     if (!booted) { start(); return; }
     if (!session) return;
@@ -894,10 +886,10 @@
   function check() {
     if (document.visibilityState === "hidden" || !navigator.onLine) return;
     if (booted && !session) return;
-    if (!booted || !ready || dirty || pendingReload || status === "error" || !realtimeUp || Date.now() - lastSync >= HEARTBEAT) wake();
+    if (!booted || !ready || dirty || status === "error" || !realtimeUp || Date.now() - lastSync >= HEARTBEAT) wake();
   }
   function cleanupOldSyncSecrets() {
-    ["ns97.sync.token", "ns97.sync.gist", "ns97.sync.code", "ns97.sync.on", "ns97.sync.etag"].forEach(remove);
+    ["ns97.sync.token", "ns97.sync.gist", "ns97.sync.code", "ns97.sync.on", "ns97.sync.etag", "ns97.cloud.reload_version"].forEach(remove);
   }
   // Load the library and find out who is signed in. Retried until it succeeds.
   function start() {
@@ -961,17 +953,3 @@
   else boot();
 })();
 
-/* Load the additive 97 LIVE V2 Premium experience after the existing app and cloud engine. */
-(function () {
-  function loadExperienceV2() {
-    if (document.querySelector('script[data-s97-experience-v2]')) return;
-    var script = document.createElement('script');
-    script.src = './experience-v2.js?v=27';
-    script.defer = true;
-    script.dataset.s97ExperienceV2 = '1';
-    script.onerror = function () { console.error('97 LIVE V2 Premium experience could not load'); };
-    document.head.appendChild(script);
-  }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', loadExperienceV2, { once: true });
-  else loadExperienceV2();
-})();

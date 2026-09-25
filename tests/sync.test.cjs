@@ -241,13 +241,16 @@ function world(opts = {}) {
   const localStorage = Object.create(Storage.prototype);
   localStorage._m = store;
 
-  const w = { clock, store, reloads: 0, sdk: opts.sdk || 'ready' };
+  const w = { clock, store, reloads: 0, redraws: [], sdk: opts.sdk || 'ready' };
   const F = w.supabase = makeSupabase(clock, w);
   if (opts.cloud) F.row = { owner_id: 'u1', data: clone(opts.cloud), version: opts.cloudVersion || 1, updated_at: '2026-09-01T08:00:00Z' };
   const winListeners = {};
   const window = {
     addEventListener(type, fn) { (winListeners[type] = winListeners[type] || []).push(fn); },
+    // The app redraws on "s97:data"; record each one so tests can see what was announced.
+    dispatchEvent(event) { if (event.type === 's97:data') w.redraws.push(event.detail.reason); (winListeners[event.type] || []).forEach((fn) => fn(event)); return true; },
   };
+  class CustomEvent { constructor(type, init) { this.type = type; this.detail = init && init.detail; } }
   const document = makeDom((node) => {
     if (node.tagName !== 'SCRIPT' || node.src !== SDK_URL) return;
     if (w.sdk === 'ready') Promise.resolve().then(() => { window.supabase = F.module; node.onload && node.onload(); });
@@ -259,7 +262,7 @@ function world(opts = {}) {
     window, document, navigator, localStorage, Storage,
     location: { reload: () => { w.reloads++; }, origin: 'https://app.test', pathname: '/' },
     setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout, setInterval: clock.setInterval, clearInterval: clock.clearInterval,
-    Date: clock.Date, AbortController, console, prompt: () => null,
+    Date: clock.Date, AbortController, CustomEvent, console, prompt: () => null,
   };
   vm.runInNewContext(fs.readFileSync(SYNC, 'utf8'), context, { filename: SYNC });
 
@@ -345,7 +348,7 @@ test('while realtime is down the page polls the version every 30 s, and catches 
   assert.equal(w.supabase.calls.length, settled, 'polling stops once realtime is back');
 });
 
-test('a realtime change is applied, and the reload waits while a sheet is open', async () => {
+test('a realtime change is applied in place and the app redraws, with no page reload', async () => {
   const w = synced();
   await w.advance(0);
   const sheet = w.document.createElement('div');
@@ -355,11 +358,11 @@ test('a realtime change is applied, and the reload waits while a sheet is open',
   await w.advance(0);
   assert.equal(w.local().followups[1].amount, 25);
   assert.equal(w.state().version, 4);
-  assert.equal(w.reloads, 0, 'an open sheet is never reloaded away');
+  assert.deepEqual(w.redraws, ['cloud'], 'the app is told once, and redraws around the open sheet');
   sheet.remove();
   w.fire('focus');
   await w.advance(0);
-  assert.equal(w.reloads, 1);
+  assert.equal(w.reloads, 0, 'nothing on screen is ever reloaded away');
 });
 
 test('a stalled save times out, is aborted, shows why, and retries on its own', async () => {
@@ -433,7 +436,7 @@ test('a slow download of an older version never overwrites a newer local save', 
   assert.equal(w.state().status, 'online');
 });
 
-test('a conflicting save merges both devices and asks the app to reload', async () => {
+test('a conflicting save merges both devices and the app redraws the merged copy', async () => {
   const w = synced();
   await w.advance(0);
   w.supabase.echo = false;
@@ -443,7 +446,8 @@ test('a conflicting save merges both devices and asks the app to reload', async 
   assert.deepEqual(amounts(w.supabase.row.data), { a: 12, b: 20, c: 30 });
   assert.deepEqual(amounts(w.local()), { a: 12, b: 20, c: 30 });
   assert.equal(w.supabase.row.version, 5);
-  assert.equal(w.reloads, 1, 'the running app is reloaded onto the merged copy');
+  assert.deepEqual(w.redraws, ['merge'], 'the running app is told about the merged copy');
+  assert.equal(w.reloads, 0);
 });
 
 test('a lasting failure backs off to one attempt a minute instead of one every 3.5 s', async () => {
@@ -585,3 +589,18 @@ test('answers that arrive after signing out are ignored', async () => {
   assert.ok(w.gate());
   assert.equal(w.supabase.live().length, 0, 'realtime is torn down');
 });
+
+test('a new account on an empty device is ready at once, and its first edit creates the cloud copy', async () => {
+  const w = world({});
+  await w.advance(0);
+  assert.equal(w.state().status, 'online', 'no endless "nothing to upload" error');
+  assert.equal(w.state().ready, true);
+  assert.equal(w.supabase.count('insert'), 0, 'nothing is uploaded before anything is entered');
+  localStorageSet(w, doc([['first', 50]]));
+  await w.advance(2 * SEC);
+  assert.equal(w.supabase.count('insert'), 1);
+  assert.deepEqual(amounts(w.supabase.row.data), { first: 50 });
+  assert.equal(w.state().version, 1);
+  assert.equal(w.state().dirty, false);
+});
+function localStorageSet(w, d) { w.context.localStorage.setItem(DATA_KEY, JSON.stringify(d)); }

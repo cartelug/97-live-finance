@@ -17,7 +17,7 @@ function runtime({ online = true, fetchImpl } = {}) {
     fetch: fetchImpl || (() => Promise.reject(new TypeError('Failed to fetch'))),
     console, setTimeout, clearTimeout, Date, Intl,
   };
-  const filename = path.join(__dirname, '../experience-v2.js');
+  const filename = path.join(__dirname, '../app.js');
   const source = fs.readFileSync(filename, 'utf8').replace(
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();',
     'window.testApi = { fxRefresh, fxLoad, fxStaleReason, fxStaleText, fxBadgeState, todayISO };'

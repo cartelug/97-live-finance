@@ -14,7 +14,7 @@ function runtime() {
     localStorage: { getItem: () => null, setItem() {} },
     console, setTimeout, clearTimeout, Date, Intl,
   };
-  const filename = path.join(__dirname, '../experience-v2.js');
+  const filename = path.join(__dirname, '../app.js');
   const source = fs.readFileSync(filename, 'utf8').replace(
     'if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();',
     'window.testApi = { knownContactFilter, waNumber };'

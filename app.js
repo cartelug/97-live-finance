@@ -1,52 +1,38 @@
-/* 97 LIVE — Experience V2 Premium
-   Additive UI upgrade for Dashboard, Incoming and Credit.
-   Uses the existing ns97-finance-v1 document so Supabase sync, backups and old records remain compatible.
+/* 97 LIVE — the app.
+   One script owns the whole interface: the shell (header, navigation, routes),
+   every screen, the sheets and the messaging panels. It reads and writes one
+   document in localStorage (ns97-finance-v1); sync.js keeps that document in
+   step with the cloud and announces cloud changes with an "s97:data" event,
+   which redraws the screen in place. Old documents load unchanged: every
+   reader below tolerates missing fields, and migrations are additive.
 */
 (function () {
   "use strict";
 
-  if (window.__S97_EXPERIENCE_V2__) return;
-  window.__S97_EXPERIENCE_V2__ = true;
+  if (window.__S97_APP__) return;
+  window.__S97_APP__ = true;
 
-  var VERSION = "experience-v2-premium.1";
+  var VERSION = "3.0.0";
   var DATA_KEY = "ns97-finance-v1";
   var PREF_KEY = "ns97.v3.incoming.filters";
-  var REFRESH_KEY = "ns97.v2.react-refresh";
-  var RESUME_KEY = "ns97.v2.resume-tab";
-  /* Set just before the reload below, and read by the boot script in
-     index.html: this reload is a tab switch, not a cold start, so the splash
-     should stay out of the way. */
-  var QUIET_KEY = "ns97.v2.quiet-boot";
-  var MANAGED = { dashboard: true, upcoming: true, credit: true };
-  /* Expenses and Settings are still drawn by the legacy bundle. We do not
-     re-render them, but they get the same header the managed screens use, so
-     the app reads as one product instead of two. See enterChromeMode. */
-  var CHROME = {
-    expenses: { kicker: "97 LIVE / Spending", title: "Expenses", sub: "Budgets and what you have spent this month." },
-    settings: { kicker: "97 LIVE / Workspace", title: "Settings", sub: "Currencies, categories and your cloud copy." }
-  };
-  var chromeScreen = null;
-  var legacyHeader = null;
-  var legacyHeaderDisplay = "";
+  var PRIVACY_KEY = "ns97.v2.privacy";
+  var BACKUP_KEY = "ns97.v3.restore-point";
+  // Screens by route. Screen keys are what the code has always called them;
+  // routes are what the address bar shows (#/incoming, #/credit, …).
+  var ROUTES = { home: "dashboard", incoming: "upcoming", credit: "credit", expenses: "expenses", settings: "settings" };
+  var SCREEN_ROUTE = { dashboard: "home", upcoming: "incoming", credit: "credit", expenses: "expenses", settings: "settings" };
+  var SCREEN_TITLE = { dashboard: "Home", upcoming: "Incoming", credit: "Credit", expenses: "Expenses", settings: "Settings" };
   var root = null;
-  var wrap = null;
-  var hiddenChildren = [];
   var currentScreen = null;
-  // Set true for exactly one render whenever the active tab actually
-  // changes (see syncMode) — Incoming's own arrival animation reads and
-  // clears it, so switching tabs rises in like Dashboard/Credit always
-  // have, without replaying that animation on every filter click, which
-  // re-renders the same screen far more often than a tab switch happens.
+  // True for exactly one render after the screen changes, so a screen that
+  // patches itself in place (Incoming) knows to build its frame afresh.
   var screenEntering = false;
   var lastRaw = "";
-  var lastCloudStatus = "";
   var renderTimer = null;
   var searchTimer = null;
-  var fabFrame = 0;
   var sheetScrollY = 0;
+  var sheetOpener = null;
   var unavailableOpen = false;
-  var needsReactRefresh = false;
-  var modeActive = false;
   var remindExt = { ready: false, version: "", sending: false };
   var remindState = { open: false, mode: "onetap", tone: "auto", selected: {}, drafts: {}, showAll: false, progress: {} };
   var campaignState = { open: false, view: "home", mode: "onetap", editId: null, audience: { type: "list", id: "" }, message: "", previewIdx: 0, progress: {}, sending: false, runId: null, oneTapIdx: 0, antiblock: "balanced", showDetail: false, showVars: false, showEmoji: false, showPreview: false, showTemplates: false, dupRemoval: true, timestamp: false, countryCode: "", manualNumbers: "" };
@@ -115,7 +101,9 @@
       sort: "urgency",
       collapsed: []
     },
-    creditView: "available"
+    creditView: "available",
+    // Screen state only — never saved into the document.
+    expenses: { month: monthKey(todayDate()), filter: "all" }
   };
 
   function esc(value) {
@@ -291,8 +279,6 @@
   }
 
   function outstandingOf(item) { return Math.max(0, grossOf(item) - paidOf(item)); }
-
-  function isPartPaid(item) { return paidOf(item) > 0 && outstandingOf(item) > 0; }
 
   function isReversedPayment(payment) { return !!(payment && (payment.reversedAt || /reversed/i.test(String(payment.status || "")))); }
 
@@ -656,7 +642,7 @@
     var rows = visible.map(function (p, i) {
       var paid = num(p.paid) >= num(p.amount) - 0.5;
       var partial = !paid && num(p.paid) > 0;
-      var date = editable ? '<input class="x97-input x97-deal-date" name="partDate_' + i + '" type="date" value="' + attr(p.dueDate) + '"' + (editable === "locked" ? " disabled" : "") + '>' : esc(formatDate(p.dueDate, true));
+      var date = editable ? '<input class="x97-input x97-deal-date" name="partDate_' + i + '" type="date" aria-label="' + attr((p.label || "Payment " + (i + 1)) + " due date") + '" value="' + attr(p.dueDate) + '"' + (editable === "locked" ? " disabled" : "") + '>' : esc(formatDate(p.dueDate, true));
       var labelHTML = editable && normalizeDealType(item.dealType) === "custom" ? '<input class="x97-input x97-deal-label" name="partLabel_' + i + '" value="' + attr(p.label || "Payment " + (i + 1)) + '"' + (editable === "locked" ? " disabled" : "") + '>' : '<b>' + esc(p.label || (dealLabelSingular(item) + " " + (i + 1))) + '</b>';
       var amountHTML = editable && normalizeDealType(item.dealType) === "custom" ? '<input class="x97-input x97-deal-amount" name="partAmount_' + i + '" type="number" min="0" step="1" value="' + attr(p.amount) + '"' + (editable === "locked" ? " disabled" : "") + '>' : '<strong>' + money(p.amount, item.currency) + '</strong>';
       var paidText = partial ? ' · ' + money(p.paid, item.currency) + ' received' : '';
@@ -675,23 +661,9 @@
       // but a date is a date: a not-yet-paid instalment can always be moved,
       // and one already paid can't be rescheduled regardless of lock state.
       var partPaid = num(previous.paid) > 0 && num(previous.paid) >= num(previous.amount) - 0.5;
-      rows.push('<div class="x97-custom-row"><span class="x97-custom-index">' + (i + 1) + '</span><div class="x97-custom-fields"><input class="x97-input" name="partLabel_' + i + '" value="' + attr(previous.label || "Payment " + (i + 1)) + '" placeholder="What is this payment for?"' + (locked ? " disabled" : "") + '><div class="x97-fields-2"><input class="x97-input" name="partAmount_' + i + '" type="number" min="0" step="1" value="' + attr(previous.amount || "") + '" placeholder="Amount"' + (locked ? " disabled" : "") + '><input class="x97-input" name="partDate_' + i + '" type="date" value="' + attr(due) + '"' + (partPaid ? " disabled" : "") + '></div></div></div>');
+      rows.push('<div class="x97-custom-row"><span class="x97-custom-index">' + (i + 1) + '</span><div class="x97-custom-fields"><input class="x97-input" name="partLabel_' + i + '" aria-label="Payment ' + (i + 1) + ' — what it is for" value="' + attr(previous.label || "Payment " + (i + 1)) + '" placeholder="What is this payment for?"' + (locked ? " disabled" : "") + '><div class="x97-fields-2"><input class="x97-input" name="partAmount_' + i + '" type="number" min="0" step="1" aria-label="Payment ' + (i + 1) + ' amount" value="' + attr(previous.amount || "") + '" placeholder="Amount"' + (locked ? " disabled" : "") + '><input class="x97-input" name="partDate_' + i + '" type="date" aria-label="Payment ' + (i + 1) + ' due date" value="' + attr(due) + '"' + (partPaid ? " disabled" : "") + '></div></div></div>');
     }
     return rows.join("");
-  }
-
-  function dealSummaryHTML(doc) {
-    var deals = (doc.followups || []).filter(function (item) { return isDeal(item) && !isCancelled(item.status); });
-    if (!deals.length) return "";
-    var currencies = ["UGX", "USD"].filter(function (currency) { return deals.some(function (x) { return String(x.currency || "UGX").toUpperCase() === currency; }); });
-    var blocks = currencies.map(function (currency) {
-      var rows = deals.filter(function (x) { return String(x.currency || "UGX").toUpperCase() === currency; });
-      var booked = rows.reduce(function (s, x) { return s + grossOf(x); }, 0);
-      var received = rows.reduce(function (s, x) { return s + receivedOf(x); }, 0);
-      var left = rows.reduce(function (s, x) { return s + outstandingOf(x); }, 0);
-      return '<div class="x97-deal-metric-card x97-card"><div class="x97-deal-metric-currency">' + currency + '</div><div class="x97-deal-metric-main">' + money(booked, "", true) + '</div><div class="x97-row-sub" style="margin-top:3px">Booked total</div><div class="x97-deal-metric-grid"><span><b>' + money(received, "", true) + '</b> received</span><span><b>' + money(left, "", true) + '</b> uncollected</span></div></div>';
-    }).join("");
-    return '<section class="x97-section x97-deals-overview x97-dashboard-wide"><div class="x97-section-head"><div><div class="x97-section-title">Deal overview</div><div class="x97-row-sub">Booked work, received money and what is still uncollected</div></div><span class="x97-pill good">' + deals.length + ' deals</span></div><div class="x97-deal-metrics">' + blocks + '</div></section>';
   }
 
   // Every non-reversed ledger payment received in a month, expressed in
@@ -722,23 +694,60 @@
   }
 
   function writeDoc(doc, reason, quiet) {
-    if (!doc) return;
+    if (!doc) return false;
     var value = JSON.stringify(doc);
-    try { localStorage.setItem(DATA_KEY, value); } catch (err) { toast("Could not save on this device", "error"); return; }
+    try { localStorage.setItem(DATA_KEY, value); } catch (err) { toast("Couldn't save on this device — storage is full or blocked", "error"); return false; }
     lastRaw = value;
-    needsReactRefresh = true;
-    try { sessionStorage.setItem(REFRESH_KEY, "1"); } catch (_) {}
-    try { window.dispatchEvent(new CustomEvent("s97:v2-data-change", { detail: { reason: reason || "update" } })); } catch (_) {}
     scheduleRender(0);
-    if (!quiet) toast("Saved · syncing to cloud", "success");
+    if (!quiet) toast(typeof quiet === "string" ? quiet : "Saved", "success");
+    return true;
   }
 
+  // Every edit goes through here: read the latest copy, change it, write it back.
+  // A device with no document yet (a new account) starts from an empty one, which
+  // is only stored once something is actually entered.
   function updateDoc(mutator, reason, quiet) {
     var doc = readDoc();
-    if (!doc) { toast("Finance data is not ready yet", "error"); return false; }
+    if (!doc) {
+      // Starting fresh before the cloud copy has loaded would put an empty
+      // workspace up against the real one; wait for it instead.
+      if (!canStartFresh()) { toast("Still loading your data — try again in a moment", "error"); return false; }
+      doc = emptyDoc();
+    }
     mutator(doc);
-    writeDoc(doc, reason, quiet);
-    return true;
+    return writeDoc(doc, reason, quiet);
+  }
+  // True when there is no cloud copy to wait for: no sync on this page, or sync
+  // has loaded and found none (a new account).
+  function canStartFresh() {
+    var c = cloudState();
+    return !c || !!c.ready;
+  }
+  // The document to draw: the stored one, or an empty workspace once it is
+  // certain there is nothing to load. Null means "still loading".
+  function viewDoc() {
+    return readDoc() || (canStartFresh() ? emptyDoc() : null);
+  }
+
+  // The shape every reader expects, with nothing in it. Used for a brand-new
+  // workspace; it is never written until the first real edit.
+  function emptyDoc() {
+    return {
+      meta: { appName: "97 LIVE", usdRate: 0 },
+      balances: [],
+      followups: [],
+      credit: [],
+      creditLoans: [],
+      payments: [],
+      expenses: { monthStart: dateISO(startOfMonth(todayDate())), personalBudget: 0, businessBudget: 0, personalCeiling: 0, businessCeiling: 0, entries: [] },
+      settings: {
+        categories: ["Retainer", "Design", "One Time", "Website", "Social Media", "Ads", "Video", "Branding", "Other"],
+        fuStatuses: ["Pending", "Invoice Sent", "Follow Up", "In Progress", "Part Paid", "Paid", "On Hold", "Cancelled"],
+        creditStatuses: ["Live", "Ready", "Paid", "Closed", "Currently Unavailable", "Manual"],
+        networks: ["Airtel", "MTN"],
+        currencies: ["UGX", "USD"]
+      }
+    };
   }
 
   function loadPrefs() {
@@ -764,33 +773,56 @@
     }
   }
 
-  /* Light and dark. The palette for both has been in the stylesheet all
-     along, but nothing ever set the attribute that switches it on, so the
-     app has only ever been light and the dark half was unreachable.
-     Light stays the default and the system's dark preference is deliberately
-     not consulted: this is a spreadsheet, spreadsheets are white, and a phone
-     that flips itself dark at sunset should not repaint a ledger the owner
-     knows as white. Dark is a choice, made once, and remembered. */
+  /* Theme: light (the default — this is a ledger, and ledgers are white),
+     dark, or "system" to follow the device. The choice is remembered per
+     device; index.html applies it before first paint so nothing flashes. */
+  var systemDark = null;
   function loadTheme() {
     var saved = "";
     try { saved = localStorage.getItem(THEME_KEY) || ""; } catch (_) {}
-    return saved === "dark" ? "dark" : "light";
+    return saved === "dark" || saved === "system" ? saved : "light";
+  }
+  function effectiveTheme(mode) {
+    if (mode === "system") return systemDark && systemDark.matches ? "dark" : "light";
+    return mode === "dark" ? "dark" : "light";
   }
   function applyTheme(mode) {
-    var dark = mode === "dark";
-    if (dark) document.documentElement.setAttribute("data-v2-theme", "dark");
-    else document.documentElement.removeAttribute("data-v2-theme");
+    var dark = effectiveTheme(mode) === "dark";
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
     // The browser's own chrome (status bar, address bar) follows too.
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", dark ? "#071618" : "#F3F6F2");
-    try { localStorage.setItem(THEME_KEY, dark ? "dark" : "light"); } catch (_) {}
+    if (meta) meta.setAttribute("content", dark ? "#0A1211" : "#F4F5F1");
+    var toggle = document.querySelector('[data-x97-action="toggle-theme"]');
+    if (toggle) {
+      toggle.setAttribute("aria-label", dark ? "Use light theme" : "Use dark theme");
+      toggle.innerHTML = icon(dark ? "sun" : "moon", 20);
+    }
   }
   function setTheme(mode) {
-    if (loadTheme() === (mode === "dark" ? "dark" : "light")) return;
+    mode = mode === "dark" || mode === "system" ? mode : "light";
+    try { localStorage.setItem(THEME_KEY, mode); } catch (_) {}
     applyTheme(mode);
-    // Reopen the sheet so its own switch shows the choice that was just made.
-    if (document.getElementById("x97-sheet")) openIncomingMore();
     scheduleRender(0);
+  }
+
+  /* Privacy: blur every amount, for working in public. One tap in the header. */
+  function privacyOn() {
+    try { return localStorage.getItem(PRIVACY_KEY) === "on"; } catch (_) { return false; }
+  }
+  function setPrivacy(on) {
+    try { localStorage.setItem(PRIVACY_KEY, on ? "on" : "off"); } catch (_) {}
+    applyPrivacy();
+  }
+  function applyPrivacy() {
+    var on = privacyOn();
+    if (on) document.documentElement.setAttribute("data-privacy", "on");
+    else document.documentElement.removeAttribute("data-privacy");
+    var toggle = document.querySelector('[data-x97-action="toggle-privacy"]');
+    if (toggle) {
+      toggle.setAttribute("aria-pressed", on ? "true" : "false");
+      toggle.setAttribute("aria-label", on ? "Show amounts" : "Hide amounts");
+      toggle.innerHTML = icon(on ? "eyeoff" : "eye", 20);
+    }
   }
 
   function savePrefs() {
@@ -892,7 +924,7 @@
 
   function fxDecimals(code) {
     var r = fxRate(code);
-    if (!r) return 2;
+    if (!r) return /^(UGX|TZS|RWF|BIF|CDF|SSP)$/.test(String(code)) ? 0 : 2;
     // Weak units (UGX, TZS…) read better whole; strong ones need cents.
     return r >= 500 ? 0 : 2;
   }
@@ -1014,12 +1046,6 @@
   }
 
   // Sub-line for the dashboard's USD tile: what those dollars are worth at home.
-  function usdEquivalent(usd) {
-    var value = fxConvert(usd, "USD", FX_HOME);
-    if (value == null || !num(usd)) return "Expected incoming";
-    return "≈ " + money(value, FX_HOME, true) + " today";
-  }
-
   /* ── Earnings ─────────────────────────────────────────────────────────────
      Earned and spent are the same unit on one scale, so they share one axis.
      Green-in / red-out matches every other inflow/outflow cue in the app, but
@@ -1044,22 +1070,6 @@
     return '<div class="x97-earn-key"><span class="in">Earned</span><span class="out">Spent</span></div>' +
       '<div class="x97-earn-chart" role="img" aria-label="' + attr("Earned versus spent for the last " + series.length + " months. " + series.map(function (r) { return r.label + ": earned " + money(r.earned, FX_HOME) + ", spent " + money(r.spent, FX_HOME); }).join(". ")) + '">' + cols + '</div>' +
       '<div class="x97-earn-now">' + esc(current.label) + ' · <b class="x97-green">' + esc(money(current.earned, FX_HOME, true)) + '</b> in · <b class="x97-red">' + esc(money(current.spent, FX_HOME, true)) + '</b> out</div>';
-  }
-
-  function earnCardHTML(doc) {
-    var series = earningsSeries(doc, 6);
-    var current = series[series.length - 1], prev = series[series.length - 2];
-    var delta = prev && prev.earned > 0 ? Math.round((current.earned - prev.earned) / prev.earned * 100) : null;
-    var net = current.earned - current.spent;
-    var pill = delta == null ? "" : '<span class="x97-pill ' + (delta >= 0 ? "good" : "bad") + '">' + (delta >= 0 ? "+" : "") + delta + '% vs ' + esc(prev.label.split(" ")[0]) + '</span>';
-    return '<section class="x97-section x97-dashboard-wide">' + sectionHead("Earnings", "History", "open-earnings") +
-      '<div class="x97-card x97-pad">' +
-        '<div class="x97-earn-top"><div><div class="x97-fx-label">Received this month</div>' +
-        '<div class="x97-earn-value x97-money x97-green">' + money(current.earned, FX_HOME) + '</div></div>' + pill + '</div>' +
-        '<div class="x97-hero-meta" style="margin:13px 0 4px"><div class="x97-stat"><span>Spent</span><b class="x97-red">' + money(current.spent, FX_HOME, true) + '</b></div>' +
-        '<div class="x97-stat"><span>Kept</span><b class="' + (net < 0 ? "x97-red" : "x97-green") + '">' + money(net, FX_HOME, true) + '</b></div></div>' +
-        earnChartHTML(series) +
-      '</div></section>';
   }
 
   function openEarnings() {
@@ -1247,24 +1257,28 @@
     return fxStaleReason(store) ? " stale" : "";
   }
 
+  // The dollar rate the app is actually using: your own when you set one, the
+  // day's live rate otherwise, and the last saved rate when there is neither.
   function fxCardHTML(doc) {
     var store = fxLoad();
     var manual = !!(doc.settings && doc.settings.fxManual);
-    var rows = FX_TICKER.map(function (code) {
+    var saved = num(doc.meta && doc.meta.usdRate);
+    var rows = store ? FX_TICKER.map(function (code) {
       var value = fxConvert(1, code, FX_HOME, store);
       return '<div class="x97-fx-tick"><span>1 ' + esc(code) + '</span><b class="x97-money">' + (value == null ? "—" : fxAmount(value, FX_HOME)) + '</b></div>';
-    }).join("");
-    var headline = store ? fxAmount(fxRate(FX_HOME, store), FX_HOME) : "—";
-    return '<section class="x97-section">' + sectionHead("Currency", "Convert", "open-converter") +
-      '<button class="x97-fx-card" data-x97-action="open-converter">' +
+    }).join("") : "";
+    var rate = manual ? saved : store ? fxRate(FX_HOME, store) : saved;
+    var headline = rate ? fxAmount(rate, FX_HOME) : "—";
+    var note = manual ? "Your own rate — daily updates are paused" : !store && saved ? "Saved rate — live rates load when you're online" : fxStaleText(store);
+    return '<section class="card panel">' + sectionHead("Dollar rate", "Converter", "open-converter") +
+      '<button type="button" class="x97-fx-card" data-x97-action="open-converter">' +
         '<div class="x97-fx-top">' +
           '<div><div class="x97-fx-label">1 USD buys</div>' +
           '<div class="x97-fx-value x97-money">' + headline + ' <em>UGX</em></div></div>' +
-          '<div class="x97-fx-badge' + fxBadgeState(store) + '" data-x97-fx="stamp">' + esc(fxStamp(store)) + '</div>' +
+          '<div class="x97-fx-badge' + (manual ? "" : fxBadgeState(store)) + '" data-x97-fx="stamp">' + esc(manual ? "Your rate" : fxStamp(store)) + '</div>' +
         '</div>' +
-        '<div class="x97-fx-ticks">' + rows + '</div>' +
-        (manual ? '<div class="x97-fx-note">Manual rate on — auto-update is paused</div>' : '') +
-        (fxStaleText(store) ? '<div class="x97-fx-note" data-x97-fx="stale">' + esc(fxStaleText(store)) + '</div>' : '') +
+        (rows ? '<div class="x97-fx-ticks">' + rows + '</div>' : '') +
+        (note ? '<div class="x97-fx-note"' + (!manual && fxStaleText(store) ? ' data-x97-fx="stale"' : '') + '>' + esc(note) + '</div>' : '') +
       '</button></section>';
   }
 
@@ -1335,14 +1349,14 @@
     var body =
       '<div class="x97-fx-conv">' +
         '<div class="x97-fx-leg">' +
-          '<label>From</label>' +
+          '<label for="x97-fx-from">From</label>' +
           '<div class="x97-fx-leg-row">' + fxSelect("x97-fx-from", fxConv.from, store) +
           '<input class="x97-input x97-fx-amount x97-money" id="x97-fx-amount" inputmode="decimal" autocomplete="off" placeholder="0" value="' + attr(fxConv.amount) + '"></div>' +
           '<div class="x97-chips x97-fx-quick">' + chips + '</div>' +
         '</div>' +
         '<div class="x97-fx-swap-row"><button type="button" class="x97-fx-swap" data-x97-action="fx-swap" aria-label="Swap currencies">' + icon("arrow", 17) + '</button></div>' +
         '<div class="x97-fx-leg">' +
-          '<label>To</label>' +
+          '<label for="x97-fx-to">To</label>' +
           '<div class="x97-fx-leg-row">' + fxSelect("x97-fx-to", fxConv.to, store) +
           '<div class="x97-fx-result x97-money" id="x97-fx-result">—</div></div>' +
         '</div>' +
@@ -1415,9 +1429,23 @@
       moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"></path>',
       collapse: '<path d="m7 4 5 5 5-5"></path><path d="m7 20 5-5 5 5"></path>',
       expand: '<path d="m7 9 5-5 5 5"></path><path d="m7 15 5 5 5-5"></path>',
-      rows: '<rect x="3" y="5" width="18" height="4" rx="1"></rect><rect x="3" y="11" width="18" height="4" rx="1"></rect><path d="M3 20h18"></path>'
+      rows: '<rect x="3" y="5" width="18" height="4" rx="1"></rect><rect x="3" y="11" width="18" height="4" rx="1"></rect><path d="M3 20h18"></path>',
+      eye: '<path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="2.6"></circle>',
+      eyeoff: '<path d="m3 3 18 18"></path><path d="M10.6 6.1A10 10 0 0 1 12 6c6.1 0 9.5 6 9.5 6a17 17 0 0 1-2.4 3.1M6.4 7.6A16.5 16.5 0 0 0 2.5 12s3.4 6 9.5 6a9.6 9.6 0 0 0 4-.9"></path><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"></path>',
+      download: '<path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5"></path><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"></path>',
+      upload: '<path d="M12 16V5m0 0L7.5 9.5M12 5l4.5 4.5"></path><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"></path>',
+      refresh: '<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"></path><path d="M4 4v4h4"></path><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"></path><path d="M20 20v-4h-4"></path>',
+      cloud: '<path d="M7 18h10.5a4.5 4.5 0 0 0 .6-9 6.5 6.5 0 0 0-12.4 1.6A3.8 3.8 0 0 0 7 18Z"></path>',
+      receipt: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2Z"></path><path d="M9 8h6M9 12h6"></path>',
+      arrowin: '<path d="M17 7 7 17"></path><path d="M16 17H7V8"></path>',
+      arrowout: '<path d="M7 17 17 7"></path><path d="M8 7h9v9"></path>',
+      copy: '<rect x="8" y="8" width="12" height="12" rx="2"></rect><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"></path>',
+      repeat: '<path d="m17 2 3 3-3 3"></path><path d="M4 11V9a4 4 0 0 1 4-4h12"></path><path d="m7 22-3-3 3-3"></path><path d="M20 13v2a4 4 0 0 1-4 4H4"></path>',
+      palette: '<circle cx="12" cy="12" r="9"></circle><circle cx="8" cy="10" r="1.2"></circle><circle cx="12" cy="7.5" r="1.2"></circle><circle cx="16" cy="10" r="1.2"></circle><path d="M12 21a2.5 2.5 0 0 1 0-5h1.5a3 3 0 0 0 3-3"></path>',
+      database: '<ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"></ellipse><path d="M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13"></path><path d="M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8"></path>',
+      tag: '<path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9Z"></path><circle cx="7.5" cy="7.5" r="1.3"></circle>'
     };
-    return '<svg aria-hidden="true" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' + (paths[name] || paths.more) + '</svg>';
+    return '<svg aria-hidden="true" focusable="false" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + (paths[name] || paths.more) + '</svg>';
   }
 
   function brandMark(size, cls) {
@@ -1437,172 +1465,116 @@
     return '<div class="x97-row-icon good">' + icon("bank") + '</div>';
   }
 
-  function toast(message, kind) {
-    var holder = document.querySelector(".x97-toast-wrap");
+  /* ── Feedback ───────────────────────────────────────────────────────────
+     One polite live region (#toasts in index.html), so screen readers hear
+     every confirmation. An optional action turns a toast into an undo. */
+  function toast(message, kind, action) {
+    var holder = document.getElementById("toasts");
     if (!holder) {
       holder = document.createElement("div");
-      holder.className = "x97-toast-wrap";
+      holder.id = "toasts";
+      holder.className = "toasts";
+      holder.setAttribute("role", "status");
+      holder.setAttribute("aria-live", "polite");
       document.body.appendChild(holder);
     }
-    holder.innerHTML = '<div class="x97-toast ' + esc(kind || "") + '">' + esc(message) + '</div>';
+    holder.innerHTML = '<div class="toast ' + esc(kind || "") + '"><span>' + esc(message) + '</span>' +
+      (action ? '<button type="button" class="toast-action">' + esc(action.label) + '</button>' : '') + '</div>';
+    if (action) holder.querySelector(".toast-action").addEventListener("click", function () {
+      holder.innerHTML = "";
+      clearTimeout(holder._timer);
+      action.run();
+    });
     clearTimeout(holder._timer);
-    holder._timer = setTimeout(function () { if (holder) holder.innerHTML = ""; }, 2600);
+    holder._timer = setTimeout(function () { holder.innerHTML = ""; }, action ? 7000 : 2800);
+  }
+
+  // Delete one record from a top-level list (deals, accounts, credit offers),
+  // with Undo instead of an "are you sure?" dialog.
+  function deleteRecord(list, id, reason) {
+    var removed = null, index = -1;
+    var ok = updateDoc(function (doc) {
+      var arr = doc[list] || [];
+      index = arr.findIndex(function (x) { return String(x.id) === String(id); });
+      if (index >= 0) removed = arr.splice(index, 1)[0];
+    }, reason, true);
+    if (!ok || !removed) return;
+    closeSheet();
+    var name = removed.client || removed.account || removed.service || "record";
+    undoable("Deleted " + name, function (doc) {
+      var arr = Array.isArray(doc[list]) ? doc[list] : (doc[list] = []);
+      if (arr.some(function (x) { return String(x.id) === String(removed.id); })) return;
+      arr.splice(Math.min(index, arr.length), 0, removed);
+    });
+  }
+
+  // A delete that can be taken back for a few seconds. `restore` puts the
+  // removed record back into a fresh copy of the document (never a stale one).
+  function undoable(message, restore) {
+    toast(message, "success", { label: "Undo", run: function () { updateDoc(restore, "undo", "Restored"); } });
   }
 
   function cloudState() {
     try { return typeof window.__s97cloud === "function" ? window.__s97cloud() : null; } catch (_) { return null; }
   }
 
-  function cloudPill() {
-    var c = cloudState();
-    var status = c && c.status ? c.status : "loading";
-    var text = status === "online" ? "Saved" : status === "saving" ? "Saving" : status === "offline" ? "Offline" : status === "error" ? "Attention" : "Connecting";
-    return '<div id="x97-cloud-pill" class="x97-cloud ' + esc(status) + '"><i></i><span>' + esc(text) + '</span></div>';
-  }
-
-  function updateCloudPill() {
-    var el = document.getElementById("x97-cloud-pill");
-    if (!el) return;
-    var c = cloudState();
-    var status = c && c.status ? c.status : "loading";
-    var key = status + "|" + (c && c.version || "");
-    if (key === lastCloudStatus) return;
-    lastCloudStatus = key;
-    var text = status === "online" ? "Saved" : status === "saving" ? "Saving" : status === "offline" ? "Offline" : status === "error" ? "Attention" : "Connecting";
-    el.className = "x97-cloud " + status;
-    var span = el.querySelector("span"); if (span) span.textContent = text;
-  }
-
   function pageHeader(kicker, title, subtitle, actionHTML) {
-    return '<header class="x97-top"><div class="x97-brand-lockup"><span class="x97-brand-mark"><img src="./icons/mark-97.png" width="48" height="42" alt="97" decoding="async"></span><span class="x97-brand-word">LIVE<small>FINANCE</small></span></div><div class="x97-top-copy"><h1 class="x97-title">' + esc(title) + '</h1>' + (subtitle ? '<p class="x97-sub">' + esc(subtitle) + '</p>' : '') + '</div><div class="x97-top-actions">' + (actionHTML || '') + cloudPill() + '</div></header>';
+    return '<header class="page-head"><div class="page-head-text">' +
+      (kicker ? '<p class="eyebrow">' + esc(kicker) + '</p>' : '') +
+      '<h1 class="page-title" tabindex="-1">' + esc(title) + '</h1>' +
+      (subtitle ? '<p class="page-sub">' + esc(subtitle) + '</p>' : '') +
+      '</div>' + (actionHTML ? '<div class="page-actions">' + actionHTML + '</div>' : '') + '</header>';
   }
 
   function sectionHead(title, actionText, action) {
-    return '<div class="x97-section-head"><div class="x97-section-title">' + esc(title) + '</div>' + (actionText ? '<button class="x97-link" data-x97-action="' + attr(action) + '">' + esc(actionText) + icon("chevron", 14) + '</button>' : '') + '</div>';
+    return '<div class="section-head"><h2 class="section-title">' + esc(title) + '</h2>' +
+      (actionText ? '<button type="button" class="link-btn" data-x97-action="' + attr(action) + '">' + esc(actionText) + icon("chevron", 14) + '</button>' : '') + '</div>';
   }
 
-  function activeScreen() {
-    var active = document.querySelector(".navitem.on") || document.querySelector(".navitem[aria-current='page']");
-    if (!active) return null;
-    var text = (active.textContent || "").trim().toLowerCase();
-    if (/dashboard|home/.test(text)) return "dashboard";
-    if (/follow|incoming|upcoming|receivable/.test(text)) return "upcoming";
-    if (/credit|loan/.test(text)) return "credit";
-    if (/expense|spend/.test(text)) return "expenses";
-    if (/setting|config/.test(text)) return "settings";
-    return null;
+  /* ── Shell and routes ─────────────────────────────────────────────────────
+     The header, navigation and <main> are static markup in index.html; this
+     only marks the current tab and draws the current screen into <main>.
+     Routes live in the address (#/incoming), so Back, refresh and home-screen
+     shortcuts all land where they should. */
+  var focusAfterRoute = false;
+
+  function routeFromHash() {
+    var m = /^#\/?([a-z]+)/.exec(location.hash || "");
+    return m && ROUTES[m[1]] ? m[1] : "home";
   }
 
-  function findNavItem(screenOrText) {
-    var items = Array.prototype.slice.call(document.querySelectorAll(".navitem"));
-    return items.find(function (item) {
-      var text = (item.textContent || "").trim().toLowerCase();
-      if (screenOrText === "dashboard") return /dashboard|home/.test(text);
-      if (screenOrText === "upcoming") return /follow|incoming|upcoming|receivable/.test(text);
-      if (screenOrText === "credit") return /credit|loan/.test(text);
-      if (screenOrText === "expenses") return /expense|spend/.test(text);
-      if (screenOrText === "settings") return /setting|config/.test(text);
-      return text.indexOf(String(screenOrText || "").toLowerCase()) >= 0;
+  function navigate(screen) {
+    var route = SCREEN_ROUTE[screen] || (ROUTES[screen] ? screen : "home");
+    var hash = "#/" + route;
+    focusAfterRoute = true;
+    if (location.hash === hash) onRoute();
+    else location.hash = hash;
+  }
+
+  function onRoute() {
+    var screen = ROUTES[routeFromHash()];
+    var changed = screen !== currentScreen;
+    if (changed) {
+      currentScreen = screen;
+      screenEntering = true;
+      if (document.getElementById("x97-sheet")) closeSheet();
+      closeAllPanels();
+    }
+    var route = SCREEN_ROUTE[screen];
+    Array.prototype.forEach.call(document.querySelectorAll(".tab[data-route]"), function (tab) {
+      if (tab.getAttribute("data-route") === route) tab.setAttribute("aria-current", "page");
+      else tab.removeAttribute("aria-current");
     });
-  }
-
-  function ensureRoot() {
-    wrap = document.querySelector(".wrap");
-    if (!wrap) return false;
-    root = document.getElementById("x97-v2-root");
-    if (!root) {
-      root = document.createElement("main");
-      root.id = "x97-v2-root";
-      wrap.insertBefore(root, wrap.firstChild);
+    document.body.setAttribute("data-screen", screen);
+    document.title = screen === "dashboard" ? "97 LIVE" : SCREEN_TITLE[screen] + " · 97 LIVE";
+    clearTimeout(renderTimer);
+    render();
+    if (changed) window.scrollTo(0, 0);
+    if (changed && focusAfterRoute) {
+      var heading = root && root.querySelector(".page-title");
+      if (heading) try { heading.focus({ preventScroll: true }); } catch (_) { heading.focus(); }
     }
-    return true;
-  }
-
-  function directChildFor(node, ancestor) {
-    if (!node || !ancestor || !ancestor.contains(node)) return null;
-    var current = node;
-    while (current.parentElement && current.parentElement !== ancestor) current = current.parentElement;
-    return current.parentElement === ancestor ? current : null;
-  }
-
-  function hideOriginalChildren() {
-    var nav = document.querySelector(".nav");
-    var keepNav = directChildFor(nav, wrap);
-    Array.prototype.slice.call(wrap.children).forEach(function (child) {
-      if (child === root || child === keepNav) return;
-      var known = hiddenChildren.some(function (entry) { return entry.node === child; });
-      if (!known) hiddenChildren.push({ node: child, display: child.style.display });
-      child.style.display = "none";
-    });
-  }
-
-  function enterManagedMode() {
-    if (!ensureRoot()) return;
-    modeActive = true;
-    document.body.classList.add("x97-v2-mode");
-    root.classList.add("on");
-    hideOriginalChildren();
-  }
-
-  function exitManagedMode() {
-    if (!modeActive) { currentScreen = null; scheduleViewportFab(); return; }
-    modeActive = false;
-    document.body.classList.remove("x97-v2-mode");
-    if (root) root.classList.remove("on");
-    hiddenChildren.forEach(function (entry) { if (entry.node) entry.node.style.display = entry.display || ""; });
-    hiddenChildren = [];
-    currentScreen = null;
-    scheduleViewportFab();
-  }
-
-  /* ── Shared chrome for the legacy screens ────────────────────────────────
-     Expenses and Settings are still React's to render. We leave their body
-     alone and only swap the header: hide the bundle's own small brand bar and
-     put the standard page header above it, so the brand lockup, the title and
-     the control deck sit exactly where they do everywhere else. */
-  function hideLegacyHeader() {
-    if (legacyHeader && legacyHeader.isConnected) { legacyHeader.style.display = "none"; return; }
-    if (!wrap) return;
-    var marks = wrap.querySelectorAll('img[src*="mark-97"]');
-    for (var i = 0; i < marks.length; i++) {
-      var child = directChildFor(marks[i], wrap);
-      if (!child || child === root) continue;   // skip our own lockup
-      legacyHeader = child;
-      legacyHeaderDisplay = child.style.display;
-      child.style.display = "none";
-      return;
-    }
-  }
-
-  function showLegacyHeader() {
-    if (legacyHeader) legacyHeader.style.display = legacyHeaderDisplay || "";
-    legacyHeader = null;
-    legacyHeaderDisplay = "";
-  }
-
-  function enterChromeMode(screen) {
-    var meta = CHROME[screen];
-    if (!meta || !ensureRoot()) return;
-    document.body.classList.add("x97-v2-mode", "x97-v2-chrome");
-    root.classList.add("on");
-    root.dataset.screen = screen;
-    hideLegacyHeader();
-    if (chromeScreen !== screen) {
-      chromeScreen = screen;
-      root.innerHTML = '<div class="x97-page" data-v2-page="' + attr(screen) + '">' +
-        pageHeader(meta.kicker, meta.title, meta.sub, "") + '</div>';
-      updateCloudPill();
-    }
-    scheduleViewportFab();
-  }
-
-  function exitChromeMode() {
-    if (!chromeScreen) return;
-    chromeScreen = null;
-    document.body.classList.remove("x97-v2-chrome");
-    if (!modeActive) document.body.classList.remove("x97-v2-mode");
-    if (root) { root.classList.remove("on"); root.innerHTML = ""; delete root.dataset.screen; }
-    showLegacyHeader();
+    focusAfterRoute = false;
   }
 
   function scheduleRender(delay) {
@@ -1610,39 +1582,14 @@
     renderTimer = setTimeout(render, delay == null ? 40 : delay);
   }
 
-  function syncViewportFab() {
-    fabFrame = 0;
-    var active = modeActive && (currentScreen === "upcoming" || currentScreen === "credit");
-    var fresh = root ? root.querySelector(".x97-fab:not(.x97-fab-viewport)") : null;
-    var mounted = document.querySelector("body>.x97-fab.x97-fab-viewport");
-    if (fresh && active) {
-      if (mounted && mounted !== fresh) mounted.remove();
-      fresh.classList.add("x97-fab-viewport");
-      document.body.appendChild(fresh);
-      mounted = fresh;
-    } else if (mounted && !active) mounted.remove();
-    document.body.classList.toggle("x97-fab-sheet-open", !!document.getElementById("x97-sheet"));
-  }
-
-  function scheduleViewportFab() {
-    if (fabFrame) return;
-    fabFrame = requestAnimationFrame(syncViewportFab);
-  }
-
-  function syncMode() {
-    var screen = activeScreen();
-    if (screen && MANAGED[screen]) {
-      exitChromeMode();
-      enterManagedMode();
-      if (screen !== currentScreen) { currentScreen = screen; screenEntering = true; window.scrollTo(0, 0); }
-      scheduleRender(0);
-    } else if (screen && CHROME[screen]) {
-      exitManagedMode();
-      enterChromeMode(screen);
-    } else {
-      exitChromeMode();
-      exitManagedMode();
-    }
+  // A redraw would throw away what is being typed into a field on the screen,
+  // so it waits until that field loses focus. Fields that the screen patches
+  // around (Incoming's search box) opt out with data-live.
+  var renderDeferred = false;
+  function typingInScreen() {
+    var a = document.activeElement;
+    if (!a || !root || !root.contains(a) || a.hasAttribute("data-live")) return false;
+    return a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable;
   }
 
   function nextScheduledPayment(doc, item) {
@@ -1666,23 +1613,6 @@
     if (days <= 4) return { key: "very-soon", label: "Due in " + days + " days", cls: "warn", days: days, next: next };
     if (days <= 11) return { key: "soon", label: "Due in " + days + " days", cls: "warn", days: days, next: next };
     return { key: "later", label: "Due in " + days + " days", cls: "", days: days, next: next };
-  }
-
-  function expenseStats(doc) {
-    var e = doc.expenses || {};
-    var current = monthKey(todayDate());
-    var entries = (e.entries || []).filter(function (x) { return !x.date || monthKey(x.date) === current; });
-    function sum(type, kind) {
-      return entries.filter(function (x) { return String(x.type).toLowerCase() === type.toLowerCase() && String(x.kind).toLowerCase() === kind.toLowerCase(); }).reduce(function (a, x) { return a + num(x.amount); }, 0);
-    }
-    var pp = sum("Personal", "Planned"), pa = sum("Personal", "Actual");
-    var bp = sum("Business", "Planned"), ba = sum("Business", "Actual");
-    return {
-      personalPlanned: pp, personalActual: pa, businessPlanned: bp, businessActual: ba,
-      personalSafe: num(e.personalBudget) - pp - pa,
-      businessSafe: num(e.businessBudget) - bp - ba,
-      personalBudget: num(e.personalBudget), businessBudget: num(e.businessBudget)
-    };
   }
 
   function facilityById(doc, id) { return (doc.credit || []).find(function (f) { return String(f.id) === String(id); }); }
@@ -1820,7 +1750,7 @@
     return { cash: cash, loans: loans, activeLoans: activeLoans, debt: debt, open: open, events: events, overdue: overdue, next7: next7, ugxMonth: ugxMonth, usdMonth: usdMonth, creditAvailable: creditAvailable, expenses: expenseStats(doc) };
   }
 
-  // What a row of scheduled events is worth, per currency.
+  // What a list of scheduled events is worth, per currency ("UGX 4.2M + USD 1.5K").
   function attentionAmount(events) {
     var ugx = 0, usd = 0;
     (events || []).forEach(function (event) {
@@ -1833,198 +1763,788 @@
     return parts.join(" + ");
   }
 
-  // How far past due the worst one is — the number that decides which
-  // overdue pile you open first.
-  function attentionOldest(events) {
-    var worst = 0;
-    (events || []).forEach(function (event) {
-      var days = daysBetween(todayDate(), parseLocalDate(event.date));
-      if (days != null && days < 0) worst = Math.max(worst, -days);
-    });
-    return worst;
-  }
-
-  function attentionMeta() {
+  function joinMeta() {
     return Array.prototype.slice.call(arguments).filter(Boolean).join(" · ");
   }
 
-  /* Each alert carries its count apart from its wording, so the count can be
-     typeset as the figure it is rather than buried mid-sentence, and a meta
-     line that says what is actually at stake. The second line used to read
-     "Open Incoming to follow up" on every row — an instruction the chevron
-     already gives, spending a whole line to say nothing. Money and dates go
-     there instead. */
-  function dashboardAttention(doc, a) {
+  /* ── Money model shared by Home and Expenses ─────────────────────────────
+     Dollars count at the live rate when there is one and at the rate saved in
+     Settings otherwise — never silently dropped, which would understate. */
+  function usdRateFor(doc) {
+    var live = fxConvert(1, "USD", FX_HOME);
+    return live != null ? live : num(doc && doc.meta && doc.meta.usdRate);
+  }
+  function toHome(amount, currency, doc) {
+    return String(currency || "UGX").toUpperCase() === "USD" ? num(amount) * usdRateFor(doc) : num(amount);
+  }
+
+  function expenseKey(item) { return String(item || "").trim().toUpperCase(); }
+  function isActualExpense(x) { return /actual/i.test(String(x && x.kind || "")); }
+  function expenseType(x) { return /business/i.test(String(x && x.type || "")) ? "Business" : "Personal"; }
+
+  // How one budget stands in one month. A planned entry is drawn down by the
+  // actual entries logged under the same name that month, so paying a planned
+  // bill never counts twice. safe = budget − spent − still planned.
+  function budgetUse(doc, type, key) {
+    var e = doc.expenses || {};
+    var entries = (e.entries || []).filter(function (x) { return monthKey(x.date) === key && expenseType(x) === type; });
+    var actual = 0, planned = {}, spent = {};
+    entries.forEach(function (x) {
+      var k = expenseKey(x.item);
+      if (isActualExpense(x)) { actual += num(x.amount); spent[k] = (spent[k] || 0) + num(x.amount); }
+      else planned[k] = (planned[k] || 0) + num(x.amount);
+    });
+    var stillPlanned = Object.keys(planned).reduce(function (s, k) { return s + Math.max(0, planned[k] - (spent[k] || 0)); }, 0);
+    var budget = num(type === "Business" ? e.businessBudget : e.personalBudget);
+    var used = budget > 0 ? (actual + stillPlanned) / budget : 0;
+    return {
+      type: type, key: key, budget: budget, actual: actual, stillPlanned: stillPlanned,
+      safe: budget - actual - stillPlanned, used: used, count: entries.length,
+      tone: budget <= 0 ? "" : used >= 1 ? "bad" : used >= 0.8 ? "warn" : "good"
+    };
+  }
+
+  function expenseStats(doc) {
+    var key = monthKey(todayDate());
+    var p = budgetUse(doc, "Personal", key), b = budgetUse(doc, "Business", key);
+    return {
+      personalPlanned: p.stillPlanned, personalActual: p.actual, businessPlanned: b.stillPlanned, businessActual: b.actual,
+      personalSafe: p.safe, businessSafe: b.safe, personalBudget: p.budget, businessBudget: b.budget
+    };
+  }
+
+  // Planned spending still to pay, each on its own date: a planned entry less
+  // what has actually been spent under the same name that month (earliest plan
+  // first). Plans from past months are history, not plans.
+  function plannedOutflows(doc) {
+    var current = monthKey(todayDate());
+    var entries = ((doc.expenses && doc.expenses.entries) || []).slice();
+    var spent = {};
+    function slot(x) { return monthKey(x.date) + "|" + expenseType(x) + "|" + expenseKey(x.item); }
+    entries.forEach(function (x) { if (isActualExpense(x) && x.date) spent[slot(x)] = (spent[slot(x)] || 0) + num(x.amount); });
+    return entries.filter(function (x) { return !isActualExpense(x) && x.date && monthKey(x.date) >= current; })
+      .sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); })
+      .map(function (x) {
+        var k = slot(x), take = Math.min(num(x.amount), spent[k] || 0);
+        spent[k] = (spent[k] || 0) - take;
+        return { id: x.id, date: x.date, item: x.item, type: expenseType(x), amount: num(x.amount) - take };
+      }).filter(function (x) { return x.amount > 0.5; });
+  }
+
+  /* Cash forecast: today's balances, then every dated movement in the window —
+     scheduled incoming (not overdue: that is not assumed to arrive), planned
+     spending still to pay, and loan repayments at what they will cost on the
+     day. Anything already late is counted as due today. */
+  function cashForecast(doc, days) {
+    var today = todayISO(), end = dateISO(addDays(todayDate(), days));
+    var cash = (doc.balances || []).reduce(function (a, b) { return a + num(b.balance); }, 0);
+    var moves = [], overdueIn = 0;
+    scheduledEvents(doc, false).forEach(function (ev) {
+      if (!ev.date) return;
+      var value = toHome(ev.amount, ev.currency, doc);
+      if (ev.date < today) { overdueIn += value; return; }
+      if (ev.date > end) return;
+      moves.push({ date: ev.date, dir: "in", amount: value, original: num(ev.amount), currency: String(ev.currency || "UGX").toUpperCase(), title: ev.client, label: ev.label, screen: "upcoming", id: ev.itemId });
+    });
+    plannedOutflows(doc).forEach(function (p) {
+      var date = p.date < today ? today : p.date;
+      if (date > end) return;
+      moves.push({ date: date, dir: "out", amount: p.amount, original: p.amount, currency: "UGX", title: p.item || "Planned expense", label: p.type + " · planned", screen: "expenses", id: p.id });
+    });
+    loansOf(doc).filter(isActiveLoan).forEach(function (loan) {
+      var due = dueDateForLoan(loan), date = due < today ? today : due;
+      if (date > end) return;
+      var f = facilityById(doc, loan.facilityId) || {};
+      var value = estimateLoan(loan, date);
+      moves.push({ date: date, dir: "out", amount: value, original: value, currency: "UGX", title: (f.service || "Credit") + " repayment", label: f.network || "Credit", screen: "credit", id: loan.id });
+    });
+    // Same day: money out first, so the lowest point is never understated.
+    moves.sort(function (a, b) { return a.date.localeCompare(b.date) || (a.dir === b.dir ? 0 : a.dir === "out" ? -1 : 1); });
+    var balance = cash, low = cash, lowDate = today, inflow = 0, outflow = 0, points = [{ date: today, balance: cash }];
+    moves.forEach(function (m) {
+      if (m.dir === "in") { balance += m.amount; inflow += m.amount; } else { balance -= m.amount; outflow += m.amount; }
+      m.balance = balance;
+      if (balance < low) { low = balance; lowDate = m.date; }
+      points.push({ date: m.date, balance: balance });
+    });
+    return { days: days, today: today, endDate: end, cash: cash, inflow: inflow, outflow: outflow, end: balance, low: low, lowDate: lowDate, moves: moves, points: points, overdueIn: overdueIn };
+  }
+
+  // How many days the cash on hand lasts at the recent daily spend (actual
+  // expenses over up to the last 90 days). Null without enough history.
+  function runwayDays(doc, cash) {
+    var today = todayDate(), from = dateISO(addDays(today, -89)), to = todayISO();
+    var actual = ((doc.expenses && doc.expenses.entries) || []).filter(function (x) { return isActualExpense(x) && x.date && x.date >= from && x.date <= to; });
+    if (!actual.length) return null;
+    var total = actual.reduce(function (s, x) { return s + num(x.amount); }, 0);
+    var earliest = actual.reduce(function (m, x) { return x.date < m ? x.date : m; }, to);
+    var span = Math.min(90, Math.max(30, daysBetween(parseLocalDate(earliest), today) + 1));
+    var daily = total / span;
+    if (daily <= 0) return null;
+    return Math.max(0, Math.floor(cash / daily));
+  }
+
+  // A step line of the projected balance across the window.
+  function sparklineSVG(fc) {
+    var W = 300, H = 56, pad = 3;
+    var values = fc.points.map(function (p) { return p.balance; });
+    var max = Math.max.apply(null, values.concat([0])), min = Math.min.apply(null, values.concat([0]));
+    var span = max - min || 1;
+    function x(date) { var d = daysBetween(parseLocalDate(fc.today), parseLocalDate(date)); return pad + (W - 2 * pad) * Math.max(0, Math.min(1, d / fc.days)); }
+    function y(v) { return pad + (H - 2 * pad) * (1 - (v - min) / span); }
+    var d = "M" + x(fc.today).toFixed(1) + " " + y(fc.cash).toFixed(1), last = fc.cash;
+    fc.points.slice(1).forEach(function (p) { d += " H" + x(p.date).toFixed(1) + " V" + y(p.balance).toFixed(1); last = p.balance; });
+    d += " H" + (W - pad);
+    var zero = min < 0 ? '<line class="spark-zero" x1="0" x2="' + W + '" y1="' + y(0).toFixed(1) + '" y2="' + y(0).toFixed(1) + '"></line>' : "";
+    return '<svg class="spark" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' + zero + '<path class="spark-fill" d="' + d + ' V' + H + ' H' + pad + ' Z"></path><path class="spark-line" d="' + d + '"></path></svg>';
+  }
+
+  /* One prioritised list of what needs doing, most urgent first. Each item
+     says what, how much, and opens the exact filtered view that deals with it. */
+  function attentionItems(doc, a, fc) {
     var items = [];
+    var today = todayISO();
     if (a.overdue.length) {
-      var oldest = attentionOldest(a.overdue);
-      items.push({
-        type: "bad", count: a.overdue.length, nav: "upcoming",
-        label: "overdue incoming payment" + (a.overdue.length === 1 ? "" : "s"),
-        meta: attentionMeta(attentionAmount(a.overdue), oldest ? "oldest " + oldest + " day" + (oldest === 1 ? "" : "s") : "")
-      });
+      var worst = 0;
+      a.overdue.forEach(function (ev) { var d = daysBetween(todayDate(), parseLocalDate(ev.date)); if (d != null && d < 0) worst = Math.max(worst, -d); });
+      var clients = {};
+      a.overdue.forEach(function (ev) { clients[ev.itemId] = true; });
+      var n = Object.keys(clients).length;
+      items.push({ tone: "bad", count: a.overdue.length, title: a.overdue.length === 1 ? "Overdue payment" : "Overdue payments", meta: joinMeta(attentionAmount(a.overdue), n > 1 ? "from " + n + " clients" : "", worst ? "oldest " + worst + (worst === 1 ? " day" : " days") : ""), screen: "upcoming", quick: "overdue" });
     }
-    var overdueLoans = a.activeLoans.filter(function (l) { return daysBetween(todayDate(), parseLocalDate(dueDateForLoan(l))) < 0; });
-    if (overdueLoans.length) items.push({
-      type: "bad", count: overdueLoans.length, nav: "credit",
-      label: "overdue credit repayment" + (overdueLoans.length === 1 ? "" : "s"),
-      meta: attentionMeta(money(a.debt, "UGX", true) + " due", "earliest " + nextLoanDue(overdueLoans))
+    var lateLoans = a.activeLoans.filter(function (l) { return dueDateForLoan(l) < today; });
+    if (lateLoans.length) items.push({ tone: "bad", count: lateLoans.length, title: lateLoans.length === 1 ? "Overdue loan repayment" : "Overdue loan repayments", meta: joinMeta(money(lateLoans.reduce(function (s, l) { return s + estimateLoan(l, today); }, 0), "UGX", true) + " to clear", "fees keep growing"), screen: "credit", view: "borrowed" });
+    if (fc.low < 0) items.push({ tone: "bad", title: "Cash could run short on " + formatDate(fc.lowDate, true), meta: joinMeta("projected " + money(fc.low, "UGX", true), "unless overdue money comes in"), action: "open-forecast" });
+    var soonLoans = a.activeLoans.filter(function (l) { var d = daysBetween(todayDate(), parseLocalDate(dueDateForLoan(l))); return d != null && d >= 0 && d <= 3; });
+    if (soonLoans.length) items.push({ tone: "warn", count: soonLoans.length, title: soonLoans.length === 1 ? "Loan due within 3 days" : "Loans due within 3 days", meta: joinMeta(money(soonLoans.reduce(function (s, l) { return s + estimateLoan(l, dueDateForLoan(l)); }, 0), "UGX", true), "earliest " + nextLoanDue(soonLoans)), screen: "credit", view: "borrowed" });
+    ["Personal", "Business"].forEach(function (type) {
+      var u = budgetUse(doc, type, monthKey(todayDate()));
+      if (u.budget > 0 && u.safe < 0) items.push({ tone: "bad", title: type + " budget is over", meta: money(-u.safe, "UGX", true) + " above " + money(u.budget, "UGX", true), screen: "expenses" });
     });
-    var soonLoans = a.activeLoans.filter(function (l) { var d = daysBetween(todayDate(), parseLocalDate(dueDateForLoan(l))); return d >= 0 && d <= 4; });
-    if (soonLoans.length) items.push({
-      type: "warn", count: soonLoans.length, nav: "credit",
-      label: "repayment" + (soonLoans.length === 1 ? "" : "s") + " due soon",
-      meta: attentionMeta("within four days", "earliest " + nextLoanDue(soonLoans))
-    });
-    if (a.next7.length) items.push({
-      type: "warn", count: a.next7.length, nav: "upcoming",
-      label: "incoming payment" + (a.next7.length === 1 ? "" : "s") + " due in 7 days",
-      meta: attentionAmount(a.next7)
-    });
-    if (a.expenses.personalSafe < 0) items.push({
-      type: "bad", nav: "expenses", label: "Personal budget is overcommitted",
-      meta: money(Math.abs(a.expenses.personalSafe), "UGX", true) + " above the safe amount"
-    });
-    if (a.expenses.businessSafe < 0) items.push({
-      type: "bad", nav: "expenses", label: "Business budget is overcommitted",
-      meta: money(Math.abs(a.expenses.businessSafe), "UGX", true) + " above the safe amount"
-    });
-    var unscheduled = a.open.filter(function (x) { var next = nextScheduledPayment(doc, x); return !next || !next.dueDate; });
-    if (unscheduled.length) items.push({
-      type: "warn", count: unscheduled.length, nav: "upcoming",
-      label: "incoming item" + (unscheduled.length === 1 ? " needs" : "s need") + " a date",
-      meta: attentionMeta(attentionAmount(unscheduled.map(function (x) { return { amount: outstandingOf(x), currency: x.currency }; })), "not scheduled")
-    });
-    return items.slice(0, 4);
+    if (a.next7.length) items.push({ tone: "warn", count: a.next7.length, title: a.next7.length === 1 ? "Payment due this week" : "Payments due this week", meta: attentionAmount(a.next7), screen: "upcoming", quick: "next7" });
+    var undated = a.open.filter(function (x) { var next = nextScheduledPayment(doc, x); return !next || !next.dueDate; });
+    if (undated.length) items.push({ tone: "info", count: undated.length, title: undated.length === 1 ? "Deal without a due date" : "Deals without a due date", meta: joinMeta(attentionAmount(undated.map(function (x) { return { amount: outstandingOf(x), currency: x.currency }; })), "add one so it counts"), screen: "upcoming", quick: "unscheduled" });
+    return items;
   }
 
-  function timeline(doc, a) {
-    var out = [];
-    a.next7.forEach(function (x) {
-      out.push({ date: x.date, title: x.client || "Incoming payment", label: x.label, amount: num(x.amount), currency: x.currency || "UGX", direction: "in", source: "upcoming", id: x.itemId });
-    });
-    (doc.expenses.entries || []).forEach(function (x) {
-      if (String(x.kind).toLowerCase() !== "planned") return;
-      var days = daysBetween(todayDate(), parseLocalDate(x.date));
-      if (days != null && days >= 0 && days <= 7) out.push({ date: x.date, title: x.item || "Planned expense", amount: num(x.amount), currency: "UGX", direction: "out", source: "expenses", id: x.id });
-    });
-    a.activeLoans.forEach(function (loan) {
-      var due = dueDateForLoan(loan), days = daysBetween(todayDate(), parseLocalDate(due));
-      var f = facilityById(doc, loan.facilityId);
-      if (days != null && days >= 0 && days <= 7) out.push({ date: due, title: (f ? f.service : "Credit") + " repayment", amount: estimateLoan(loan, due), currency: "UGX", direction: "out", source: "credit", id: loan.id });
-    });
-    return out.sort(function (x, y) { return String(x.date).localeCompare(String(y.date)); });
+  function attentionHTML(items) {
+    if (!items.length) return '<div class="all-clear">' + icon("check", 20) + '<div><strong>All clear</strong><span>Nothing overdue, nothing due this week, budgets on track.</span></div></div>';
+    return '<div class="attention">' + items.slice(0, 5).map(function (x) {
+      var attrs = x.action ? 'data-x97-action="' + attr(x.action) + '"' : 'data-x97-action="go" data-screen="' + attr(x.screen) + '"' + (x.quick ? ' data-quick="' + attr(x.quick) + '"' : '') + (x.view ? ' data-view="' + attr(x.view) + '"' : '');
+      return '<button type="button" class="att is-' + esc(x.tone) + '" ' + attrs + '>' +
+        (x.count != null ? '<span class="att-count">' + esc(x.count) + '</span>' : '<span class="att-count is-icon">' + icon(x.tone === "bad" ? "alert" : "info", 16) + '</span>') +
+        '<span class="att-body"><span class="att-title">' + esc(x.title) + '</span>' + (x.meta ? '<span class="att-meta">' + esc(x.meta) + '</span>' : '') + '</span>' +
+        icon("chevron", 16) + '</button>';
+    }).join("") + '</div>';
   }
 
-  function monthSummary(doc, key) {
-    var events = scheduledEvents(doc, false).filter(function (x) { return key === "unscheduled" ? !x.date : monthKey(x.date) === key; });
-    var allScheduled = scheduledEvents(doc, true).filter(function (x) { return key === "unscheduled" ? !x.date : monthKey(x.date) === key; });
-    var records = (doc.followups || []).filter(function (x) { return allScheduled.some(function (event) { return String(event.itemId) === String(x.id); }) || (key === "unscheduled" && isOpenFollowup(x) && !nextScheduledPayment(doc, x)); });
-    var pending = records.filter(isOpenFollowup);
-    var paid = records.filter(function (x) { return isPaid(x.status); });
-    var ugx = events.filter(function (x) { return String(x.currency).toUpperCase() !== "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
-    var usd = events.filter(function (x) { return String(x.currency).toUpperCase() === "USD"; }).reduce(function (a, x) { return a + num(x.amount); }, 0);
-    var paidAmount = records.reduce(function (a, x) { return a + receivedOf(x); }, 0);
-    var attention = pending.filter(function (x) { var t = timing(x, doc); return t.key === "overdue" || t.key === "today" || t.key === "very-soon" || !t.next || !t.next.dueDate || outstandingOf(x) <= 0; }).length;
-    return { key: key, records: records, pending: pending, paid: paid, ugx: ugx, usd: usd, paidAmount: paidAmount, attention: attention };
+  function moveRow(m) {
+    var d = parseLocalDate(m.date);
+    var usd = m.currency === "USD";
+    return '<button type="button" class="move is-' + m.dir + '" data-x97-action="go" data-screen="' + attr(m.screen) + '">' +
+      '<span class="move-date"><b>' + (d ? d.getDate() : "") + '</b><span>' + esc(d ? d.toLocaleDateString(undefined, { month: "short" }) : "") + '</span></span>' +
+      '<span class="move-main"><b>' + esc(m.title || "") + '</b><span>' + esc(joinMeta(m.label, relDay(m.date))) + '</span></span>' +
+      '<span class="move-amt x97-money">' + (m.dir === "in" ? "+" : "−") + esc(money(usd ? m.original : m.amount, usd ? "USD" : "UGX", true)) + '</span></button>';
+  }
+
+  // A compact figure with a small currency code, for the hero's three tiles.
+  function heroFig(value) {
+    return '<span class="cur">UGX</span>' + esc(money(value, "", true));
+  }
+
+  function greetingLine() {
+    var hour = new Date().getHours();
+    return hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   }
 
   function renderDashboard(doc) {
     var a = analytics(doc);
-    var attention = dashboardAttention(doc, a);
-    var events = timeline(doc, a);
-    var in7 = events.filter(function (x) { return x.direction === "in" && String(x.currency).toUpperCase() !== "USD"; }).reduce(function (s, x) { return s + x.amount; }, 0);
-    var in7USD = events.filter(function (x) { return x.direction === "in" && String(x.currency).toUpperCase() === "USD"; }).reduce(function (s, x) { return s + x.amount; }, 0);
-    var out7 = events.filter(function (x) { return x.direction === "out"; }).reduce(function (s, x) { return s + x.amount; }, 0);
-    var collectedThisMonth = earnedIn(doc, monthKey(todayDate()));
-    var outstandingUGX = a.open.filter(function (x) { return String(x.currency || "UGX").toUpperCase() !== "USD"; }).reduce(function (s, x) { return s + outstandingOf(x); }, 0);
-    var outstandingUSD = a.open.filter(function (x) { return String(x.currency || "UGX").toUpperCase() === "USD"; }).reduce(function (s, x) { return s + outstandingOf(x); }, 0);
-    var actualSpend = (a.expenses.personalActual || 0) + (a.expenses.businessActual || 0);
-    // Receivables are held in two currencies. The headline is a single home-currency
-    // figure, so dollars convert at the live rate and fall back to the rate saved in
-    // Settings — never silently dropped, which would understate what is owed.
-    var outstandingUSDHome = 0;
-    if (outstandingUSD) {
-      var converted = fxConvert(outstandingUSD, "USD", FX_HOME);
-      outstandingUSDHome = converted == null ? outstandingUSD * num(doc.meta && doc.meta.usdRate) : converted;
-    }
-    var incomingTotal = outstandingUGX + outstandingUSDHome;
-    var totalPosition = a.cash + a.creditAvailable + incomingTotal;
-    var months = [0, 1, 2].map(function (offset) { var d = startOfMonth(todayDate()); d.setMonth(d.getMonth() + offset); return monthKey(d); });
-    var accountRows = (doc.balances || []).slice().sort(function (a, b) {
-      var ae = /equity/i.test(String(a.account || "")), be = /equity/i.test(String(b.account || ""));
-      return ae === be ? 0 : ae ? -1 : 1;
-    }).map(function (b) {
-      return '<button class="x97-row" style="width:100%;border-left:0;border-right:0;border-top:0;background:transparent;text-align:left" data-x97-action="edit-account" data-id="' + attr(b.id) + '">' + accountIconBox(b.account) + '<div class="x97-row-main"><div class="x97-row-title">' + esc(b.account || "Account") + '</div><div class="x97-row-sub">' + esc(b.line || b.notes || "Tap to update balance") + '</div></div><div class="x97-row-value">' + money(b.balance, "UGX") + '</div></button>';
-    }).join("");
-    /* One severity signal, not two: the rail carries the tone, so the row
-       drops the tinted tile that repeated the same warning glyph on every
-       line and said nothing the colour had not already said. The count
-       leads as a figure; the wording follows it. */
-    var attentionRows = attention.length ? '<div class="x97-attention">' + attention.map(function (x) {
-      return '<button class="x97-att is-' + esc(x.type) + '" data-x97-nav="' + attr(x.nav) + '">' +
-        (x.count != null ? '<span class="x97-att-count x97-money">' + esc(x.count) + '</span>' : '<span class="x97-att-count is-empty" aria-hidden="true"></span>') +
-        '<span class="x97-att-body"><span class="x97-att-label">' + esc(x.label) + '</span>' +
-        (x.meta ? '<span class="x97-att-meta">' + esc(x.meta) + '</span>' : '') + '</span>' +
-        '<span class="x97-att-go">' + icon("chevron", 16) + '</span>' +
-      '</button>';
-    }).join("") + '</div>' : '<div class="x97-empty">' + icon("check", 25) + '<strong>Nothing urgent</strong><p>Your upcoming money, credit and budgets have no critical alerts.</p></div>';
-    var timelineRows = events.length ? '<div class="x97-timeline">' + events.slice(0, 6).map(function (x) {
-      var din = x.direction === "in";
-      var usd = String(x.currency).toUpperCase() === "USD";
-      var tone = din ? (usd ? "usd" : "in") : "out";
-      var dd = parseLocalDate(x.date);
-      var day = dd ? dd.getDate() : "";
-      var mon = dd ? dd.toLocaleDateString(undefined, { month: "short" }).toUpperCase() : "";
-      return '<button class="x97-tl-row ' + tone + '" data-x97-nav="' + attr(x.source === "upcoming" ? "upcoming" : x.source) + '">'
-        + '<div class="x97-tl-date"><span class="x97-tl-day x97-money">' + day + '</span><span class="x97-tl-mon">' + esc(mon) + '</span></div>'
-        + '<div class="x97-tl-body"><div class="x97-tl-title">' + esc(x.title) + '</div><div class="x97-tl-sub"><span class="x97-tl-dir">' + (din ? "IN" : "OUT") + '</span>' + (x.label ? esc(x.label) + ' · ' : '') + esc(relDay(x.date)) + '</div></div>'
-        + '<div class="x97-tl-amt x97-money">' + (din ? "+\u202f" : "−\u202f") + money(x.amount, x.currency) + '</div>'
-        + '</button>';
-    }).join("") + '</div>' : '<div class="x97-empty">' + icon("calendar", 25) + '<strong>No movement in the next 7 days</strong><p>Add dates to Upcoming or planned expenses to build this timeline.</p></div>';
-    var pipeline = months.map(function (key) {
-      var m = monthSummary(doc, key);
-      return '<button class="x97-month-card x97-card" style="text-align:left;width:100%;margin:0" data-x97-action="open-month" data-month="' + attr(key) + '"><div class="x97-month-title">' + esc(monthLabel(key, true)) + '</div><div class="x97-month-count">' + m.pending.length + ' pending · ' + m.attention + ' need attention</div><div style="margin-top:12px"><div class="x97-money" style="font-size:20px">' + money(m.ugx, "UGX", true) + '</div><div class="x97-row-sub x97-teal" style="margin-top:5px">' + money(m.usd, "USD", true) + '</div></div></button>';
-    }).join("");
+    var fc = cashForecast(doc, 30);
+    var items = attentionItems(doc, a, fc);
+    var cash = a.cash;
+    var outUGX = a.open.filter(function (x) { return String(x.currency || "UGX").toUpperCase() !== "USD"; }).reduce(function (s, x) { return s + outstandingOf(x); }, 0);
+    var outUSD = a.open.filter(function (x) { return String(x.currency || "UGX").toUpperCase() === "USD"; }).reduce(function (s, x) { return s + outstandingOf(x); }, 0);
+    var owed = outUGX + outUSD * usdRateFor(doc);
+    var runway = runwayDays(doc, cash);
+    var key = monthKey(todayDate());
+    var earned = earnedIn(doc, key), spent = spentIn(doc, key);
+    var summary = items.length ? items.filter(function (x) { return x.tone === "bad"; }).length ? "A few things need you today." : "Nothing urgent — a few things coming up." : "Everything is on track.";
+    var dateLine = todayDate().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
+    var stale = outUSD && fxStaleReason(fxLoad()) ? " · rate saved " + fxAgo(fxLoad()) : "";
 
-    root.innerHTML = '<div class="x97-page" data-v2-page="dashboard">' +
-      pageHeader("97 Live Finance", "Your money", "") +
-      '<div class="x97-dashboard-main">' +
-        '<section class="x97-card x97-hero x97-hero-command" data-v2-hero><div class="x97-hero-topline"><div class="x97-hero-label">Total position</div><span class="x97-hero-live">Cash + credit + incoming</span></div><button type="button" class="x97-hero-value x97-money x97-hero-value-btn" data-x97-action="edit-balances" aria-label="Update balances">' + money(totalPosition, "UGX") + '<span class="x97-hero-edit-hint">' + icon("edit", 18) + '</span></button>' +
-          '<div class="x97-hero-split">' +
-            '<div class="x97-hero-part"><span class="x97-hero-part-k">Cash on hand</span><b class="x97-money">' + money(a.cash, "UGX") + '</b></div>' +
-            '<div class="x97-hero-part"><span class="x97-hero-part-k">Available credit</span><b class="x97-money is-credit">' + money(a.creditAvailable, "UGX") + '</b></div>' +
-            '<div class="x97-hero-part"><span class="x97-hero-part-k">Incoming</span><b class="x97-money is-incoming">' + money(incomingTotal, "UGX") + (outstandingUSD ? '<small>incl. ' + esc(money(outstandingUSD, "USD", true)) + (fxStaleReason(fxLoad()) ? ' · rate saved ' + esc(fxAgo(fxLoad())) : '') + '</small>' : '') + '</b></div>' +
-          '</div>' +
-          '<div class="x97-hero-caption">Money you hold, credit you can draw and invoices still owed — tap the total to edit balances and credit lines.</div></section>' +
-        '<section class="x97-command-actions x97-dashboard-wide"><button class="x97-command-action primary" data-x97-action="record-payment"><span class="x97-command-icon">' + icon("wallet", 17) + '</span><span><b>Record payment</b><small>Money received</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="add-upcoming"><span class="x97-command-icon teal">' + icon("plus", 17) + '</span><span><b>Add deal</b><small>Money expected</small></span>' + icon("chevron", 14) + '</button><button class="x97-command-action" data-x97-action="go-expenses"><span class="x97-command-icon warn">' + icon("trend", 17) + '</span><span><b>Add expense</b><small>Money spent</small></span>' + icon("chevron", 14) + '</button></section>' +
-        '<section class="x97-section x97-glance-section x97-dashboard-wide">' + sectionHead("At a glance") + '<div class="x97-summary-grid x97-finance-pulse"><div class="x97-card x97-summary"><div class="k">Collected this month</div><div class="v x97-money x97-green">' + money(collectedThisMonth, "UGX", true) + '</div><div class="s">Actual money received</div></div><div class="x97-card x97-summary"><div class="k">Due next 7 days</div><div class="v x97-money x97-teal">' + money(in7, "UGX", true) + '</div><div class="s">' + (in7USD ? '<span class="x97-teal">' + money(in7USD, "USD", true) + '</span> · ' : '') + 'Scheduled incoming</div></div><div class="x97-card x97-summary"><div class="k">Outstanding</div><div class="v x97-money x97-amber">' + money(outstandingUGX, "UGX", true) + '</div><div class="s">' + (outstandingUSD ? '<span class="x97-teal">' + money(outstandingUSD, "USD", true) + '</span> · ' : '') + 'Still owed by clients</div></div><div class="x97-card x97-summary"><div class="k">Actual spending</div><div class="v x97-money x97-red">' + money(actualSpend, "UGX", true) + '</div><div class="s">This month</div></div></div></section>' +
-        '<section class="x97-section x97-dashboard-accounts">' + sectionHead("Accounts", "Add account", "add-account") + '<div class="x97-card x97-pad x97-account-rail">' + (accountRows || '<div class="x97-empty"><strong>No accounts yet</strong><p>Add your bank, mobile money or cash balance.</p></div>') + '</div></section>' +
-        '<section class="x97-section">' + sectionHead("Needs attention", "View Incoming", "go-upcoming") + '<div class="x97-card x97-pad">' + attentionRows + '</div></section>' +
-        (function(){var s=messagingSummary(doc);var pillOd=s.overdue?'<span class="x97-pill bad">'+s.overdue+' overdue</span>':(s.dueSoon?'<span class="x97-pill warn">'+s.dueSoon+' due soon</span>':'<span class="x97-pill good">'+icon("check",11)+'All clear</span>');return '<section class="x97-section">' + sectionHead("Messaging", "Open", "open-messaging") + '<button class="x97-msg-card" data-x97-action="open-messaging"><div class="x97-msg-icon">' + icon("send") + '</div><div class="x97-msg-body"><div class="x97-msg-title">WhatsApp reminders &amp; campaigns</div><div class="x97-msg-sub">' + s.contacts + ' contacts · ' + s.campaigns + ' campaigns' + (remindExt.ready?' · sender connected':'') + '</div><div class="x97-msg-pills">' + pillOd + '</div></div>' + icon("chevron") + '</button></section>';})() +
-        '<section class="x97-section">' + sectionHead("Next 7 days") + '<div class="x97-card x97-pad"><div class="x97-hero-meta" style="margin-bottom:4px"><div class="x97-stat x97-stat-in"><span>Expected in</span><b class="x97-green">' + money(in7, "UGX") + '</b></div><div class="x97-stat x97-stat-out"><span>Expected out</span><b class="x97-red">' + money(out7, "UGX") + '</b></div></div>' + timelineRows + '</div></section>' +
-        earnCardHTML(doc) +
-        fxCardHTML(doc) +
-        '<section class="x97-section x97-dashboard-wide">' + sectionHead("Incoming pipeline", "View all months", "go-upcoming-months") + '<div class="x97-grid x97-pipeline x97-month-rail" data-v2-slider="months">' + pipeline + '</div></section>' +
-        dealSummaryHTML(doc) +
-        '<section class="x97-section x97-dashboard-wide x97-secondary-module x97-credit-preview">' + sectionHead("Credit position", "Open Credit", "go-credit") + '<div class="x97-card x97-pad"><div class="x97-summary-grid"><div class="x97-summary" style="padding:4px"><div class="k">Available credit</div><div class="v x97-money x97-teal">' + money(a.creditAvailable, "", true) + '</div><div class="s">Not included in cash</div></div><div class="x97-summary" style="padding:4px"><div class="k">Borrowed</div><div class="v x97-money x97-red">' + money(a.activeLoans.reduce(function (s,l){return s+num(l.principal);},0), "", true) + '</div><div class="s">' + a.activeLoans.length + ' active</div></div><div class="x97-summary" style="padding:4px"><div class="k">Amount due</div><div class="v x97-money x97-red">' + money(a.debt, "", true) + '</div><div class="s">Estimated today</div></div><div class="x97-summary" style="padding:4px"><div class="k">Next repayment</div><div class="v x97-money" style="font-size:17px">' + esc(nextLoanDue(a.activeLoans)) + '</div><div class="s">Earliest active loan</div></div></div></div></section>' +
+    var hero = '<section class="hero" aria-labelledby="hero-label">' +
+      '<div class="hero-top"><span id="hero-label" class="hero-label">Cash on hand</span><button type="button" class="hero-edit" data-x97-action="edit-balances">' + icon("edit", 15) + '<span>Update</span></button></div>' +
+      '<div class="hero-value x97-money">' + money(cash, "UGX") + '</div>' +
+      '<div class="hero-sub">' + esc(joinMeta((doc.balances || []).length + ((doc.balances || []).length === 1 ? " account" : " accounts"), runway == null ? "" : runway > 365 ? "over a year of spending" : "about " + runway + (runway === 1 ? " day" : " days") + " of spending")) + '</div>' +
+      '<div class="hero-grid">' +
+        '<button type="button" class="hero-fig" data-x97-action="go" data-screen="upcoming" data-quick="open"><span>Owed to you</span><b class="x97-money">' + heroFig(owed) + '</b>' + (outUSD ? '<small>incl. ' + esc(money(outUSD, "USD", true) + stale) + '</small>' : '<small>' + a.open.length + (a.open.length === 1 ? ' open deal' : ' open deals') + '</small>') + '</button>' +
+        '<button type="button" class="hero-fig" data-x97-action="go" data-screen="credit" data-view="borrowed"><span>You owe</span><b class="x97-money">' + heroFig(a.debt) + '</b><small>' + (a.activeLoans.length ? a.activeLoans.length + (a.activeLoans.length === 1 ? " loan" : " loans") + " · next " + esc(nextLoanDue(a.activeLoans)) : "No loans") + '</small></button>' +
+        '<button type="button" class="hero-fig" data-x97-action="go" data-screen="credit"><span>Can borrow</span><b class="x97-money">' + heroFig(a.creditAvailable) + '</b><small>Not counted as cash</small></button>' +
+      '</div>' +
+      '<button type="button" class="forecast" data-x97-action="open-forecast">' +
+        '<span class="forecast-text"><span>In 30 days</span><b class="x97-money">' + money(fc.end, "UGX", true) + '</b><small>' + esc(fc.low < fc.cash ? "Lowest " + money(fc.low, "UGX", true) + " on " + formatDate(fc.lowDate, true) : "Never below today") + '</small></span>' +
+        sparklineSVG(fc) + '</button>' +
+    '</section>';
+
+    var quick = '<div class="quick">' +
+      '<button type="button" class="quick-btn" data-x97-action="record-payment">' + icon("wallet", 18) + '<span>Record payment</span></button>' +
+      '<button type="button" class="quick-btn" data-x97-action="add-upcoming">' + icon("plus", 18) + '<span>New deal</span></button>' +
+      '<button type="button" class="quick-btn" data-x97-action="add-expense">' + icon("receipt", 18) + '<span>Log expense</span></button>' +
+    '</div>';
+
+    var soon = fc.moves.filter(function (m) { return daysBetween(todayDate(), parseLocalDate(m.date)) <= 14; });
+    var coming = '<section class="card panel">' + sectionHead("Next two weeks", fc.moves.length ? "Full forecast" : "", "open-forecast") +
+      (soon.length ? '<div class="moves">' + soon.slice(0, 6).map(moveRow).join("") + '</div>' + (soon.length > 6 ? '<button type="button" class="more-link" data-x97-action="open-forecast">' + (soon.length - 6) + ' more</button>' : '')
+        : emptyState("calendar", "Nothing dated in the next two weeks", "Add due dates to deals and planned expenses to see them here.")) +
+    '</section>';
+
+    var month = '<section class="card panel">' + sectionHead(monthLabel(key) , "History", "open-earnings") +
+      '<div class="trio">' +
+        '<div><span>Collected</span><b class="x97-money pos">' + money(earned, "UGX", true) + '</b></div>' +
+        '<div><span>Spent</span><b class="x97-money neg">' + money(spent, "UGX", true) + '</b></div>' +
+        '<div><span>Kept</span><b class="x97-money' + (earned - spent < 0 ? " neg" : "") + '">' + money(earned - spent, "UGX", true) + '</b></div>' +
+      '</div>' + earnChartHTML(earningsSeries(doc, 6)) + '</section>';
+
+    var accounts = (doc.balances || []).slice().sort(function (x, y) {
+      var xe = /equity/i.test(String(x.account || "")), ye = /equity/i.test(String(y.account || ""));
+      return xe === ye ? num(y.balance) - num(x.balance) : xe ? -1 : 1;
+    });
+    var accountsCard = '<section class="card panel">' + sectionHead("Accounts", "Add", "add-account") +
+      (accounts.length ? '<div class="list">' + accounts.map(function (b) {
+        return '<button type="button" class="list-row" data-x97-action="edit-account" data-id="' + attr(b.id) + '">' + accountIconBox(b.account) + '<span class="list-main"><b>' + esc(b.account || "Account") + '</b><span>' + esc(b.line || b.notes || "Tap to update") + '</span></span><span class="list-value"><b class="x97-money">' + money(b.balance, "UGX") + '</b></span></button>';
+      }).join("") + '</div>' : emptyState("bank", "No accounts yet", "Add your bank, mobile money and cash so Home can add them up.", '<button type="button" class="x97-btn" data-x97-action="add-account">' + icon("plus", 16) + ' Add account</button>')) +
+    '</section>';
+
+    var budgets = ["Personal", "Business"].map(function (type) { return budgetUse(doc, type, key); });
+    var budgetCard = '<section class="card panel">' + sectionHead("Budgets", "Expenses", "go-expenses") +
+      budgets.map(function (u) { return budgetBarHTML(u, true); }).join("") + '</section>';
+
+    var pipeMonths = [];
+    for (var i = 0; i < 6; i++) {
+      var d = startOfMonth(todayDate()); d.setMonth(d.getMonth() + i);
+      var mk = monthKey(d), ev = scheduledEvents(doc, false).filter(function (x) { return monthKey(x.date) === mk; });
+      if (ev.length) pipeMonths.push({ key: mk, events: ev });
+    }
+    var pipeline = '<section class="card panel">' + sectionHead("Coming in", "All deals", "go-upcoming") +
+      (pipeMonths.length ? '<div class="pipe">' + pipeMonths.slice(0, 4).map(function (m) {
+        var ugx = m.events.filter(function (x) { return x.currency !== "USD"; }).reduce(function (s, x) { return s + num(x.amount); }, 0);
+        var usd = m.events.filter(function (x) { return x.currency === "USD"; }).reduce(function (s, x) { return s + num(x.amount); }, 0);
+        var deals = {}; m.events.forEach(function (x) { deals[x.itemId] = true; });
+        return '<button type="button" class="pipe-row" data-x97-action="open-month" data-month="' + attr(m.key) + '"><span class="pipe-month">' + esc(monthLabel(m.key, true)) + '</span><span class="pipe-count">' + Object.keys(deals).length + (Object.keys(deals).length === 1 ? ' deal' : ' deals') + '</span><span class="pipe-amt"><b class="x97-money">' + (ugx ? money(ugx, "UGX", true) : "") + '</b>' + (usd ? '<b class="x97-money usd">' + money(usd, "USD", true) + '</b>' : '') + '</span></button>';
+      }).join("") + '</div>' : emptyState("trend", "Nothing scheduled", "Deals with due dates show up here by month.")) +
+    '</section>';
+
+    var s = messagingSummary(doc);
+    var msgCard = '<section class="card panel">' + sectionHead("Reminders", "Open", "open-messaging") +
+      '<button type="button" class="msg-card" data-x97-action="open-messaging"><span class="msg-icon">' + icon("message", 20) + '</span><span class="msg-main"><b>WhatsApp reminders &amp; campaigns</b><span>' + esc(joinMeta(s.contacts + " contacts", s.campaigns + " campaigns", remindExt.ready ? "sender connected" : "")) + '</span></span>' +
+      (s.overdue ? '<span class="pill bad">' + s.overdue + ' to chase</span>' : s.dueSoon ? '<span class="pill warn">' + s.dueSoon + ' due soon</span>' : '<span class="pill good">All clear</span>') + '</button></section>';
+
+    root.innerHTML = '<div class="page home" data-page="dashboard">' +
+      pageHeader(dateLine, greetingLine(), summary, "") +
+      '<div class="home-grid">' +
+        '<div class="home-hero">' + hero + quick + '</div>' +
+        '<section class="card panel home-attn">' + sectionHead("Needs attention", "Incoming", "go-upcoming") + attentionHTML(items) + '</section>' +
+        '<div class="home-coming">' + coming + '</div>' +
+        '<div class="home-month">' + month + '</div>' +
+        '<div class="home-accounts">' + accountsCard + '</div>' +
+        '<div class="home-budgets">' + budgetCard + '</div>' +
+        '<div class="home-pipe">' + pipeline + '</div>' +
+        '<div class="home-msg">' + msgCard + '</div>' +
+        '<div class="home-fx">' + fxCardHTML(doc) + '</div>' +
       '</div></div>';
+  }
+
+  // The forecast in full: pick a horizon, see every movement and the balance after it.
+  function openForecast(days) {
+    var doc = viewDoc();
+    if (!doc) return;
+    days = num(days) || 30;
+    var fc = cashForecast(doc, days);
+    var rows = fc.moves.length ? '<div class="moves with-balance">' + fc.moves.map(function (m) {
+      return moveRow(m).replace('</button>', '<span class="move-bal x97-money' + (m.balance < 0 ? " neg" : "") + '">' + money(m.balance, "UGX", true) + '</span></button>');
+    }).join("") + '</div>' : emptyState("calendar", "Nothing dated in this window", "");
+    var body = '<div class="segmented" role="tablist" aria-label="Forecast horizon">' +
+        [30, 60, 90].map(function (n) { return segButton("forecast-days", String(n), n + " days", String(days)); }).join("") + '</div>' +
+      '<div class="card forecast-card">' + sparklineSVG(fc) +
+        '<div class="trio">' +
+          '<div><span>Today</span><b class="x97-money">' + money(fc.cash, "UGX", true) + '</b></div>' +
+          '<div><span>In ' + days + ' days</span><b class="x97-money' + (fc.end < 0 ? " neg" : "") + '">' + money(fc.end, "UGX", true) + '</b></div>' +
+          '<div><span>Lowest</span><b class="x97-money' + (fc.low < 0 ? " neg" : "") + '">' + money(fc.low, "UGX", true) + '</b></div>' +
+        '</div>' +
+        '<p class="note">' + esc(joinMeta("+" + money(fc.inflow, "UGX", true) + " expected in", "−" + money(fc.outflow, "UGX", true) + " planned out")) + '</p>' +
+        (fc.overdueIn > 0 ? '<p class="note">' + esc(money(fc.overdueIn, "UGX", true) + " overdue is not counted — it comes on top when it arrives.") + '</p>' : '') +
+      '</div>' + rows +
+      '<p class="fine">Built from your account balances, dated incoming payments (dollars at ' + esc(money(usdRateFor(doc), "UGX")) + '), planned expenses still to pay and loan repayments with fees on their due date.</p>';
+    openSheet("Cash forecast", body, '<button type="button" class="x97-btn primary" data-x97-action="close-sheet">Done</button>', { wide: true });
+  }
+
+  // Record a payment: choose the deal first, most urgent at the top.
+  function openPaymentPicker() {
+    var doc = viewDoc();
+    if (!doc) return;
+    var open = sortByUrgency((doc.followups || []).filter(function (x) { return isOpenFollowup(x) && outstandingOf(x) > 0; }), doc);
+    if (!open.length) { toast("No open deals — add one first", "error"); openUpcomingForm(); return; }
+    if (open.length === 1) { openPaymentForm(open[0].id); return; }
+    var body = '<div class="field"><label for="pick-search">Find a deal</label><input id="pick-search" class="x97-input" type="search" autocomplete="off" placeholder="Client or project"></div>' +
+      '<div class="list card" id="pick-list">' + open.map(function (x) {
+        var t = timing(x, doc), cur = String(x.currency || "UGX").toUpperCase();
+        return '<button type="button" class="list-row" data-x97-action="mark-paid" data-id="' + attr(x.id) + '" data-search="' + attr(String(x.client || "").toLowerCase() + " " + String(x.category || "").toLowerCase()) + '"><span class="list-main"><b>' + esc(x.client || "Untitled") + '</b><span class="' + (t.cls ? "t-" + t.cls : "") + '">' + esc(t.label) + '</span></span><span class="list-value"><b class="x97-money">' + money(outstandingOf(x), cur) + '</b></span></button>';
+      }).join("") + '</div>';
+    openSheet("Record a payment", body, "", { afterOpen: function (back) {
+      var input = back.querySelector("#pick-search");
+      if (input) input.addEventListener("input", function () {
+        var q = input.value.trim().toLowerCase();
+        Array.prototype.forEach.call(back.querySelectorAll("#pick-list .list-row"), function (row) { row.hidden = !!q && row.getAttribute("data-search").indexOf(q) < 0; });
+      });
+    } });
+  }
+
+  function sortByUrgency(items, doc) {
+    function rank(x) { var t = timing(x, doc); return t.key === "overdue" ? 0 : t.key === "today" ? 1 : t.key === "very-soon" ? 2 : t.key === "soon" ? 3 : t.key === "unscheduled" ? 5 : 4; }
+    return items.slice().sort(function (a, b) {
+      var r = rank(a) - rank(b);
+      if (r) return r;
+      var an = nextScheduledPayment(doc, a), bn = nextScheduledPayment(doc, b);
+      return String(an && an.dueDate || "9999").localeCompare(String(bn && bn.dueDate || "9999"));
+    });
+  }
+
+  // A budget as one bar: spent (solid) and still planned (lighter) against the budget.
+  function budgetBarHTML(u, compact) {
+    var spentPct = u.budget > 0 ? Math.min(100, u.actual / u.budget * 100) : 0;
+    var planPct = u.budget > 0 ? Math.min(100 - spentPct, u.stillPlanned / u.budget * 100) : 0;
+    var head = u.budget > 0
+      ? '<b class="x97-money' + (u.safe < 0 ? " neg" : "") + '">' + money(u.safe, "UGX", compact) + '</b><span>' + (u.safe < 0 ? "over budget" : "safe to spend") + '</span>'
+      : '<b>No budget</b><span>' + esc(money(u.actual, "UGX", compact)) + ' spent</span>';
+    return '<div class="budget' + (u.tone ? " is-" + u.tone : "") + '">' +
+      '<div class="budget-head"><span class="budget-name">' + esc(u.type) + '</span><span class="budget-left">' + head + '</span></div>' +
+      '<div class="bar" role="img" aria-label="' + attr(u.type + ": " + money(u.actual, "UGX") + " spent, " + money(u.stillPlanned, "UGX") + " still planned" + (u.budget > 0 ? ", of " + money(u.budget, "UGX") : "")) + '"><i class="bar-spent" style="width:' + spentPct.toFixed(1) + '%"></i><i class="bar-plan" style="width:' + planPct.toFixed(1) + '%"></i></div>' +
+      '<div class="budget-foot"><span><i class="key-spent"></i>Spent <b class="x97-money">' + money(u.actual, "UGX", true) + '</b></span><span><i class="key-plan"></i>Planned <b class="x97-money">' + money(u.stillPlanned, "UGX", true) + '</b></span>' + (u.budget > 0 ? '<span>of <b class="x97-money">' + money(u.budget, "UGX", true) + '</b></span>' : '') + '</div>' +
+    '</div>';
+  }
+
+  /* ══ EXPENSES ═════════════════════════════════════════════════════════════
+     Budgets and entries for one month at a time. The month being viewed is
+     screen state, not part of the document, so browsing never syncs anywhere. */
+
+  function shiftMonth(key, delta) {
+    var d = monthDate(key) || startOfMonth(todayDate());
+    d = new Date(d.getFullYear(), d.getMonth() + delta, 1, 12);
+    return monthKey(d);
+  }
+
+  function expenseRowHTML(x) {
+    var actual = isActualExpense(x);
+    return '<div class="exp-row">' +
+      '<button type="button" class="exp-main" data-x97-action="edit-expense" data-id="' + attr(x.id) + '">' +
+        '<span class="exp-text"><b>' + esc(x.item || "Untitled") + '</b><span>' +
+          '<span class="tag ' + (expenseType(x) === "Business" ? "biz" : "own") + '">' + esc(expenseType(x)) + '</span>' +
+          (actual ? '' : '<span class="tag plan">Planned</span>') +
+          (x.note ? '<span class="exp-note">' + esc(x.note) + '</span>' : '') +
+        '</span></span>' +
+        '<span class="exp-amt x97-money' + (actual ? "" : " is-plan") + '">−' + esc(money(x.amount, "UGX")) + '</span>' +
+      '</button>' +
+      (actual ? '' : '<button type="button" class="exp-pay" data-x97-action="expense-paid" data-id="' + attr(x.id) + '" aria-label="' + attr("Mark " + (x.item || "this") + " as paid") + '" title="Mark as paid">' + icon("check", 16) + '</button>') +
+    '</div>';
+  }
+
+  function renderExpenses(doc) {
+    var ex = state.expenses;
+    var key = ex.month || monthKey(todayDate());
+    var current = monthKey(todayDate());
+    var entries = ((doc.expenses && doc.expenses.entries) || []).filter(function (x) { return monthKey(x.date) === key; });
+    var shown = entries.filter(function (x) {
+      if (ex.filter === "personal") return expenseType(x) === "Personal";
+      if (ex.filter === "business") return expenseType(x) === "Business";
+      if (ex.filter === "planned") return !isActualExpense(x);
+      if (ex.filter === "actual") return isActualExpense(x);
+      return true;
+    }).sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")) || (isActualExpense(a) === isActualExpense(b) ? 0 : isActualExpense(a) ? 1 : -1); });
+    var byDay = {};
+    shown.forEach(function (x) { (byDay[x.date || ""] || (byDay[x.date || ""] = [])).push(x); });
+    var days = Object.keys(byDay).sort().reverse();
+    var list = days.map(function (day) {
+      var rows = byDay[day];
+      var total = rows.reduce(function (s, x) { return s + num(x.amount); }, 0);
+      return '<div class="day"><div class="day-head"><span>' + esc(day ? relDayLabel(day) : "No date") + '</span><span class="x97-money">' + esc(money(total, "UGX", true)) + '</span></div>' + rows.map(expenseRowHTML).join("") + '</div>';
+    }).join("");
+    var others = ((doc.expenses && doc.expenses.entries) || []).length - entries.length;
+    var budgets = ["Personal", "Business"].map(function (type) { return budgetUse(doc, type, key); });
+    var spentAll = budgets[0].actual + budgets[1].actual, planAll = budgets[0].stillPlanned + budgets[1].stillPlanned;
+    root.innerHTML = '<div class="page" data-page="expenses">' +
+      pageHeader("", "Expenses", "What you plan to spend, and what you have spent.", '<button type="button" class="x97-btn primary" data-x97-action="add-expense">' + icon("plus", 16) + '<span>Log expense</span></button>') +
+      '<div class="month-nav"><button type="button" class="icon-btn" data-x97-action="expense-month" data-value="-1" aria-label="Previous month">' + icon("chevron", 18) + '</button>' +
+        '<div class="month-nav-label"><b>' + esc(monthLabel(key)) + '</b><span>' + esc(key === current ? "This month" : key < current ? "Past month" : "Upcoming month") + '</span></div>' +
+        '<button type="button" class="icon-btn" data-x97-action="expense-month" data-value="1" aria-label="Next month">' + icon("chevron", 18) + '</button>' +
+        (key !== current ? '<button type="button" class="link-btn" data-x97-action="expense-month" data-value="now">Today</button>' : '') + '</div>' +
+      '<div class="budget-grid">' + budgets.map(function (u) { return '<section class="card budget-card">' + budgetBarHTML(u, false) + '</section>'; }).join("") + '</div>' +
+      '<div class="exp-summary"><span>' + esc(joinMeta("Spent " + money(spentAll, "UGX", true), "still planned " + money(planAll, "UGX", true))) + '</span><button type="button" class="link-btn" data-x97-action="edit-budgets">Edit budgets</button></div>' +
+      '<div class="chips" role="group" aria-label="Show">' +
+        [["all", "All"], ["actual", "Spent"], ["planned", "Planned"], ["personal", "Personal"], ["business", "Business"]].map(function (f) {
+          return '<button type="button" class="chip' + (ex.filter === f[0] ? " on" : "") + '" aria-pressed="' + (ex.filter === f[0] ? "true" : "false") + '" data-x97-action="expense-filter" data-value="' + f[0] + '">' + f[1] + '</button>';
+        }).join("") + '</div>' +
+      (list ? '<div class="card exp-list">' + list + '</div>' : emptyState("receipt", entries.length ? "Nothing matches this filter" : "Nothing logged for " + monthLabel(key), entries.length ? "" : "Log what you spend, or plan a bill ahead — it counts against the budget until it's paid.", '<button type="button" class="x97-btn primary" data-x97-action="add-expense">' + icon("plus", 16) + ' Log expense</button>')) +
+      '<p class="fine">Safe to spend = budget − spent − still planned. Log a payment under the same name as a planned item and the plan is drawn down, not counted twice.' + (others > 0 ? ' ' + others + (others === 1 ? ' entry is' : ' entries are') + ' in other months.' : '') + '</p>' +
+    '</div>';
+  }
+
+  // "Today", "Yesterday", "Mon 21 Sep".
+  function relDayLabel(iso) {
+    var d = daysBetween(todayDate(), parseLocalDate(iso));
+    if (d === 0) return "Today";
+    if (d === -1) return "Yesterday";
+    if (d === 1) return "Tomorrow";
+    var date = parseLocalDate(iso);
+    return date ? date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }) : iso;
+  }
+
+  function openExpenseForm(id) {
+    var doc = viewDoc();
+    if (!doc) { toast("Still loading your data — try again in a moment", "error"); return; }
+    var existing = id ? ((doc.expenses && doc.expenses.entries) || []).find(function (x) { return String(x.id) === String(id); }) : null;
+    var x = existing ? clone(existing) : { id: "", date: todayISO(), type: state.expenses.filter === "business" ? "Business" : "Personal", kind: state.expenses.filter === "planned" ? "Planned" : "Actual", item: "", amount: "", note: "" };
+    // Names already used, so a payment can be logged under its planned name.
+    var names = {};
+    ((doc.expenses && doc.expenses.entries) || []).forEach(function (e) { if (e.item) names[String(e.item).trim()] = true; });
+    var kind = isActualExpense(x) ? "Actual" : "Planned", type = expenseType(x);
+    var body = '<form id="x97-expense-form" data-x97-form="expense"><input type="hidden" name="id" value="' + attr(x.id) + '">' +
+      '<div class="field amount-field"><label for="exp-amount">Amount (UGX)</label><input id="exp-amount" class="x97-input amount-input" name="amount" type="number" inputmode="numeric" min="1" step="1" required value="' + attr(x.amount) + '" placeholder="0"></div>' +
+      '<div class="field"><label for="exp-item">What for</label><input id="exp-item" class="x97-input" name="item" required maxlength="120" list="exp-names" autocomplete="off" value="' + attr(x.item) + '" placeholder="e.g. Studio rent"><datalist id="exp-names">' + Object.keys(names).sort().map(function (n) { return '<option value="' + attr(n) + '"></option>'; }).join("") + '</datalist><p class="x97-help">Use a planned item\'s name to pay it off.</p></div>' +
+      '<div class="fields-2">' +
+        '<fieldset class="field"><legend>Kind</legend><div class="segmented small">' + radioSeg("kind", "Actual", "Spent", kind) + radioSeg("kind", "Planned", "Planned", kind) + '</div></fieldset>' +
+        '<fieldset class="field"><legend>Budget</legend><div class="segmented small">' + radioSeg("type", "Personal", "Personal", type) + radioSeg("type", "Business", "Business", type) + '</div></fieldset>' +
+      '</div>' +
+      '<div class="field"><label for="exp-date">Date</label><input id="exp-date" class="x97-input" name="date" type="date" required value="' + attr(x.date || todayISO()) + '"></div>' +
+      '<div class="field"><label for="exp-note">Note <span class="optional">optional</span></label><input id="exp-note" class="x97-input" name="note" maxlength="200" value="' + attr(x.note || "") + '" placeholder="e.g. paid by MoMo"></div>' +
+      '</form>';
+    var foot = (existing ? '<button type="button" class="x97-btn danger" data-x97-action="delete-expense" data-id="' + attr(x.id) + '">' + icon("trash", 16) + ' Delete</button>' : '<button type="button" class="x97-btn" data-x97-action="close-sheet">Cancel</button>') +
+      '<button type="submit" class="x97-btn primary" form="x97-expense-form">' + icon("check", 16) + (existing ? ' Save' : ' Log expense') + '</button>';
+    openSheet(existing ? "Edit expense" : "Log expense", body, foot);
+  }
+
+  function radioSeg(name, value, label, current) {
+    var id = "seg-" + name + "-" + String(value).toLowerCase();
+    return '<input type="radio" class="seg-input" id="' + attr(id) + '" name="' + attr(name) + '" value="' + attr(value) + '"' + (value === current ? " checked" : "") + '><label class="seg" for="' + attr(id) + '">' + esc(label) + '</label>';
+  }
+
+  function radioValue(form, name) {
+    var hit = form.querySelector('input[name="' + name + '"]:checked');
+    return hit ? hit.value : "";
+  }
+
+  function submitExpense(form) {
+    var v = formValues(form);
+    var amount = roundMoney(v.amount);
+    if (amount <= 0) { toast("Enter an amount", "error"); return; }
+    var entry = {
+      id: v.id || uid("ex"), date: v.date || todayISO(), type: radioValue(form, "type") || "Personal", kind: radioValue(form, "kind") || "Actual",
+      item: String(v.item || "").trim(), amount: amount, note: String(v.note || "").trim()
+    };
+    var ok = updateDoc(function (doc) {
+      var list = doc.expenses.entries;
+      var i = list.findIndex(function (x) { return String(x.id) === String(entry.id); });
+      if (i >= 0) list[i] = Object.assign({}, list[i], entry); else list.push(entry);
+    }, "expense-save", v.id ? "Saved" : entry.kind === "Planned" ? "Planned" : "Logged");
+    if (!ok) return;
+    closeSheet();
+    // Show the month the entry landed in.
+    if (monthKey(entry.date) !== state.expenses.month && currentScreen === "expenses") { state.expenses.month = monthKey(entry.date); scheduleRender(0); }
+  }
+
+  function deleteExpense(id) {
+    var removed = null, index = -1;
+    var ok = updateDoc(function (doc) {
+      var list = doc.expenses.entries;
+      index = list.findIndex(function (x) { return String(x.id) === String(id); });
+      if (index >= 0) removed = list.splice(index, 1)[0];
+    }, "expense-delete", true);
+    if (!ok || !removed) return;
+    closeSheet();
+    undoable("Deleted " + (removed.item || "expense"), function (doc) {
+      if (doc.expenses.entries.some(function (x) { return String(x.id) === String(removed.id); })) return;
+      doc.expenses.entries.splice(Math.min(index, doc.expenses.entries.length), 0, removed);
+    });
+  }
+
+  // A planned bill got paid: it becomes the actual expense, dated today unless
+  // it was planned for a day that has already passed.
+  function markExpensePaid(id) {
+    var before = null;
+    var ok = updateDoc(function (doc) {
+      var x = doc.expenses.entries.find(function (e) { return String(e.id) === String(id); });
+      if (!x) return;
+      before = clone(x);
+      x.kind = "Actual";
+      if (!x.date || x.date > todayISO()) x.date = todayISO();
+    }, "expense-paid", true);
+    if (!ok || !before) return;
+    closeSheet();
+    undoable("Marked " + (before.item || "expense") + " as paid", function (doc) {
+      var x = doc.expenses.entries.find(function (e) { return String(e.id) === String(id); });
+      if (x) { x.kind = before.kind; x.date = before.date; }
+    });
+  }
+
+  function openBudgetForm() {
+    var doc = viewDoc();
+    if (!doc) return;
+    var e = doc.expenses || {};
+    var body = '<form id="x97-budget-form" data-x97-form="budgets">' +
+      '<p class="x97-help">A monthly limit for each budget. Planned and actual spending both count against it.</p>' +
+      '<div class="field"><label for="bud-p">Personal, per month (UGX)</label><input id="bud-p" class="x97-input" name="personalBudget" type="number" inputmode="numeric" min="0" step="1" value="' + attr(num(e.personalBudget) || "") + '" placeholder="0"></div>' +
+      '<div class="field"><label for="bud-b">Business, per month (UGX)</label><input id="bud-b" class="x97-input" name="businessBudget" type="number" inputmode="numeric" min="0" step="1" value="' + attr(num(e.businessBudget) || "") + '" placeholder="0"></div>' +
+      '</form>';
+    openSheet("Monthly budgets", body, '<button type="button" class="x97-btn" data-x97-action="close-sheet">Cancel</button><button type="submit" class="x97-btn primary" form="x97-budget-form">' + icon("check", 16) + ' Save budgets</button>');
+  }
+
+  function submitBudgets(form) {
+    var v = formValues(form);
+    if (updateDoc(function (doc) { doc.expenses.personalBudget = roundMoney(v.personalBudget); doc.expenses.businessBudget = roundMoney(v.businessBudget); }, "budgets", "Budgets saved")) closeSheet();
+  }
+
+  /* ══ SETTINGS ═════════════════════════════════════════════════════════════
+     Grouped the way people look for things. Text fields save when you leave
+     them (a redraw never interrupts typing); toggles and choices save at once. */
+
+  function settingRow(iconName, title, sub, action, extra) {
+    return '<button type="button" class="set-row" data-x97-action="' + attr(action) + '"' + (extra || "") + '>' + '<span class="set-icon">' + icon(iconName, 18) + '</span><span class="set-text"><b>' + esc(title) + '</b>' + (sub ? '<span>' + esc(sub) + '</span>' : '') + '</span>' + icon("chevron", 16) + '</button>';
+  }
+
+  function tagEditorHTML(list, values, label, placeholder) {
+    return '<div class="tag-editor" data-list="' + attr(list) + '"><ul class="tags" aria-label="' + attr(label) + '">' + values.map(function (v) {
+      return '<li class="tag-chip"><span>' + esc(v) + '</span><button type="button" data-x97-action="tag-remove" data-list="' + attr(list) + '" data-value="' + attr(v) + '" aria-label="' + attr("Remove " + v) + '">' + icon("close", 14) + '</button></li>';
+    }).join("") + '</ul><div class="tag-add"><input class="x97-input" data-tag-input="' + attr(list) + '" maxlength="40" placeholder="' + attr(placeholder) + '" aria-label="' + attr("Add to " + label) + '"><button type="button" class="x97-btn" data-x97-action="tag-add" data-list="' + attr(list) + '">Add</button></div></div>';
+  }
+
+  function restorePoint() {
+    try { var r = JSON.parse(localStorage.getItem(BACKUP_KEY) || "null"); return r && r.raw ? r : null; } catch (_) { return null; }
+  }
+
+  // Keep the current document before anything replaces it wholesale.
+  function saveRestorePoint(reason) {
+    var raw = "";
+    try { raw = localStorage.getItem(DATA_KEY) || ""; } catch (_) {}
+    if (!raw) return true;
+    try { localStorage.setItem(BACKUP_KEY, JSON.stringify({ savedAt: new Date().toISOString(), reason: reason, raw: raw })); return true; } catch (_) { return false; }
+  }
+
+  function renderSettings(doc) {
+    var theme = loadTheme();
+    var c = cloudState();
+    var settings = doc.settings || {};
+    var manual = !!settings.fxManual;
+    var live = fxConvert(1, "USD", FX_HOME);
+    var rp = restorePoint();
+    var syncLine = !c ? "Sync is not running on this page" : c.user ? c.user + " · " + (c.status === "online" ? "all changes saved" : c.status === "saving" ? "saving…" : c.status === "offline" ? "offline — changes are kept on this device" : c.status === "error" ? "needs attention — retrying" : c.status) : "Not signed in";
+    root.innerHTML = '<div class="page settings" data-page="settings">' +
+      pageHeader("", "Settings", "Your business details, lists, and your data.", "") +
+      '<div class="settings-grid">' +
+
+      '<section class="card set-group"><h2 class="set-title">' + icon("palette", 18) + 'Appearance</h2>' +
+        '<div class="field"><span class="label">Theme</span><div class="segmented" role="radiogroup" aria-label="Theme">' +
+          [["light", "Light"], ["dark", "Dark"], ["system", "Match device"]].map(function (t) { return '<button type="button" role="radio" aria-checked="' + (theme === t[0] ? "true" : "false") + '" class="seg' + (theme === t[0] ? " on" : "") + '" data-x97-action="set-theme" data-value="' + t[0] + '">' + t[1] + '</button>'; }).join("") + '</div></div>' +
+        '<label class="switch-row"><span><b>Hide amounts</b><span>Blur every figure, for working in public. Also in the header.</span></span><input type="checkbox" class="switch" data-x97-toggle="privacy"' + (privacyOn() ? " checked" : "") + '></label>' +
+      '</section>' +
+
+      '<section class="card set-group"><h2 class="set-title">' + icon("user", 18) + 'Business</h2>' +
+        '<div class="field"><label for="set-business">Business name</label><input id="set-business" class="x97-input" data-setting="businessName" maxlength="80" value="' + attr(settings.businessName || "") + '" placeholder="' + attr(doc.meta.appName || "97 LIVE") + '"><p class="x97-help">Printed on invoices and receipts.</p></div>' +
+        '<div class="field"><label for="set-cc">Phone country code</label><input id="set-cc" class="x97-input" data-setting="countryCode" inputmode="numeric" maxlength="4" value="' + attr(settings.countryCode || "") + '" placeholder="256"><p class="x97-help">Turns local numbers like 0772… into WhatsApp links.</p></div>' +
+      '</section>' +
+
+      '<section class="card set-group"><h2 class="set-title">' + icon("wallet", 18) + 'Money</h2>' +
+        '<label class="switch-row"><span><b>Set the dollar rate myself</b><span>' + esc(manual ? "Your rate is used everywhere; daily updates are paused." : live != null ? "Updated daily — today 1 USD = " + money(live, "UGX") + "." : "Updated daily when online.") + '</span></span><input type="checkbox" class="switch" data-x97-toggle="fx-manual"' + (manual ? " checked" : "") + '></label>' +
+        '<div class="field"><label for="set-rate">USD → UGX rate</label><input id="set-rate" class="x97-input" data-setting="usdRate" type="number" inputmode="decimal" min="0" step="any" value="' + attr(num(doc.meta.usdRate) || "") + '"' + (manual ? "" : " disabled") + '></div>' +
+        '<div class="fields-2">' +
+          '<div class="field"><label for="set-bp">Personal budget / month</label><input id="set-bp" class="x97-input" data-setting="personalBudget" type="number" inputmode="numeric" min="0" step="1" value="' + attr(num(doc.expenses.personalBudget) || "") + '" placeholder="0"></div>' +
+          '<div class="field"><label for="set-bb">Business budget / month</label><input id="set-bb" class="x97-input" data-setting="businessBudget" type="number" inputmode="numeric" min="0" step="1" value="' + attr(num(doc.expenses.businessBudget) || "") + '" placeholder="0"></div>' +
+        '</div>' +
+      '</section>' +
+
+      '<section class="card set-group"><h2 class="set-title">' + icon("tag", 18) + 'Lists</h2>' +
+        '<div class="field"><span class="label">Deal categories</span>' + tagEditorHTML("categories", settings.categories || [], "Deal categories", "New category") + '</div>' +
+        '<div class="field"><span class="label">Mobile networks</span>' + tagEditorHTML("networks", settings.networks || [], "Mobile networks", "New network") + '</div>' +
+      '</section>' +
+
+      '<section class="card set-group"><h2 class="set-title">' + icon("message", 18) + 'WhatsApp reminders</h2>' +
+        '<div class="set-rows">' +
+          settingRow("edit", "Message templates", "What reminders say, by tone", "open-templates") +
+          settingRow("shield", "Sending safety", "Daily limit and who Auto mode may message", "open-safety") +
+          settingRow("phone", "Client numbers", "Check and fix WhatsApp numbers", "open-numbers") +
+          settingRow("user", "Google contacts", "Import contacts to match numbers", "open-google-setup") +
+        '</div>' +
+      '</section>' +
+
+      '<section class="card set-group"><h2 class="set-title">' + icon("cloud", 18) + 'Sync</h2>' +
+        '<p class="set-status" data-status="' + attr(c ? c.status : "none") + '"><span class="s97-cloud-dot ' + attr(c ? c.status : "") + '"></span>' + esc(syncLine) + '</p>' +
+        '<div class="set-rows">' + settingRow("refresh", "Sync details", "Sync now, rename this device, sign out", "open-sync") + '</div>' +
+      '</section>' +
+
+      '<section class="card set-group"><h2 class="set-title">' + icon("database", 18) + 'Your data</h2>' +
+        '<div class="set-rows">' +
+          settingRow("download", "Download a backup", "Everything, as one file you can restore", "export-backup") +
+          settingRow("list", "Export spreadsheets", "Receivables, payments and expenses as CSV", "open-exports") +
+          settingRow("upload", "Restore from a backup", "Checks the file and shows what's in it first", "import-backup") +
+          (rp ? settingRow("undo", "Undo the last replace", "Put back the data from before " + (rp.reason || "the last change") + " · " + formatDate(String(rp.savedAt).slice(0, 10), true), "use-restore-point") : "") +
+        '</div>' +
+        '<input type="file" id="set-import-file" accept="application/json,.json" hidden>' +
+        '<button type="button" class="x97-btn danger block" data-x97-action="erase-data">' + icon("trash", 16) + ' Erase all data…</button>' +
+      '</section>' +
+
+      '</div>' +
+      '<p class="about">97 LIVE ' + esc(VERSION) + ' · THE 97 WORLD</p>' +
+    '</div>';
+  }
+
+  function downloadFile(filename, text, type) {
+    var blob = new Blob([text], { type: type || "application/octet-stream" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  }
+
+  function exportBackup(quiet) {
+    var raw = "";
+    try { raw = localStorage.getItem(DATA_KEY) || ""; } catch (_) {}
+    if (!raw) { toast("Nothing to back up yet", "error"); return false; }
+    var pretty = raw;
+    try { pretty = JSON.stringify(JSON.parse(raw), null, 2); } catch (_) {}
+    downloadFile("97-finance-backup-" + todayISO() + ".json", pretty, "application/json");
+    if (!quiet) toast("Backup downloaded", "success");
+    return true;
+  }
+
+  // What a backup file holds, or why it can't be used.
+  function inspectBackup(text) {
+    var doc;
+    try { doc = JSON.parse(text); } catch (_) { return { error: "That file isn't readable JSON." }; }
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) return { error: "That file isn't a 97 LIVE backup." };
+    if (!doc.meta || typeof doc.meta !== "object" || !Array.isArray(doc.followups) || !Array.isArray(doc.balances) || !Array.isArray(doc.credit)) {
+      return { error: "That file isn't a 97 LIVE backup — it is missing deals, accounts or credit." };
+    }
+    return {
+      doc: doc,
+      counts: {
+        deals: doc.followups.length,
+        payments: Array.isArray(doc.payments) ? doc.payments.length : 0,
+        accounts: doc.balances.length,
+        facilities: doc.credit.length,
+        loans: Array.isArray(doc.creditLoans) ? doc.creditLoans.length : 0,
+        expenses: doc.expenses && Array.isArray(doc.expenses.entries) ? doc.expenses.entries.length : 0,
+        contacts: Array.isArray(doc.waContacts) ? doc.waContacts.length : 0
+      }
+    };
+  }
+
+  function countsText(c) {
+    return [[c.deals, "deal"], [c.payments, "payment"], [c.accounts, "account"], [c.expenses, "expense"], [c.facilities, "credit offer"], [c.loans, "loan"], [c.contacts, "contact"]]
+      .filter(function (x) { return x[0]; }).map(function (x) { return x[0] + " " + x[1] + (x[0] === 1 ? "" : "s"); }).join(", ") || "no records";
+  }
+
+  function importBackupFile(file) {
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var info = inspectBackup(String(reader.result || ""));
+      if (info.error) { toast(info.error, "error"); return; }
+      var current = readDoc();
+      var now = current ? inspectBackup(JSON.stringify(current)).counts : null;
+      var body = '<p>This file has <b>' + esc(countsText(info.counts)) + '</b>.</p>' +
+        (now ? '<p>It replaces what is here now (' + esc(countsText(now)) + ') on this device and in the cloud.</p>' : '') +
+        '<p class="x97-help">The current data is kept as a restore point — Settings → Undo the last replace puts it back.</p>';
+      openSheet("Restore this backup?", body, '<button type="button" class="x97-btn" data-x97-action="close-sheet">Cancel</button><button type="button" class="x97-btn primary" id="confirm-import">Replace my data</button>', { afterOpen: function (back) {
+        back.querySelector("#confirm-import").addEventListener("click", function () {
+          if (!saveRestorePoint("the restore") && !confirm("There isn't room to keep a restore point on this device. Replace anyway?")) return;
+          if (writeDoc(info.doc, "import", "Backup restored")) { persistCreditMigration(); closeSheet(); }
+        });
+      } });
+    };
+    reader.onerror = function () { toast("Couldn't read that file", "error"); };
+    reader.readAsText(file);
+  }
+
+  function useRestorePoint() {
+    var rp = restorePoint();
+    if (!rp) return;
+    var info = inspectBackup(rp.raw);
+    if (info.error) { toast("The restore point can't be read", "error"); return; }
+    if (!confirm("Put back the data from before " + (rp.reason || "the last change") + " (" + countsText(info.counts) + ")? What is here now becomes the new restore point.")) return;
+    var now = "";
+    try { now = localStorage.getItem(DATA_KEY) || ""; } catch (_) {}
+    if (writeDoc(info.doc, "restore-point", "Data put back")) {
+      try { if (now) localStorage.setItem(BACKUP_KEY, JSON.stringify({ savedAt: new Date().toISOString(), reason: "undoing a replace", raw: now })); } catch (_) {}
+      scheduleRender(0);
+    }
+  }
+
+  // Wiping everything is typed, not tapped, and always leaves a way back.
+  function openEraseSheet() {
+    var body = '<p>This deletes every deal, payment, account, expense and credit record — on this device and on every device signed in to this account.</p>' +
+      '<p class="x97-help">A backup file downloads first, and the data is also kept here as a restore point.</p>' +
+      '<div class="field"><label for="erase-confirm">Type ERASE to confirm</label><input id="erase-confirm" class="x97-input" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>';
+    openSheet("Erase all data?", body, '<button type="button" class="x97-btn" data-x97-action="close-sheet">Keep my data</button><button type="button" class="x97-btn danger" id="erase-go" disabled>' + icon("trash", 16) + ' Erase everything</button>', { afterOpen: function (back) {
+      var input = back.querySelector("#erase-confirm"), go = back.querySelector("#erase-go");
+      input.addEventListener("input", function () { go.disabled = input.value.trim().toUpperCase() !== "ERASE"; });
+      go.addEventListener("click", function () {
+        if (input.value.trim().toUpperCase() !== "ERASE") return;
+        exportBackup(true);
+        saveRestorePoint("erasing everything");
+        var fresh = emptyDoc();
+        var old = readDoc();
+        // Keep how the app is set up; lose the records.
+        if (old) { fresh.settings = old.settings || fresh.settings; fresh.meta = { appName: old.meta.appName || "97 LIVE", usdRate: num(old.meta.usdRate) }; }
+        if (writeDoc(fresh, "erase", "Everything erased — a backup was downloaded")) closeSheet();
+      });
+    } });
+  }
+
+  function saveSetting(input) {
+    var key = input.getAttribute("data-setting"), value = input.value;
+    updateDoc(function (doc) {
+      if (key === "businessName") doc.settings.businessName = String(value).trim();
+      else if (key === "countryCode") doc.settings.countryCode = String(value).replace(/\D/g, "").slice(0, 4);
+      else if (key === "usdRate") doc.meta.usdRate = num(value);
+      else if (key === "personalBudget") doc.expenses.personalBudget = roundMoney(value);
+      else if (key === "businessBudget") doc.expenses.businessBudget = roundMoney(value);
+    }, "setting-" + key);
+  }
+
+  function addTag(list) {
+    var input = document.querySelector('[data-tag-input="' + list + '"]');
+    var value = input ? String(input.value).trim() : "";
+    if (!value) { if (input) input.focus(); return; }
+    var dup = false;
+    updateDoc(function (doc) {
+      var arr = Array.isArray(doc.settings[list]) ? doc.settings[list] : (doc.settings[list] = []);
+      if (arr.some(function (x) { return String(x).toLowerCase() === value.toLowerCase(); })) { dup = true; return; }
+      arr.push(value);
+    }, "tag-add", true);
+    if (dup) toast(value + " is already there", "error");
+    else {
+      scheduleRender(0);
+      setTimeout(function () { var next = document.querySelector('[data-tag-input="' + list + '"]'); if (next) next.focus(); }, 60);
+    }
+  }
+
+  function removeTag(list, value) {
+    var index = -1;
+    updateDoc(function (doc) {
+      var arr = doc.settings[list] || [];
+      index = arr.indexOf(value);
+      if (index >= 0) arr.splice(index, 1);
+    }, "tag-remove", true);
+    if (index >= 0) undoable("Removed " + value, function (doc) {
+      var arr = Array.isArray(doc.settings[list]) ? doc.settings[list] : (doc.settings[list] = []);
+      if (arr.indexOf(value) < 0) arr.splice(Math.min(index, arr.length), 0, value);
+    });
   }
 
   function nextLoanDue(loans) {
     if (!loans.length) return "None";
     var sorted = loans.slice().sort(function (a,b) { return String(dueDateForLoan(a)).localeCompare(String(dueDateForLoan(b))); });
     return formatDate(dueDateForLoan(sorted[0]), true);
-  }
-
-  function availableMonths(doc) {
-    var seen = {};
-    (doc.followups || []).forEach(function (x) {
-      scheduleRowsFor(x).forEach(function (row) { var k = monthKey(row.dueDate); if (k) seen[k] = true; });
-    });
-    var base = startOfMonth(todayDate());
-    for (var i = -2; i <= 11; i++) { var d = new Date(base); d.setMonth(d.getMonth() + i); seen[monthKey(d)] = true; }
-    return Object.keys(seen).sort();
   }
 
   function activeFilterCount() {
@@ -2296,10 +2816,10 @@
   function icToolbarHTML() {
     var f = state.upcoming, count = activeFilterCount();
     return '<div class="ic-toolbar">' +
-      '<div class="ic-search">' + icon("search", 16) + '<input id="ic-search" type="search" aria-label="Search incoming deals" enterkeyhint="search" autocomplete="off" placeholder="Search deals…" value="' + attr(f.search) + '"></div>' +
-      '<button class="ic-tbtn" data-x97-action="open-incoming-filters" title="Filter">' + icon("filter", 16) + (count ? '<b class="ic-tbadge">' + count + '</b>' : '') + '</button>' +
-      '<button class="ic-tbtn' + (icBulk.on ? " on" : "") + '" data-x97-action="incoming-bulk-toggle" title="Select rows">' + icon("rows", 16) + '</button>' +
-      '<button class="ic-tbtn" data-x97-action="open-incoming-more" title="More">' + icon("dots", 16) + '</button>' +
+      '<div class="ic-search">' + icon("search", 16) + '<input id="ic-search" data-live type="search" aria-label="Search incoming deals" enterkeyhint="search" autocomplete="off" placeholder="Search clients, notes, dates…" value="' + attr(f.search) + '"></div>' +
+      '<button type="button" class="ic-tbtn" data-x97-action="open-incoming-filters" aria-label="Filter and sort' + (count ? ' (' + count + ' active)' : '') + '" title="Filter and sort">' + icon("filter", 17) + (count ? '<b class="ic-tbadge">' + count + '</b>' : '') + '</button>' +
+      '<button type="button" class="ic-tbtn' + (icBulk.on ? " on" : "") + '" data-x97-action="incoming-bulk-toggle" aria-pressed="' + (icBulk.on ? "true" : "false") + '" aria-label="Select several deals" title="Select several deals">' + icon("rows", 17) + '</button>' +
+      '<button type="button" class="ic-tbtn" data-x97-action="open-incoming-more" aria-label="More options" title="More options">' + icon("dots", 17) + '</button>' +
     '</div>';
   }
 
@@ -2335,7 +2855,7 @@
     var cur = String(parent.currency || "UGX").toUpperCase();
     var cls = settled ? "good" : due && parseLocalDate(due) < todayDate() ? "bad" : due && monthKey(due) === monthKey(todayDate()) ? "warn" : "";
     var statusText = settled ? "Paid" : paid > 0 ? "Part paid" : "Pending";
-    return '<article class="ic-row ic-row-part is-' + cls + '" role="listitem" tabindex="0" data-part-index="' + index + '" data-cur="' + attr(cur) + '" data-x97-action="edit-upcoming" data-id="' + attr(parent.id) + '">' +
+    return '<div class="ic-row ic-row-part is-' + cls + '" role="listitem" tabindex="0" data-part-index="' + index + '" data-cur="' + attr(cur) + '" data-x97-action="edit-upcoming" data-id="' + attr(parent.id) + '">' +
       '<span class="ic-c-edge"></span>' +
       '<span class="ic-c-client"><span class="ic-part-label">' + esc(part.label || ("Payment " + (index + 1))) + '</span><small>' + esc(index + 1) + ' of ' + count + '</small></span>' +
       '<span class="ic-c-structure ic-muted">—</span>' +
@@ -2345,7 +2865,7 @@
       '<span class="ic-c-cur"><span class="ic-badge ic-cur-' + cur.toLowerCase() + '">' + cur + '</span></span>' +
       '<span class="ic-c-status"><span class="ic-badge ic-badge-' + cls + '">' + esc(statusText) + '</span></span>' +
       '<span class="ic-c-due">' + esc(due ? formatDate(due, true) : "No date") + '</span>' +
-    '</article>';
+    '</div>';
   }
 
   function icRowHTML(item, doc) {
@@ -2367,7 +2887,7 @@
         (hasWa(item, doc) ? '<button type="button" class="ic-quickact" data-x97-action="chase-one" data-id="' + attr(item.id) + '" title="WhatsApp">' + icon("message", 15) + '</button>' : '')
       : '';
     var rowAction = icBulk.on ? "incoming-bulk-row" : "edit-upcoming";
-    return '<article class="ic-row is-' + esc(t.key) + (bulked ? " is-bulked" : "") + '" role="listitem" tabindex="0" data-cur="' + attr(cur) + '" data-x97-action="' + rowAction + '" data-id="' + attr(item.id) + '">' +
+    return '<div class="ic-row is-' + esc(t.key) + (bulked ? " is-bulked" : "") + '" role="listitem" tabindex="0" data-cur="' + attr(cur) + '" data-x97-action="' + rowAction + '" data-id="' + attr(item.id) + '">' +
       leading +
       '<span class="ic-c-client"><b>' + esc(item.client || "Untitled") + '</b><small>' + esc(item.category || "Incoming") + '</small></span>' +
       '<span class="ic-c-structure">' + esc(structure) + '</span>' +
@@ -2378,7 +2898,7 @@
       '<span class="ic-c-status"><span class="ic-badge ic-badge-' + esc(t.cls || "neutral") + '">' + esc(t.key === "cancelled" ? "Cancelled" : t.key === "paid" ? "Paid" : t.key === "overdue" ? "Overdue" : paid > 0 ? "Part paid" : "Pending") + '</span></span>' +
       '<span class="ic-c-due"><b>' + esc(dueText) + '</b><small>' + esc(subLine) + '</small></span>' +
       (quick ? '<span class="ic-quickacts">' + quick + '</span>' : '') +
-    '</article>' +
+    '</div>' +
     (deal && !collapsed ? parts.map(function (p, i) { return incomingPeriodMatches(p, state.upcoming) ? icPartRowHTML(item, p, i, parts.length, doc) : ""; }).join("") : "");
   }
 
@@ -2407,7 +2927,7 @@
     var shell = document.getElementById("ic-shell");
     if (!shell || entering) {
       root.innerHTML = '<div class="ic-shell" id="ic-shell">' +
-        pageHeader("97 LIVE / Collections", "Incoming", "", '<button class="x97-icon-btn x97-add-primary" data-x97-action="add-upcoming" aria-label="Add incoming deal">' + icon("plus") + '<span>Add deal</span></button>') +
+        pageHeader("", "Incoming", "Money owed to you, by when it is due.", '<button type="button" class="x97-btn primary" data-x97-action="add-upcoming">' + icon("plus", 16) + '<span>Add deal</span></button>') +
         '<div id="ic-summary"></div><div id="ic-controls"></div><div class="ic-filterchips" id="ic-active-filters"></div>' +
         '<div class="ic-gridwrap"><div class="ic-listwrap" id="ic-listwrap"></div></div>' +
         '<div class="ic-statusbar" id="ic-statusbar" role="status" aria-live="polite"></div>' +
@@ -2415,8 +2935,8 @@
       shell = document.getElementById("ic-shell");
     }
     var pageY = window.scrollY;
-    var sheetOpen = document.body.classList.contains("x97-sheet-open");
-    var anchor = !entering && !sheetOpen && Array.from(shell.querySelectorAll('.ic-list > article[data-id]')).find(function (row) {
+    var sheetOpen = document.body.classList.contains("sheet-open");
+    var anchor = !entering && !sheetOpen && Array.from(shell.querySelectorAll('.ic-list > .ic-row[data-id]')).find(function (row) {
       return row.getBoundingClientRect().bottom > 0;
     });
     var anchorTop = anchor ? anchor.getBoundingClientRect().top : 0;
@@ -2432,7 +2952,8 @@
     } else {
       var filterButton = controls.querySelector('[data-x97-action="open-incoming-filters"]');
       var filterCount = activeFilterCount();
-      filterButton.innerHTML = icon("filter", 16) + (filterCount ? '<b class="ic-tbadge">' + filterCount + '</b>' : '');
+      filterButton.innerHTML = icon("filter", 17) + (filterCount ? '<b class="ic-tbadge">' + filterCount + '</b>' : '');
+      filterButton.setAttribute("aria-label", "Filter and sort" + (filterCount ? " (" + filterCount + " active)" : ""));
       var currentInput = document.getElementById("ic-search");
       if (currentInput && document.activeElement !== currentInput) currentInput.value = state.upcoming.search;
     }
@@ -2442,7 +2963,7 @@
     icPatchRegion(document.getElementById("ic-statusbar"), '<span>' + filtered.length + ' of ' + all.length + ' deals</span><span>' + esc(sortLabel(state.upcoming.sort)) + '</span>');
 
     if (anchorId && !sheetOpen) {
-      var nextAnchor = Array.from(shell.querySelectorAll('.ic-list > article[data-id]')).find(function (row) {
+      var nextAnchor = Array.from(shell.querySelectorAll('.ic-list > .ic-row[data-id]')).find(function (row) {
         return row.dataset.id === anchorId && row.dataset.partIndex === anchorPart;
       });
       // A disappearing filter result should not fling the user back to the
@@ -2465,7 +2986,7 @@
 
   document.addEventListener("keydown", function (event) {
     if (event.key !== "Enter" && event.key !== " ") return;
-    if (event.target.matches('.ic-list > article[data-x97-action]')) {
+    if (event.target.matches('.ic-list > .ic-row[data-x97-action]')) {
       event.preventDefault(); event.target.click();
     }
   });
@@ -2490,12 +3011,12 @@
       }).join("") + '</div>';
     }
     var body = '<div class="ic-filter-sheet">' +
-      '<div class="ic-filter-section"><label>Retainers</label><select id="ic-f-retainers" class="x97-select">' + option("all", "Include everything", f.retainers) + option("only", "Retainers only", f.retainers) + option("exclude", "Exclude retainers", f.retainers) + '</select></div>' +
+      '<div class="ic-filter-section"><label for="ic-f-retainers">Retainers</label><select id="ic-f-retainers" class="x97-select">' + option("all", "Include everything", f.retainers) + option("only", "Retainers only", f.retainers) + option("exclude", "Exclude retainers", f.retainers) + '</select></div>' +
       '<div class="ic-filter-section"><label>Status</label>' + chipRow("statuses", ["Pending", "Part Paid", "Paid", "Cancelled"], f.statuses) + '</div>' +
       '<div class="ic-filter-section"><label>Currency</label>' + chipRow("currencies", ["UGX", "USD"], f.currencies) + '</div>' +
       (categories.length ? '<div class="ic-filter-section"><label>Category</label>' + chipRow("categories", categories, f.categories) + '</div>' : "") +
-      '<div class="ic-filter-section"><label>Due date range</label><div class="x97-fields-2"><input class="x97-input" type="date" id="ic-f-from" value="' + attr(f.from) + '"><input class="x97-input" type="date" id="ic-f-to" value="' + attr(f.to) + '"></div></div>' +
-      '<div class="ic-filter-section"><label>Balance range</label><div class="x97-fields-2"><input class="x97-input" type="number" min="0" placeholder="Min" id="ic-f-min" value="' + attr(f.minAmount) + '"><input class="x97-input" type="number" min="0" placeholder="Max" id="ic-f-max" value="' + attr(f.maxAmount) + '"></div></div>' +
+      '<div class="ic-filter-section"><label>Due date range</label><div class="x97-fields-2"><input class="x97-input" type="date" id="ic-f-from" aria-label="Due from" value="' + attr(f.from) + '"><input class="x97-input" type="date" id="ic-f-to" aria-label="Due to" value="' + attr(f.to) + '"></div></div>' +
+      '<div class="ic-filter-section"><label>Balance range</label><div class="x97-fields-2"><input class="x97-input" type="number" min="0" placeholder="Min" aria-label="Smallest balance" id="ic-f-min" value="' + attr(f.minAmount) + '"><input class="x97-input" type="number" min="0" placeholder="Max" aria-label="Largest balance" id="ic-f-max" value="' + attr(f.maxAmount) + '"></div></div>' +
       '<div class="ic-filter-section"><label>Sort</label>' + chipRow("sort", ["urgency", "client", "amountDesc", "amountAsc", "dateAsc", "dateDesc"], []) + '</div>' +
     '</div>';
     var foot = '<button class="x97-btn" data-x97-action="incoming-filters-reset">Reset</button><button class="x97-btn primary" data-x97-action="incoming-filters-apply">' + icon("check", 15) + ' Apply</button>';
@@ -2534,14 +3055,12 @@
   }
 
   function openIncomingMore() {
-    var dark = loadTheme() === "dark";
     var body = '<div class="ic-more-list">' +
       '<button class="x97-row" data-x97-action="incoming-bulk-toggle-close">' + icon("rows", 16) + '<div class="x97-row-main"><div class="x97-row-title">Select rows…</div><div class="x97-row-sub">Pick several deals to delete at once</div></div></button>' +
       '<button class="x97-row" data-x97-action="grid-collapse-all" data-value="collapse">' + icon("collapse", 16) + '<div class="x97-row-main"><div class="x97-row-title">Collapse all schedules</div></div></button>' +
       '<button class="x97-row" data-x97-action="grid-collapse-all" data-value="expand">' + icon("expand", 16) + '<div class="x97-row-main"><div class="x97-row-title">Expand all schedules</div></div></button>' +
       '<button class="x97-row" data-x97-action="export-csv" data-kind="receivables">' + icon("list", 16) + '<div class="x97-row-main"><div class="x97-row-title">Export CSV</div></div></button>' +
-    '</div>' +
-    '<div class="ic-theme-row"><span class="ic-theme-label">Appearance</span><div class="ic-theme-seg"><button class="ic-theme-opt' + (!dark ? " on" : "") + '" data-x97-action="set-theme" data-value="light">' + icon("sun", 14) + ' Light</button><button class="ic-theme-opt' + (dark ? " on" : "") + '" data-x97-action="set-theme" data-value="dark">' + icon("moon", 14) + ' Dark</button></div></div>';
+    '</div>';
     openSheet("More", body, "", { afterOpen: function (back) {
       var b = back.querySelector('[data-x97-action="incoming-bulk-toggle-close"]');
       if (b) b.addEventListener("click", function () { closeSheet(); icSetBulkMode(true); });
@@ -2584,123 +3103,239 @@
     return loans.filter(function (l) { return isActiveLoan(l) && String(l.facilityId) === String(facilityId); }).reduce(function (s,l){return s+num(l.principal);},0);
   }
 
-  function facilityCard(f, loans) {
-    var available = Math.max(0, num(f.limitOffer) - activePrincipalForFacility(loans, f.id));
-    var active = activePrincipalForFacility(loans, f.id) > 0;
-    var live = isFacilityLive(f);
-    return '<article class="x97-card x97-facility"><div class="x97-facility-head"><div class="x97-network ' + networkClass(f.network) + '">' + esc(String(f.network || "?").slice(0,3).toUpperCase()) + '</div><div class="x97-facility-main"><div class="x97-facility-title">' + esc(f.service || "Credit facility") + '</div><div class="x97-facility-sub">' + esc(f.network || "") + (f.line ? ' · ' + esc(f.line) : '') + '<br>' + esc(facilityFeeText(f)) + '</div></div><div class="x97-facility-limit"><span>Available</span><b class="x97-money x97-teal">' + money(available, "UGX", true) + '</b></div></div><div class="x97-facility-actions"><button class="x97-btn teal" data-x97-action="borrow" data-id="' + attr(f.id) + '" ' + (active || available <= 0 || !live ? "disabled" : "") + '>' + icon("credit") + (active ? " Active borrowing" : !live ? " Unavailable" : "Record borrowing") + '</button><button class="x97-btn" data-x97-action="edit-facility" data-id="' + attr(f.id) + '">' + icon("edit") + ' Edit</button></div></article>';
+  function networkBadge(network) {
+    var n = String(network || "").trim();
+    return '<span class="net-badge ' + networkClass(n) + '" aria-hidden="true">' + esc((n || "CR").slice(0, 3).toUpperCase()) + '</span>';
   }
 
+  function facilityCard(f, loans) {
+    var used = activePrincipalForFacility(loans, f.id);
+    var limit = num(f.limitOffer);
+    var available = Math.max(0, limit - used);
+    var live = isFacilityLive(f);
+    var usedPct = limit > 0 ? Math.min(100, Math.round(used / limit * 100)) : 0;
+    var borrowLabel = used > 0 ? "Borrowing active" : !live ? "Unavailable" : available <= 0 ? "Nothing available" : "Borrow";
+    return '<article class="card facility' + (live ? "" : " is-off") + '">' +
+      '<div class="facility-head">' + networkBadge(f.network) +
+        '<div class="facility-name"><h3>' + esc(f.service || "Credit facility") + '</h3><p>' + esc([f.network, f.line].filter(Boolean).join(" · ")) + '</p></div>' +
+        '<div class="facility-avail"><span>Available</span><b class="x97-money">' + money(available, "UGX", true) + '</b></div>' +
+      '</div>' +
+      (limit > 0 ? '<div class="meter" role="img" aria-label="' + attr(usedPct + "% of the limit in use") + '"><i style="width:' + usedPct + '%"></i></div>' : '') +
+      '<p class="facility-terms">' + esc(facilityFeeText(f)) + (limit > 0 ? ' · limit ' + esc(money(limit, "UGX", true)) : '') + '</p>' +
+      '<div class="card-actions">' +
+        '<button type="button" class="x97-btn primary" data-x97-action="borrow" data-id="' + attr(f.id) + '"' + (used > 0 || available <= 0 || !live ? " disabled" : "") + '>' + icon("credit", 16) + ' ' + esc(borrowLabel) + '</button>' +
+        '<button type="button" class="x97-btn" data-x97-action="edit-facility" data-id="' + attr(f.id) + '">' + icon("edit", 16) + ' Edit</button>' +
+      '</div></article>';
+  }
+
+  // A loan: how long is left, what it costs to clear today, what it will cost
+  // at the end of its term, and how much of that is fee.
   function loanCard(doc, loan) {
     var f = facilityById(doc, loan.facilityId) || {};
     var due = dueDateForLoan(loan), days = daysBetween(todayDate(), parseLocalDate(due));
     var overdue = days != null && days < 0;
-    var dueText = overdue ? Math.abs(days) + " days overdue" : days === 0 ? "Due today" : "Due in " + days + " days";
-    var dueAmount = estimateLoan(loan, todayISO());
-    return '<article class="x97-card x97-loan ' + (overdue ? "overdue" : "") + '"><div class="x97-loan-head"><div><div class="due">' + esc(dueText) + '</div><h3>' + esc((f.network ? f.network + " " : "") + (f.service || "Credit borrowing")) + '</h3></div><div class="x97-network ' + networkClass(f.network) + '">' + esc(String(f.network || "CR").slice(0,3).toUpperCase()) + '</div></div><div class="x97-loan-amount x97-money ' + (overdue ? "x97-red" : "") + '">' + money(dueAmount, "UGX") + '</div><div class="x97-loan-meta">Borrowed ' + money(loan.principal, "UGX") + ' on ' + formatDate(loan.borrowDate) + '<br>Due ' + formatDate(due) + ' · ' + esc(loan.feeModelSnapshot || f.feeModel || "") + '</div><div class="x97-facility-actions"><button class="x97-btn primary" data-x97-action="repay" data-id="' + attr(loan.id) + '">' + icon("check") + ' Mark repaid</button><button class="x97-btn" data-x97-action="loan-details" data-id="' + attr(loan.id) + '">Details</button></div></article>';
+    var dueText = days == null ? "No due date" : overdue ? Math.abs(days) + (Math.abs(days) === 1 ? " day overdue" : " days overdue") : days === 0 ? "Due today" : days === 1 ? "Due tomorrow" : "Due in " + days + " days";
+    var today = estimateLoan(loan, todayISO());
+    var atTerm = estimateLoan(loan, due);
+    var fee = Math.max(0, today - num(loan.principal));
+    var tone = overdue || days === 0 ? "bad" : days != null && days <= 3 ? "warn" : "";
+    return '<article class="card loan' + (tone ? " is-" + tone : "") + '">' +
+      '<div class="facility-head">' + networkBadge(f.network) +
+        '<div class="facility-name"><h3>' + esc(f.service || "Credit borrowing") + '</h3><p>' + esc([f.network, f.line].filter(Boolean).join(" · ")) + '</p></div>' +
+        '<span class="pill ' + (tone || "neutral") + '">' + esc(dueText) + '</span>' +
+      '</div>' +
+      '<div class="loan-figures">' +
+        '<div><span>To clear today</span><b class="x97-money' + (overdue ? " neg" : "") + '">' + money(today, "UGX") + '</b></div>' +
+        '<div><span>Borrowed</span><b class="x97-money">' + money(loan.principal, "UGX") + '</b></div>' +
+        '<div><span>Fee so far</span><b class="x97-money">' + money(fee, "UGX") + '</b></div>' +
+        (atTerm !== today && !overdue ? '<div><span>At term (' + esc(formatDate(due, true)) + ')</span><b class="x97-money">' + money(atTerm, "UGX") + '</b></div>' : '<div><span>Due date</span><b>' + esc(formatDate(due, true)) + '</b></div>') +
+      '</div>' +
+      '<div class="card-actions">' +
+        '<button type="button" class="x97-btn primary" data-x97-action="repay" data-id="' + attr(loan.id) + '">' + icon("check", 16) + ' Mark repaid</button>' +
+        '<button type="button" class="x97-btn" data-x97-action="loan-details" data-id="' + attr(loan.id) + '">Details</button>' +
+      '</div></article>';
   }
 
   function renderCredit(doc) {
     var loans = loansOf(doc);
     var active = loans.filter(isActiveLoan);
-    var history = loans.filter(function (l) { return !isActiveLoan(l); }).sort(function(a,b){return String(b.repaidDate||b.borrowDate).localeCompare(String(a.repaidDate||a.borrowDate));});
+    var history = loans.filter(function (l) { return !isActiveLoan(l); }).sort(function (a, b) { return String(b.repaidDate || b.borrowDate).localeCompare(String(a.repaidDate || a.borrowDate)); });
     var live = (doc.credit || []).filter(isFacilityLive);
     var unavailable = (doc.credit || []).filter(function (f) { return !isFacilityLive(f); });
-    var availableTotal = live.reduce(function (s,f){return s+Math.max(0,num(f.limitOffer)-activePrincipalForFacility(active,f.id));},0);
-    var borrowed = active.reduce(function(s,l){return s+num(l.principal);},0);
-    var due = active.reduce(function(s,l){return s+estimateLoan(l,todayISO());},0);
+    var availableTotal = live.reduce(function (s, f) { return s + Math.max(0, num(f.limitOffer) - activePrincipalForFacility(active, f.id)); }, 0);
+    var borrowed = active.reduce(function (s, l) { return s + num(l.principal); }, 0);
+    var due = active.reduce(function (s, l) { return s + estimateLoan(l, todayISO()); }, 0);
+    var feesPaid = history.reduce(function (s, l) { return s + Math.max(0, num(l.actualPaid || estimateLoan(l, l.repaidDate)) - num(l.principal)); }, 0);
+    var view = state.creditView;
     var body = "";
-    if (state.creditView === "available") {
+    if (view === "available") {
       var networks = {};
       live.forEach(function (f) { var k = f.network || "Other"; (networks[k] || (networks[k] = [])).push(f); });
-      body = Object.keys(networks).sort().map(function (network) { return '<div class="x97-group"><b>' + esc(network) + '</b><span>' + networks[network].length + ' facilities</span></div>' + networks[network].map(function(f){return facilityCard(f,active);}).join(""); }).join("");
-      if (!body) body = '<div class="x97-card x97-empty"><strong>No available facilities</strong><p>Add a mobile credit offer or change an unavailable facility to Live.</p></div>';
-      if (unavailable.length) body += '<button class="x97-row x97-card" style="width:100%;padding:14px;margin-top:12px;text-align:left" data-x97-action="toggle-unavailable"><div class="x97-row-icon">' + icon("credit") + '</div><div class="x97-row-main"><div class="x97-row-title">Unavailable facilities</div><div class="x97-row-sub">' + unavailable.length + ' saved offers</div></div>' + icon(unavailableOpen ? "close" : "chevron") + '</button>' + (unavailableOpen ? '<div style="margin-top:9px">' + unavailable.map(function(f){return facilityCard(f,active);}).join("") + '</div>' : '');
-    } else if (state.creditView === "borrowed") {
-      body = active.length ? active.sort(function(a,b){return String(dueDateForLoan(a)).localeCompare(String(dueDateForLoan(b)));}).map(function(l){return loanCard(doc,l);}).join("") : '<div class="x97-card x97-empty">' + icon("check",26) + '<strong>No active borrowing</strong><p>Your saved credit offers are available, but nothing is currently owed.</p><button class="x97-btn teal" style="margin-top:14px" data-x97-action="credit-view" data-value="available">View available credit</button></div>';
+      body = Object.keys(networks).sort().map(function (network) {
+        return '<div class="group-head"><h2>' + esc(network) + '</h2><span>' + networks[network].length + (networks[network].length === 1 ? ' facility' : ' facilities') + '</span></div><div class="card-grid">' + networks[network].map(function (f) { return facilityCard(f, active); }).join("") + '</div>';
+      }).join("");
+      if (!body) body = emptyState("credit", "No live credit offers", "Add the loan offers on your mobile money lines to see what you can borrow and what it costs.", '<button type="button" class="x97-btn primary" data-x97-action="add-facility">' + icon("plus", 16) + ' Add facility</button>');
+      if (unavailable.length) body += '<button type="button" class="disclosure" data-x97-action="toggle-unavailable" aria-expanded="' + (unavailableOpen ? "true" : "false") + '"><span>' + unavailable.length + ' unavailable ' + (unavailable.length === 1 ? 'offer' : 'offers') + '</span>' + icon("chevron", 16) + '</button>' +
+        (unavailableOpen ? '<div class="card-grid">' + unavailable.map(function (f) { return facilityCard(f, active); }).join("") + '</div>' : '');
+    } else if (view === "borrowed") {
+      body = active.length ? '<div class="card-grid">' + active.slice().sort(function (a, b) { return String(dueDateForLoan(a)).localeCompare(String(dueDateForLoan(b))); }).map(function (l) { return loanCard(doc, l); }).join("") + '</div>'
+        : emptyState("check", "Nothing owed", "No active borrowing. Your offers are ready if you need them.", '<button type="button" class="x97-btn" data-x97-action="credit-view" data-value="available">See available credit</button>');
     } else {
-      body = history.length ? history.map(function (l) { var f=facilityById(doc,l.facilityId)||{}; return '<article class="x97-card x97-facility"><div class="x97-facility-head"><div class="x97-network ' + networkClass(f.network) + '">' + esc(String(f.network||"CR").slice(0,3).toUpperCase()) + '</div><div class="x97-facility-main"><div class="x97-facility-title">' + esc(f.service||"Credit borrowing") + '</div><div class="x97-facility-sub">Borrowed ' + formatDate(l.borrowDate) + ' · Repaid ' + formatDate(l.repaidDate) + '</div></div><div class="x97-facility-limit"><span>Paid</span><b class="x97-money x97-green">' + money(l.actualPaid || estimateLoan(l,l.repaidDate),"UGX",true) + '</b></div></div></article>'; }).join("") : '<div class="x97-card x97-empty"><strong>No repayment history yet</strong><p>Completed borrowing will stay here for reference.</p></div>';
+      body = history.length ? '<p class="note">' + esc(history.length + (history.length === 1 ? " loan" : " loans") + " repaid · " + money(feesPaid, "UGX") + " paid in fees") + '</p><div class="list card">' + history.map(function (l) {
+        var f = facilityById(doc, l.facilityId) || {};
+        var paid = num(l.actualPaid || estimateLoan(l, l.repaidDate));
+        return '<div class="list-row">' + networkBadge(f.network) + '<div class="list-main"><b>' + esc(f.service || "Credit borrowing") + '</b><span>' + esc("Borrowed " + formatDate(l.borrowDate, true) + " · repaid " + formatDate(l.repaidDate, true)) + '</span></div><div class="list-value"><b class="x97-money">' + money(paid, "UGX", true) + '</b><span>fee ' + esc(money(Math.max(0, paid - num(l.principal)), "UGX", true)) + '</span></div></div>';
+      }).join("") + '</div>'
+        : emptyState("clock", "No repayments yet", "Loans you repay are kept here, with what each one cost.");
     }
-    root.innerHTML = '<div class="x97-page s97-credit-page">' +
-      pageHeader("Mobile finance", "Credit", "Offers, borrowing and repayments.", '<button class="x97-icon-btn" data-x97-action="add-facility" title="Add facility">' + icon("plus") + '</button>') +
-      '<div class="x97-summary-grid s97-credit-summary"><div class="x97-card x97-summary"><div class="k">Available credit</div><div class="v x97-money x97-teal">' + money(availableTotal,"UGX",true) + '</div><div class="s">Across ' + live.length + ' live facilities</div></div><div class="x97-card x97-summary"><div class="k">Borrowed</div><div class="v x97-money x97-red">' + money(borrowed,"UGX",true) + '</div><div class="s">' + active.length + ' active</div></div><div class="x97-card x97-summary"><div class="k">Amount due</div><div class="v x97-money x97-red">' + money(due,"UGX",true) + '</div><div class="s">Estimated today</div></div><div class="x97-card x97-summary"><div class="k">Next repayment</div><div class="v x97-money" style="font-size:17px">' + esc(nextLoanDue(active)) + '</div><div class="s">Earliest active loan</div></div></div>' +
-      '<div class="x97-segment"><button class="' + (state.creditView === "available" ? "on" : "") + '" data-x97-action="credit-view" data-value="available">Available</button><button class="' + (state.creditView === "borrowed" ? "on" : "") + '" data-x97-action="credit-view" data-value="borrowed">Borrowed' + (active.length ? ' · ' + active.length : '') + '</button><button class="' + (state.creditView === "history" ? "on" : "") + '" data-x97-action="credit-view" data-value="history">History</button></div><div class="s97-credit-list">' + body + '</div>' +
-      '<button class="x97-fab" data-x97-action="add-facility" aria-label="Add credit facility">' + icon("plus",25) + '</button></div>';
+    root.innerHTML = '<div class="page" data-page="credit">' +
+      pageHeader("", "Credit", "What you can borrow, what you owe, and when.", '<button type="button" class="x97-btn primary" data-x97-action="add-facility">' + icon("plus", 16) + '<span>Add facility</span></button>') +
+      '<div class="stats">' +
+        statTile("Available to borrow", money(availableTotal, "UGX", true), "Across " + live.length + (live.length === 1 ? " live offer" : " live offers"), "brand") +
+        statTile("Borrowed", money(borrowed, "UGX", true), active.length + " active", active.length ? "neg" : "") +
+        statTile("To clear today", money(due, "UGX", true), "Principal plus fees", due ? "neg" : "") +
+        statTile("Next repayment", esc(nextLoanDue(active)), active.length ? "Earliest due date" : "Nothing due", "", true) +
+      '</div>' +
+      '<div class="segmented" role="tablist" aria-label="Credit view">' +
+        segButton("credit-view", "available", "Available", view) +
+        segButton("credit-view", "borrowed", "Borrowed" + (active.length ? " · " + active.length : ""), view) +
+        segButton("credit-view", "history", "History", view) +
+      '</div>' +
+      '<div class="credit-body">' + body + '</div></div>';
   }
 
-  /* Loading placeholder: the silhouette of the screen that is about to arrive.
-     Reads as "nearly there" rather than as an error state. */
+  // Shared building blocks for the screens.
+  function statTile(label, valueHTML, sub, tone, plain) {
+    return '<div class="stat' + (tone ? " is-" + tone : "") + '"><span class="stat-label">' + esc(label) + '</span><b class="stat-value' + (plain ? "" : " x97-money") + '">' + valueHTML + '</b>' + (sub ? '<span class="stat-sub">' + esc(sub) + '</span>' : '') + '</div>';
+  }
+  function segButton(action, value, label, current) {
+    var on = value === current;
+    return '<button type="button" role="tab" aria-selected="' + (on ? "true" : "false") + '" class="seg' + (on ? " on" : "") + '" data-x97-action="' + attr(action) + '" data-value="' + attr(value) + '">' + esc(label) + '</button>';
+  }
+  function emptyState(iconName, title, text, actionHTML) {
+    return '<div class="empty">' + icon(iconName, 22) + '<strong>' + esc(title) + '</strong>' + (text ? '<p>' + esc(text) + '</p>' : '') + (actionHTML || '') + '</div>';
+  }
+
+  /* Loading placeholder: the outline of a screen, while the first cloud copy
+     arrives on a device that has none yet. */
   function skeletonHTML() {
-    var rows = "";
-    for (var i = 0; i < 4; i++) {
-      rows += '<div class="x97-skel-row">' +
-        '<span class="x97-sk x97-sk-dot" style="--i:' + (i + 3) + '"></span>' +
-        '<span class="x97-sk x97-sk-line" style="--i:' + (i + 3) + '"></span>' +
-        '<span class="x97-sk x97-sk-amt" style="--i:' + (i + 3) + '"></span>' +
-      '</div>';
-    }
-    return '<div class="x97-skel" role="status" aria-live="polite" aria-label="Loading your finance data">' +
-      '<div class="x97-skel-head"><span class="x97-sk x97-sk-title"></span><span class="x97-sk x97-sk-sub" style="--i:1"></span></div>' +
-      '<div class="x97-skel-card">' +
-        '<span class="x97-sk x97-sk-label" style="--i:1"></span>' +
-        '<span class="x97-sk x97-sk-big" style="--i:2"></span>' +
-        '<div class="x97-skel-split"><span class="x97-sk" style="--i:2"></span><span class="x97-sk" style="--i:3"></span></div>' +
-      '</div>' + rows +
-      '<p class="x97-skel-note">Loading your finance data\u2026</p>' +
-    '</div>';
+    var c = cloudState();
+    var note = c && c.status === "offline" ? "You're offline. Connect once to load your data onto this device." : c && c.status === "error" ? "Can't reach the cloud yet — retrying…" : "Loading your data…";
+    return '<div class="skeleton" role="status" aria-live="polite">' +
+      '<span class="sk sk-title"></span><span class="sk sk-hero"></span>' +
+      '<div class="sk-row"><span class="sk"></span><span class="sk"></span><span class="sk"></span></div>' +
+      '<span class="sk sk-line"></span><span class="sk sk-line"></span><span class="sk sk-line short"></span>' +
+      '<p class="sk-note">' + esc(note) + '</p></div>';
   }
 
   function render() {
-    if (!currentScreen || !ensureRoot()) return;
-    root.dataset.screen = currentScreen;
-    var doc = readDoc();
+    renderTimer = null;
+    if (!currentScreen || !root) return;
+    if (typingInScreen()) { renderDeferred = true; return; }
+    renderDeferred = false;
+    root.setAttribute("data-screen", currentScreen);
+    var doc = viewDoc();
     if (!doc) {
-      root.innerHTML = '<div class="x97-page">' + skeletonHTML() + '</div>';
+      root.innerHTML = skeletonHTML();
       return;
     }
-    try { lastRaw = localStorage.getItem(DATA_KEY) || JSON.stringify(doc); } catch (_) { lastRaw = JSON.stringify(doc); }
+    try { lastRaw = localStorage.getItem(DATA_KEY) || ""; } catch (_) { lastRaw = ""; }
     if (currentScreen === "dashboard") renderDashboard(doc);
     else if (currentScreen === "upcoming") renderUpcoming(doc);
     else if (currentScreen === "credit") renderCredit(doc);
-    updateCloudPill();
-    scheduleViewportFab();
+    else if (currentScreen === "expenses") renderExpenses(doc);
+    else if (currentScreen === "settings") renderSettings(doc);
+    screenEntering = false;
   }
 
+  /* ── Sheets ───────────────────────────────────────────────────────────────
+     One dialog at a time: a bottom sheet on phones, a centred panel on wider
+     screens. It is a real modal: focus moves in and is kept there, Escape
+     closes it, and focus returns to whatever opened it. */
   function lockSheetScroll() {
+    if (document.body.classList.contains("sheet-open")) return;
     sheetScrollY = window.scrollY || document.documentElement.scrollTop || 0;
-    document.body.style.setProperty("--x97-sheet-scroll-y", "-" + sheetScrollY + "px");
-    document.body.classList.add("x97-sheet-open");
+    document.body.style.setProperty("--sheet-scroll-y", "-" + sheetScrollY + "px");
+    document.body.classList.add("sheet-open");
   }
 
   function unlockSheetScroll() {
-    if (!document.body.classList.contains("x97-sheet-open")) return;
+    if (!document.body.classList.contains("sheet-open")) return;
     var restoreY = sheetScrollY;
-    document.body.classList.remove("x97-sheet-open");
-    document.body.style.removeProperty("--x97-sheet-scroll-y");
+    document.body.classList.remove("sheet-open");
+    document.body.style.removeProperty("--sheet-scroll-y");
     sheetScrollY = 0;
-    window.requestAnimationFrame(function () { window.scrollTo(0, restoreY); });
+    window.scrollTo(0, restoreY);
+  }
+
+  function focusables(container) {
+    return Array.prototype.filter.call(container.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'), function (el) {
+      return el.offsetWidth || el.offsetHeight || el.getClientRects().length;
+    });
   }
 
   function openSheet(title, body, foot, options) {
-    closeSheet();
+    var reopening = !!document.getElementById("x97-sheet");
+    if (!reopening) sheetOpener = document.activeElement;
+    closeSheet(true);
     var back = document.createElement("div");
     back.className = "x97-back";
     back.id = "x97-sheet";
-    back.innerHTML = '<section class="x97-sheet" role="dialog" aria-modal="true"><div class="x97-handle"></div><header class="x97-sheet-head"><h2>' + esc(title) + '</h2><button class="x97-close" data-x97-action="close-sheet">' + icon("close") + '</button></header><div class="x97-sheet-body">' + body + '</div>' + (foot ? '<footer class="x97-sheet-foot">' + foot + '</footer>' : '') + '</section>';
+    back.innerHTML = '<section class="x97-sheet' + (options && options.wide ? " wide" : "") + '" role="dialog" aria-modal="true" aria-labelledby="x97-sheet-title"><div class="x97-handle" aria-hidden="true"></div><div class="x97-sheet-head"><h2 id="x97-sheet-title">' + esc(title) + '</h2><button type="button" class="x97-close" data-x97-action="close-sheet" aria-label="Close">' + icon("close") + '</button></div><div class="x97-sheet-body">' + body + '</div>' + (foot ? '<div class="x97-sheet-foot">' + foot + '</div>' : '') + '</section>';
     document.body.appendChild(back);
     lockSheetScroll();
-    scheduleViewportFab();
     back.addEventListener("mousedown", function (e) { if (e.target === back) closeSheet(); });
-    if (options && options.afterOpen) setTimeout(function(){ options.afterOpen(back); },0);
-    var first = back.querySelector("input:not([type=hidden]),select,textarea"); if (first && window.innerWidth > 700) setTimeout(function(){first.focus();},80);
+    back.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { e.stopPropagation(); closeSheet(); return; }
+      if (e.key !== "Tab") return;
+      var list = focusables(back);
+      if (!list.length) return;
+      var first = list[0], last = list[list.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+    if (options && options.afterOpen) setTimeout(function () { options.afterOpen(back); }, 0);
+    // Wide screens start typing straight away; phones keep the keyboard down
+    // until a field is tapped, so the whole sheet is visible first.
+    var first = back.querySelector("input:not([type=hidden]):not([disabled]),select,textarea");
+    var close = back.querySelector(".x97-close");
+    if (first && window.innerWidth > 700) setTimeout(function () { try { first.focus(); } catch (_) {} }, 60);
+    else if (close) try { close.focus({ preventScroll: true }); } catch (_) { close.focus(); }
   }
 
-  function closeSheet() { var el = document.getElementById("x97-sheet"); if (el) el.remove(); unlockSheetScroll(); scheduleViewportFab(); }
+  function closeSheet(keepFocus) {
+    var el = document.getElementById("x97-sheet");
+    if (el) el.remove();
+    if (keepFocus) return;
+    unlockSheetScroll();
+    var opener = sheetOpener;
+    sheetOpener = null;
+    if (opener && opener.isConnected && opener.focus) try { opener.focus({ preventScroll: true }); } catch (_) {}
+  }
 
   function option(value, label, selected) { return '<option value="' + attr(value) + '" ' + (String(value) === String(selected) ? "selected" : "") + '>' + esc(label == null ? value : label) + '</option>'; }
 
-  function field(label, input, help) { return '<div class="x97-field"><label>' + esc(label) + '</label>' + input + (help ? '<div class="x97-help">' + esc(help) + '</div>' : '') + '</div>'; }
-  function fieldWithLabelId(id, label, input, help) { return '<div class="x97-field"><label id="' + attr(id) + '">' + esc(label) + '</label>' + input + (help ? '<div class="x97-help">' + esc(help) + '</div>' : '') + '</div>'; }
+  // A labelled field. The label is tied to the first control in `input` (an id
+  // is added when it has none), so tapping the label focuses the field and
+  // screen readers announce it; help text is tied with aria-describedby.
+  var fieldSeq = 0;
+  function labelled(input, help) {
+    var id = "", helpId = help ? "fh" + (++fieldSeq) : "";
+    var out = input.replace(/<(input|select|textarea)\b((?:(?!type="hidden")[^>])*)>/, function (all, tag, rest) {
+      var has = /\sid="([^"]+)"/.exec(rest);
+      id = has ? has[1] : "fld" + (++fieldSeq);
+      return "<" + tag + (has ? "" : ' id="' + id + '"') + (helpId ? ' aria-describedby="' + helpId + '"' : "") + rest + ">";
+    });
+    return { id: id, html: out, help: help ? '<div class="x97-help" id="' + helpId + '">' + esc(help) + '</div>' : "" };
+  }
+  function field(label, input, help) {
+    var f = labelled(input, help);
+    return '<div class="x97-field"><label' + (f.id ? ' for="' + attr(f.id) + '"' : "") + '>' + esc(label) + '</label>' + f.html + f.help + '</div>';
+  }
+  function fieldWithLabelId(labelId, label, input, help) {
+    var f = labelled(input, help);
+    return '<div class="x97-field"><label id="' + attr(labelId) + '"' + (f.id ? ' for="' + attr(f.id) + '"' : "") + '>' + esc(label) + '</label>' + f.html + f.help + '</div>';
+  }
 
   function contactPickerHTML(query, doc, hintName, currentPhone) {
     var contacts = campContacts(doc);
@@ -3130,14 +3765,30 @@
     if (s < 86400) return Math.floor(s / 3600) + "h ago"; return Math.floor(s / 86400) + "d ago";
   }
   function progLabel(p) { return ({ queued: "Queued", sending: "Sending…", typing: "Typing…", sent: "Sent ✓", error: "Failed", skipped: "Skipped", "not-contact": "Skipped · not in contacts", paused: "Paused" })[p] || p; }
-  function safeJson(text) { try { return JSON.parse(text); } catch (_) {} var a = text.indexOf("{"), b = text.lastIndexOf("}"); if (a >= 0 && b > a) { try { return JSON.parse(text.slice(a, b + 1)); } catch (_) {} } return null; }
+
+  // The messaging panels are full-screen dialogs: announced as such, and
+  // Escape (or leaving the screen) closes the top one.
+  function panelDialog(el, label) {
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-label", label);
+    el.tabIndex = -1;
+    setTimeout(function () { if (el.isConnected) try { el.focus({ preventScroll: true }); } catch (_) {} }, 0);
+  }
+  function closeTopPanel() {
+    if (document.getElementById("x97-camp")) { closeCampaigns(); return true; }
+    if (document.getElementById("x97-remind")) { closeReminders(); return true; }
+    if (document.getElementById("x97-msg")) { closeMessaging(); return true; }
+    return false;
+  }
+  function closeAllPanels() { while (closeTopPanel()) {} }
 
   function openReminders() {
     remindState.open = true; remindState.progress = {};
     var doc = readDoc();
     if (doc) chaseSendable(doc).forEach(function (x) { if (timing(x, doc).key === "overdue" && !x.lastRemindedAt) remindState.selected[x.id] = true; });
     var el = document.getElementById("x97-remind");
-    if (!el) { el = document.createElement("div"); el.id = "x97-remind"; el.className = "x97-remind-overlay"; document.body.appendChild(el); wireRemind(el); }
+    if (!el) { el = document.createElement("div"); el.id = "x97-remind"; el.className = "x97-remind-overlay"; panelDialog(el, "Chase overdue payments"); document.body.appendChild(el); wireRemind(el); }
     document.body.classList.add("x97-remind-lock");
     refreshRemind();
   }
@@ -3150,14 +3801,14 @@
     var prog = remindState.progress[item.id];
     var phoneHTML = wa
       ? '<span class="x97-pill">' + icon("phone", 12) + esc(prettyPhone(item.phone)) + '</span>'
-      : '<button type="button" class="x97-pill" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '" style="cursor:pointer;border:1px dashed var(--line2)">' + icon("plus", 12) + ' Add number</button>';
+      : '<button type="button" class="x97-pill add-number" data-x97-action="edit-upcoming" data-id="' + attr(item.id) + '">' + icon("plus", 12) + ' Add number</button>';
     var reminded = item.lastRemindedAt ? '<span class="x97-pill good">' + icon("check", 12) + 'Reminded ' + esc(relFromISO(item.lastRemindedAt)) + '</span>' : '';
     var progHTML = prog ? '<span class="x97-pill ' + (prog === "sent" ? "good" : prog === "error" ? "bad" : "warn") + '">' + esc(progLabel(prog)) + '</span>' : '';
     return '<div class="x97-rm-item' + (sel ? ' on' : '') + (wa ? '' : ' nowa') + '" data-id="' + attr(item.id) + '">' +
-      '<div class="x97-rm-head"><label class="x97-rm-pick"><input type="checkbox" class="x97-rm-check" data-id="' + attr(item.id) + '" ' + (sel ? 'checked' : '') + (wa ? '' : ' disabled') + '></label>' +
+      '<div class="x97-rm-head"><label class="x97-rm-pick"><input type="checkbox" class="x97-rm-check" data-id="' + attr(item.id) + '" aria-label="' + attr("Remind " + (item.client || "this client")) + '" ' + (sel ? 'checked' : '') + (wa ? '' : ' disabled') + '></label>' +
       '<div class="x97-rm-body"><div class="x97-rm-top"><span class="x97-rm-name">' + esc(item.client || "Untitled") + '</span><span class="x97-rm-amt x97-money">' + (outstandingOf(item) ? money(outstandingOf(item), cur) : "—") + '</span></div>' +
       '<div class="x97-rm-tags"><span class="x97-pill ' + esc(t.cls) + '">' + icon("clock", 12) + esc(t.label) + '</span>' + phoneHTML + reminded + progHTML + '</div></div></div>' +
-      (sel && wa ? '<textarea class="x97-rm-msg" data-id="' + attr(item.id) + '" rows="4">' + esc(messageFor(item, doc)) + '</textarea>' : '') +
+      (sel && wa ? '<textarea class="x97-rm-msg" data-id="' + attr(item.id) + '" rows="4" aria-label="' + attr("Message to " + (item.client || "client")) + '">' + esc(messageFor(item, doc)) + '</textarea>' : '') +
       '</div>';
   }
 
@@ -3168,7 +3819,7 @@
     var meterCls = sent >= cap ? "bad" : (sent >= cap * 0.8 ? "warn" : "ok");
     var rows = list.length ? list.map(function (x) { return remindRow(x, doc); }).join("")
       : '<div class="x97-empty x97-brand-empty" style="padding:34px 16px">' + brandMark(40, "x97-brand-watermark") + '<strong>Nothing to chase 🎉</strong><p>No receivables are overdue or due within 7 days. This list fills up automatically as dates pass.</p></div>';
-    var toneSel = '<select class="x97-rm-tone x97-select" style="min-height:38px;width:auto">' +
+    var toneSel = '<select class="x97-rm-tone x97-select" aria-label="Message tone">' +
       option("auto", "Tone: Auto", remindState.tone) + option("friendly", "Tone: Friendly", remindState.tone) +
       option("followup", "Tone: Follow-up", remindState.tone) + option("firm", "Tone: Firm", remindState.tone) + '</select>';
     var modeSeg = '<div class="x97-rm-seg"><button data-rm="mode-onetap" class="' + (remindState.mode === "onetap" ? "on" : "") + '">One-tap</button><button data-rm="mode-auto" class="' + (remindState.mode === "auto" ? "on" : "") + '">Auto</button></div>';
@@ -3183,8 +3834,8 @@
     var autoHint = (remindState.mode === "auto" && !remindExt.ready)
       ? '<div class="x97-rm-hint">' + icon("shield", 14) + '<div>Auto mode needs the free <b>97 Sender</b> browser extension (Chrome/Edge). Install it, keep <b>web.whatsapp.com</b> open in a tab, and this turns on. Until then use <b>One-tap</b> — it works right now.</div></div>' : '';
     return '<div class="x97-remind-panel">' +
-      '<header class="x97-rm-header"><div class="x97-rm-htop"><div><button class="x97-rm-link" data-rm="hub" style="margin-bottom:4px">‹ Messaging</button><div class="x97-rm-title">' + brandMark(16) + icon("message", 18) + ' Chase overdue</div><div class="x97-rm-sub">' + list.length + ' to chase · ' + chaseSendable(doc).length + ' with a number</div></div><button class="x97-rm-close" data-rm="close">' + icon("close") + '</button></div>' +
-      '<div class="x97-rm-meter ' + meterCls + '"><div class="x97-rm-meter-bar" style="width:' + pct + '%"></div><span>Sent today ' + sent + ' / ' + cap + '</span><em class="' + (remindExt.ready ? "ok" : "") + '">' + (remindExt.ready ? "Sender connected" : "Sender off") + '</em></div></header>' +
+      '<div class="x97-rm-header"><div class="x97-rm-htop"><div><button class="x97-rm-link" data-rm="hub" style="margin-bottom:4px">‹ Messaging</button><div class="x97-rm-title">' + brandMark(16) + icon("message", 18) + ' Chase overdue</div><div class="x97-rm-sub">' + list.length + ' to chase · ' + chaseSendable(doc).length + ' with a number</div></div><button type="button" class="x97-rm-close" data-rm="close" aria-label="Close">' + icon("close") + '</button></div>' +
+      '<div class="x97-rm-meter ' + meterCls + '"><div class="x97-rm-meter-bar" style="width:' + pct + '%"></div><span>Sent today ' + sent + ' / ' + cap + '</span><em class="' + (remindExt.ready ? "ok" : "") + '">' + (remindExt.ready ? "Sender connected" : "Sender off") + '</em></div></div>' +
       '<div class="x97-rm-toolbar">' + toneSel + '<span class="x97-rm-spacer"></span>' + modeSeg + '<button class="x97-rm-tool" data-rm="numbers">' + icon("phone", 14) + ' Numbers</button><button class="x97-rm-tool" data-rm="templates">' + icon("edit", 14) + ' Templates</button><button class="x97-rm-tool" data-rm="safety">' + icon("shield", 14) + ' Safety</button></div>' +
       '<div class="x97-rm-selrow"><button class="x97-rm-link" data-rm="select-all">Select all</button><button class="x97-rm-link" data-rm="select-none">Clear</button><span class="x97-rm-selcount">' + Object.keys(remindState.selected).length + ' selected</span></div>' +
       autoHint + '<div class="x97-rm-list">' + rows + '</div>' +
@@ -3513,7 +4164,7 @@
 
   function openMessaging() {
     var el = document.getElementById("x97-msg");
-    if (!el) { el = document.createElement("div"); el.id = "x97-msg"; el.className = "x97-remind-overlay"; document.body.appendChild(el); wireMsgHub(el); }
+    if (!el) { el = document.createElement("div"); el.id = "x97-msg"; el.className = "x97-remind-overlay"; panelDialog(el, "Messaging"); document.body.appendChild(el); wireMsgHub(el); }
     document.body.classList.add("x97-remind-lock");
     refreshMsgHub();
   }
@@ -3538,14 +4189,14 @@
       return '<button class="x97-camp-hist" data-msg="report" data-id="' + attr(c.id) + '"><div style="flex:1;min-width:0"><div class="x97-rm-name">' + esc(c.name || "Untitled") + '</div><div class="x97-rm-sub">' + esc(audienceLabel(doc, c.audience)) + ' · ' + (st.sent || 0) + ' sent' + (st.failed ? ' · ' + st.failed + ' failed' : '') + '</div></div>' + icon("chevron") + '</button>';
     }).join("") : "";
     return '<div class="x97-remind-panel">' +
-      '<header class="x97-msg-header"><div class="x97-rm-htop"><div><div class="x97-rm-title">' + brandMark(20) + ' Messaging</div><div class="x97-rm-sub">WhatsApp reminders &amp; bulk campaigns, all in one place</div></div><button class="x97-rm-close" data-msg="close">' + icon("close") + '</button></div>' +
+      '<div class="x97-msg-header"><div class="x97-rm-htop"><div><div class="x97-rm-title">' + brandMark(20) + ' Messaging</div><div class="x97-rm-sub">WhatsApp reminders &amp; bulk campaigns, all in one place</div></div><button type="button" class="x97-rm-close" data-msg="close" aria-label="Close">' + icon("close") + '</button></div>' +
       '<div class="x97-msg-stats">' +
         '<div class="x97-msg-stat"><b class="' + (s.overdue ? "x97-red" : "") + '">' + s.overdue + '</b><span>To chase</span></div>' +
         '<div class="x97-msg-stat"><b>' + s.contacts + '</b><span>Contacts</span></div>' +
         '<div class="x97-msg-stat"><b>' + s.campaigns + '</b><span>Campaigns</span></div>' +
       '</div>' +
       '<div class="x97-rm-meter ' + meterCls + '" style="margin-top:2px"><div class="x97-rm-meter-bar" style="width:' + pct + '%"></div><span>Sent today ' + s.sentToday + ' / ' + s.cap + '</span><em class="' + (remindExt.ready ? "ok" : "") + '">' + (remindExt.ready ? "Sender connected" : "Sender off") + '</em></div>' +
-      '</header>' +
+      '</div>' +
       '<div class="x97-rm-list">' +
         '<div class="x97-camp-sec">Quick actions</div>' +
         '<div class="x97-msg-tiles">' +
@@ -3792,7 +4443,7 @@
   function openCampaigns(startCompose) {
     campaignState.open = true; campaignState.view = "home"; campaignState.progress = {}; campaignState.sending = false;
     var el = document.getElementById("x97-camp");
-    if (!el) { el = document.createElement("div"); el.id = "x97-camp"; el.className = "x97-remind-overlay"; document.body.appendChild(el); wireCamp(el); }
+    if (!el) { el = document.createElement("div"); el.id = "x97-camp"; el.className = "x97-remind-overlay"; panelDialog(el, "Campaigns"); document.body.appendChild(el); wireCamp(el); }
     document.body.classList.add("x97-remind-lock");
     refreshCamp();
     if (startCompose) onCampAction("new");
@@ -3810,7 +4461,7 @@
   function campOverlayHTML(doc) {
     var v = campaignState.view;
     var head = function (title, sub, back, backLabel) {
-      return '<header class="x97-rm-header"><div class="x97-rm-htop"><div>' + (back ? '<button class="x97-rm-link" data-camp="' + back + '" style="margin-bottom:4px">‹ ' + esc(backLabel || "Back") + '</button>' : '') + '<div class="x97-rm-title">' + brandMark(16) + ' ' + esc(title) + '</div><div class="x97-rm-sub">' + esc(sub) + '</div></div><button class="x97-rm-close" data-camp="close">' + icon("close") + '</button></div></header>';
+      return '<div class="x97-rm-header"><div class="x97-rm-htop"><div>' + (back ? '<button class="x97-rm-link" data-camp="' + back + '" style="margin-bottom:4px">‹ ' + esc(backLabel || "Back") + '</button>' : '') + '<div class="x97-rm-title">' + brandMark(16) + ' ' + esc(title) + '</div><div class="x97-rm-sub">' + esc(sub) + '</div></div><button type="button" class="x97-rm-close" data-camp="close" aria-label="Close">' + icon("close") + '</button></div></div>';
     };
     var inner;
     if (v === "import") inner = head("Import contacts", "Paste a CSV or choose a file", "home") + campImportHTML(doc);
@@ -4256,7 +4907,27 @@
   }
 
   document.addEventListener("submit", function (e) {
-    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="payment")submitPayment(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="balances")submitBalances(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);else if(type==="wa-numbers")submitNumbers(form);else if(type==="google-setup")submitGoogleSetup(form);
+    var form=e.target.closest("[data-x97-form]");if(!form)return;e.preventDefault();var type=form.dataset.x97Form;if(type==="upcoming")submitUpcoming(form);else if(type==="payment")submitPayment(form);else if(type==="account")submitAccount(form);else if(type==="facility")submitFacility(form);else if(type==="balances")submitBalances(form);else if(type==="borrow")submitBorrow(form);else if(type==="repay")submitRepay(form);else if(type==="reminder-templates")submitTemplates(form);else if(type==="wa-safety")submitSafety(form);else if(type==="wa-numbers")submitNumbers(form);else if(type==="google-setup")submitGoogleSetup(form);else if(type==="expense")submitExpense(form);else if(type==="budgets")submitBudgets(form);
+  });
+
+  // Settings: text fields save when they change (on leaving them), toggles at once.
+  document.addEventListener("change", function (e) {
+    var t = e.target;
+    if (!t || !t.getAttribute) return;
+    if (t.hasAttribute("data-setting")) { saveSetting(t); return; }
+    var toggle = t.getAttribute("data-x97-toggle");
+    if (toggle === "privacy") { setPrivacy(t.checked); return; }
+    if (toggle === "fx-manual") {
+      var on = t.checked;
+      updateDoc(function (doc) { doc.settings.fxManual = on; }, "fx-manual", on ? "Using your own rate" : "Daily rate back on");
+      if (!on) fxSyncDoc(fxLoad());
+      return;
+    }
+    if (t.id === "set-import-file") importBackupFile(t.files && t.files[0]);
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && e.target && e.target.hasAttribute && e.target.hasAttribute("data-tag-input")) { e.preventDefault(); addTag(e.target.getAttribute("data-tag-input")); }
+    if (e.key === "Escape" && !document.getElementById("x97-sheet") && !document.getElementById("s97-cloud-modal")) closeTopPanel();
   });
 
   document.addEventListener("input", function (e) {
@@ -4267,9 +4938,9 @@
   });
 
   document.addEventListener("click", function (e) {
-    var nav=e.target.closest && e.target.closest(".navitem");
-    if(nav){var text=(nav.textContent||"").trim().toLowerCase();var managed=/dashboard|home|follow|incoming|upcoming|receivable|credit|loan/.test(text);if(!managed&&needsReactRefresh){e.preventDefault();e.stopImmediatePropagation();try{sessionStorage.setItem(RESUME_KEY,text);sessionStorage.setItem(QUIET_KEY,"1");sessionStorage.removeItem(REFRESH_KEY);}catch(_){}location.reload();return;}setTimeout(syncMode,30);return;}
-    var navTarget=e.target.closest && e.target.closest("[data-x97-nav]");if(navTarget){var target=navTarget.dataset.x97Nav;var item=findNavItem(target);if(item)item.click();return;}
+    var tab=e.target.closest && e.target.closest(".tab[data-route]");
+    if(tab){focusAfterRoute=true;if(tab.getAttribute("href")===location.hash||(!location.hash&&tab.getAttribute("data-route")==="home")){e.preventDefault();window.scrollTo({top:0,behavior:"smooth"});}return;}
+    var navTarget=e.target.closest && e.target.closest("[data-x97-nav]");if(navTarget){navigate(navTarget.dataset.x97Nav);return;}
     var btn=e.target.closest && e.target.closest("[data-x97-action]");if(!btn)return;var action=btn.dataset.x97Action;
     if(action==="close-sheet"){closeSheet();return;}
     if(action==="open-messaging"){openMessaging();return;}
@@ -4282,27 +4953,50 @@
     if(action==="chase-one"){e.stopPropagation();var chaseDoc=readDoc(),chaseItem=chaseDoc&&(chaseDoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(!chaseItem||!hasWa(chaseItem,chaseDoc)){toast("Add a verified WhatsApp number first","error");return;}window.open("https://wa.me/"+waNumber(chaseItem.phone,chaseDoc)+"?text="+encodeURIComponent(messageFor(chaseItem,chaseDoc)),"_blank","noopener");markReminded(chaseItem.id,"onetap");return;}
     if(action==="pay-part"){var pf=document.getElementById("x97-pay-form");if(pf){var cap=num(pf.amount.max);pf.amount.value=Math.max(1,Math.round(cap*num(btn.dataset.value)/100));}return;}
     if(action==="undo-payment"){if(confirm("Undo this payment? The amount goes back to outstanding and any account credit is reversed.")){var pid=btn.dataset.id,fid="";updateDoc(function(doc){var p=(doc.payments||[]).find(function(x){return String(x.id)===String(pid);});if(p)fid=p.followupId;reversePayment(doc,pid);},"payment-undo");closeSheet();if(fid)openPaymentForm(fid);}return;}
-    if(action==="delete-upcoming"){var targetDoc=readDoc(),targetItem=targetDoc&&(targetDoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(targetItem&&dealHasRecordedMoney(targetItem)){toast("A deal with recorded money cannot be deleted","error");return;}if(confirm("Delete this upcoming payment?")){updateDoc(function(doc){doc.followups=doc.followups.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"upcoming-delete");closeSheet();}return;}
+    if(action==="delete-upcoming"){var targetDoc=readDoc(),targetItem=targetDoc&&(targetDoc.followups||[]).find(function(x){return String(x.id)===String(btn.dataset.id);});if(targetItem&&dealHasRecordedMoney(targetItem)){toast("A deal with recorded money cannot be deleted","error");return;}deleteRecord("followups",btn.dataset.id,"upcoming-delete");return;}
     if(action==="quick-date"){var value=btn.dataset.value==="month-end"?dateISO(endOfMonth(todayDate())):dateISO(addDays(todayDate(),num(btn.dataset.days))),changed=[];var input=document.querySelector("#x97-upcoming-form [name=expectedBy]"),start=document.querySelector("#x97-upcoming-form [name=startDate]"),first=document.querySelector("#x97-upcoming-form [name=firstDue]"),depositDue=document.querySelector("#x97-upcoming-form [name=depositDue]");if(input){input.value=value;changed.push(input);}if(start){start.value=value;changed.push(start);}if(first){first.value=value;changed.push(first);}if(depositDue){depositDue.value=value;changed.push(depositDue);}var second=document.querySelector("#x97-upcoming-form [name=secondDue]"),balanceDue=document.querySelector("#x97-upcoming-form [name=balanceDue]"),dealTypeInput=document.querySelector("#x97-upcoming-form [name=dealType]");if(second&&dealTypeInput&&(dealTypeInput.value==="split"||dealTypeInput.value==="deposit")&&!second.value){second.value=value;changed.push(second);}if(balanceDue&&dealTypeInput&&dealTypeInput.value==="deposit"&&!balanceDue.value){balanceDue.value=value;changed.push(balanceDue);}changed.forEach(function(el){try{el.dispatchEvent(new Event("input",{bubbles:true}));}catch(_){}});return;}
     if(action==="quick-filter"){state.upcoming.quick=btn.dataset.value;savePrefs();scheduleRender(0);return;}
     if(action==="month-filter"){state.upcoming.month=btn.dataset.month;savePrefs();scheduleRender(0);return;}
     if(action==="filter-retainer"){var wasOn=state.upcoming.retainers==="only";state.upcoming.retainers=wasOn?"all":"only";state.upcoming.categories=[];state.upcoming.quick=wasOn?"open":"all";savePrefs();scheduleRender(0);return;}
-    if(action==="open-month"){state.upcoming.month=btn.dataset.month;state.upcoming.quick="open";savePrefs();var item=findNavItem("upcoming");if(item&&!item.classList.contains("on"))item.click();else scheduleRender(0);return;}
+    if(action==="open-month"){state.upcoming.month=btn.dataset.month;state.upcoming.quick="open";savePrefs();navigate("upcoming");return;}
     if(action==="clear-filter"){var k=btn.dataset.filter;if(k==="month")state.upcoming.month="all";else if(k==="statuses")state.upcoming.statuses=[];else if(k==="currencies")state.upcoming.currencies=[];else if(k==="categories")state.upcoming.categories=[];else if(k==="retainers")state.upcoming.retainers="all";else if(k==="dates"){state.upcoming.from="";state.upcoming.to="";}else if(k==="amount"){state.upcoming.minAmount="";state.upcoming.maxAmount="";}else if(k==="sort")state.upcoming.sort="urgency";savePrefs();scheduleRender(0);return;}
     if(action==="clear-all-filters"){state.upcoming.retainers="all";state.upcoming.statuses=[];state.upcoming.currencies=[];state.upcoming.categories=[];state.upcoming.from="";state.upcoming.to="";state.upcoming.minAmount="";state.upcoming.maxAmount="";state.upcoming.sort="urgency";state.upcoming.month="all";state.upcoming.quick="all";savePrefs();scheduleRender(0);return;}
-    if(action==="go-upcoming"||action==="go-upcoming-months"){var up=findNavItem("upcoming");if(up)up.click();return;}
-    if(action==="record-payment"){var current=readDoc(), summary=current&&analytics(current), target=summary&&(summary.overdue[0]||summary.next7[0]);if(target)openPaymentForm(target.itemId);else {var firstOpen=current&&(current.followups||[]).find(isOpenFollowup);if(firstOpen)openPaymentForm(firstOpen.id);else toast("Add an incoming deal first","error");}return;}
-    if(action==="go-expenses"){var expenses=findNavItem("expenses");if(expenses)expenses.click();return;}
-    if(action==="go-credit"){var cr=findNavItem("credit");if(cr)cr.click();return;}
+    if(action==="go-upcoming"||action==="go-upcoming-months"){navigate("upcoming");return;}
+    if(action==="record-payment"){openPaymentPicker();return;}
+    if(action==="go"){if(btn.dataset.quick){state.upcoming.quick=btn.dataset.quick;state.upcoming.month="all";savePrefs();}if(btn.dataset.view)state.creditView=btn.dataset.view;navigate(btn.dataset.screen);return;}
+    if(action==="open-forecast"){openForecast(30);return;}
+    if(action==="add-expense"){openExpenseForm();return;}
+    if(action==="edit-expense"){openExpenseForm(btn.dataset.id);return;}
+    if(action==="delete-expense"){deleteExpense(btn.dataset.id);return;}
+    if(action==="expense-paid"){markExpensePaid(btn.dataset.id);return;}
+    if(action==="expense-month"){var em=btn.dataset.value;state.expenses.month=em==="now"?monthKey(todayDate()):shiftMonth(state.expenses.month,num(em));scheduleRender(0);return;}
+    if(action==="expense-filter"){state.expenses.filter=btn.dataset.value;scheduleRender(0);return;}
+    if(action==="edit-budgets"){openBudgetForm();return;}
+    if(action==="tag-add"){addTag(btn.dataset.list);return;}
+    if(action==="tag-remove"){removeTag(btn.dataset.list,btn.dataset.value);return;}
+    if(action==="open-templates"){openTemplateManager();return;}
+    if(action==="open-safety"){openSafetySettings();return;}
+    if(action==="open-numbers"){openNumbersManager();return;}
+    if(action==="open-google-setup"){openGoogleSetup();return;}
+    if(action==="open-sync"){var chip=document.getElementById("s97-cloud-status")||document.querySelector(".s97-cloud-fab");if(chip)chip.click();else toast("Sync isn't running on this page","error");return;}
+    if(action==="export-backup"){exportBackup();return;}
+    if(action==="import-backup"){var fi=document.getElementById("set-import-file");if(fi){fi.value="";fi.click();}return;}
+    if(action==="use-restore-point"){useRestorePoint();return;}
+    if(action==="erase-data"){openEraseSheet();return;}
+    if(action==="forecast-days"){openForecast(btn.dataset.value);return;}
+    if(action==="go-expenses"){navigate("expenses");return;}
+    if(action==="go-credit"){navigate("credit");return;}
+    if(action==="toggle-theme"){setTheme(effectiveTheme(loadTheme())==="dark"?"light":"dark");return;}
+    if(action==="toggle-privacy"){setPrivacy(!privacyOn());return;}
     if(action==="edit-balances"){openBalancesEditor();return;}
     if(action==="add-account"){openAccountForm();return;}
     if(action==="edit-account"){openAccountForm(btn.dataset.id);return;}
-    if(action==="delete-account"){if(confirm("Delete this account?")){updateDoc(function(doc){doc.balances=doc.balances.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"account-delete");closeSheet();}return;}
+    if(action==="delete-account"){deleteRecord("balances",btn.dataset.id,"account-delete");return;}
     if(action==="credit-view"){state.creditView=btn.dataset.value;scheduleRender(0);return;}
     if(action==="toggle-unavailable"){unavailableOpen=!unavailableOpen;scheduleRender(0);return;}
     if(action==="add-facility"){openFacilityForm();return;}
     if(action==="edit-facility"){openFacilityForm(btn.dataset.id);return;}
-    if(action==="delete-facility"){var doc=readDoc(),has=loansOf(doc).some(function(l){return isActiveLoan(l)&&String(l.facilityId)===String(btn.dataset.id);});if(has){toast("Repay or cancel the active borrowing first","error");return;}if(confirm("Delete this credit facility?")){updateDoc(function(next){next.credit=next.credit.filter(function(x){return String(x.id)!==String(btn.dataset.id);});},"facility-delete");closeSheet();}return;}
+    if(action==="delete-facility"){var doc=readDoc(),has=loansOf(doc).some(function(l){return isActiveLoan(l)&&String(l.facilityId)===String(btn.dataset.id);});if(has){toast("Repay or cancel the active borrowing first","error");return;}deleteRecord("credit",btn.dataset.id,"facility-delete");return;}
     if(action==="borrow"){openBorrowForm(btn.dataset.id);return;}
     if(action==="borrow-percent"){var form=document.getElementById("x97-borrow-form");if(form){var max=num(form.amount.max);form.amount.value=Math.floor(max*num(btn.dataset.value)/100);form.amount.dispatchEvent(new Event("input",{bubbles:true}));}return;}
     if(action==="repay"){openRepayForm(btn.dataset.id);return;}
@@ -4329,23 +5023,8 @@
     if(action==="incoming-collapse"){e.stopPropagation();icToggleCollapse(btn.dataset.id);return;}
   }, true);
 
-  function resumeDone(){try{window.dispatchEvent(new CustomEvent("s97:resume-done"));}catch(_){}}
-
-  function resumeOriginalTab() {
-    var target="";try{target=sessionStorage.getItem(RESUME_KEY)||"";sessionStorage.removeItem(RESUME_KEY);sessionStorage.removeItem(REFRESH_KEY);}catch(_){}
-    needsReactRefresh=false;
-    if(!target){resumeDone();return;}
-    var tries=0,timer=setInterval(function(){
-      tries++;
-      var item=findNavItem(target);
-      if(item){clearInterval(timer);item.click();setTimeout(resumeDone,90);}
-      else if(tries>30){clearInterval(timer);resumeDone();}
-    },100);
-  }
-
   // Store the credit migration (see migrateFacilityLoans) once, on the stored
   // document as-is, so the cloud copy and every device converge on one shape.
-  // Runs after resumeOriginalTab, which resets the refresh flag set here.
   function persistCreditMigration() {
     var raw = "", doc;
     try { raw = localStorage.getItem(DATA_KEY) || ""; } catch (_) {}
@@ -4356,40 +5035,55 @@
     var value = JSON.stringify(doc);
     try { localStorage.setItem(DATA_KEY, value); } catch (_) { return; }
     lastRaw = value;
-    // The legacy screens loaded the old shape; reload before they are used again.
-    needsReactRefresh = true;
-    try { sessionStorage.setItem(REFRESH_KEY, "1"); } catch (_) {}
   }
 
+  // Redraw when the stored document changes underneath the screen: the cloud
+  // (sync.js announces "s97:data") or another tab of the app ("storage").
   function watchData() {
-    setInterval(function () {
-      updateCloudPill();
-      if (!currentScreen) return;
-      var raw="";try{raw=localStorage.getItem(DATA_KEY)||"";}catch(_){}
-      if(raw&&raw!==lastRaw){lastRaw=raw;scheduleRender(50);}
-    },1000);
+    function changed() {
+      var raw = "";
+      try { raw = localStorage.getItem(DATA_KEY) || ""; } catch (_) {}
+      if (raw === lastRaw) return;
+      lastRaw = raw;
+      persistCreditMigration();
+      scheduleRender(30);
+      if (remindState.open) refreshRemind();
+      if (campaignState.open) refreshCamp();
+    }
+    window.addEventListener("s97:data", changed);
+    window.addEventListener("storage", function (e) { if (!e.key || e.key === DATA_KEY) changed(); });
+    window.addEventListener("storage", function (e) {
+      if (e.key === THEME_KEY) applyTheme(loadTheme());
+      if (e.key === PRIVACY_KEY) applyPrivacy();
+    });
   }
 
   function boot() {
     try { localStorage.removeItem("ns97-ai-cfg-v1"); } catch (_) {}
+    ["ns97.v2.react-refresh", "ns97.v2.resume-tab", "ns97.v2.quiet-boot"].forEach(function (k) { try { sessionStorage.removeItem(k); } catch (_) {} });
+    root = document.getElementById("main");
+    if (window.matchMedia) {
+      systemDark = window.matchMedia("(prefers-color-scheme: dark)");
+      var follow = function () { if (loadTheme() === "system") { applyTheme("system"); scheduleRender(0); } };
+      if (systemDark.addEventListener) systemDark.addEventListener("change", follow); else if (systemDark.addListener) systemDark.addListener(follow);
+    }
     applyTheme(loadTheme());
-    loadPrefs();resumeOriginalTab();initRemindBridge();fxWatch();persistCreditMigration();
-    var tries=0,timer=setInterval(function(){tries++;if(document.querySelector(".navitem")&&document.querySelector(".wrap")){clearInterval(timer);syncMode();}else if(tries>80)clearInterval(timer);},100);
-    var observer=new MutationObserver(function(mutations){
-      var relevant=mutations.some(function(m){
-        var target=m.target;
-        if(target&&target.closest&&(target.closest("#x97-v2-root")||target.closest("#x97-sheet")||target.closest(".x97-toast-wrap")))return false;
-        if(m.type==="attributes"&&m.attributeName==="class"&&target&&target.classList&&target.classList.contains("navitem"))return true;
-        if(m.type==="childList"&&modeActive&&wrap&&(target===wrap||wrap.contains(target)))return true;
-        if(m.type==="childList"&&!document.querySelector(".navitem"))return true;
-        return false;
-      });
-      if(relevant)setTimeout(syncMode,20);
-    });
-    observer.observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:["class"]});
+    applyPrivacy();
+    loadPrefs(); initRemindBridge(); fxWatch(); persistCreditMigration();
     watchData();
-    window.addEventListener("pageshow",syncMode);window.addEventListener("focus",function(){setTimeout(syncMode,30);});
-    window.__x97v2={version:VERSION,render:scheduleRender,read:readDoc,analytics:function(){var d=readDoc();return d?analytics(d):null;},fx:{rates:fxLoad,refresh:function(){fxRefresh(true);},convert:fxConvert},money:{gross:grossOf,paid:paidOf,outstanding:outstandingOf,earned:earnedIn,series:earningsSeries,csv:function(kind){return csvFor(readDoc(),kind).csv;},doc:function(id,kind){var d=readDoc();var i=(d.followups||[]).find(function(x){return String(x.id)===String(id);});return i?documentText(i,d,kind):"";}},selfTest:function(){var d=readDoc(),fx=fxLoad();return {version:VERSION,dataReady:!!d,followups:d?d.followups.length:0,payments:d?d.payments.length:0,facilities:d?d.credit.length:0,loans:d?loansOf(d).length:0,screen:currentScreen,fx:fx?{source:fx.source,day:fx.day,ugx:fx.rates.UGX,currencies:Object.keys(fx.rates).length,stale:fxStale(fx)}:null};}};
+    window.addEventListener("hashchange", function () { focusAfterRoute = true; onRoute(); });
+    // A redraw that waited for a field to lose focus happens as soon as it does.
+    document.addEventListener("focusout", function () { if (renderDeferred) setTimeout(function () { if (renderDeferred && !typingInScreen()) render(); }, 0); });
+    // Sync status changes (sync.js announces each one): the first cloud load can
+    // turn "loading" into an empty workspace, and Settings shows the status.
+    var lastReady = null;
+    window.addEventListener("s97:cloud", function () {
+      var c = cloudState(), ready = !!(c && c.ready);
+      if (ready !== lastReady) { lastReady = ready; if (!readDoc()) scheduleRender(0); }
+      if (currentScreen === "settings") scheduleRender(60);
+    });
+    onRoute();
+    window.__x97v2={version:VERSION,render:scheduleRender,navigate:navigate,read:readDoc,analytics:function(){var d=readDoc();return d?analytics(d):null;},forecast:function(days){var d=readDoc();return d?cashForecast(d,days||30):null;},fx:{rates:fxLoad,refresh:function(){fxRefresh(true);},convert:fxConvert},money:{gross:grossOf,paid:paidOf,outstanding:outstandingOf,earned:earnedIn,series:earningsSeries,csv:function(kind){return csvFor(readDoc(),kind).csv;},doc:function(id,kind){var d=readDoc();var i=(d.followups||[]).find(function(x){return String(x.id)===String(id);});return i?documentText(i,d,kind):"";}},selfTest:function(){var d=readDoc(),fx=fxLoad();return {version:VERSION,dataReady:!!d,followups:d?d.followups.length:0,payments:d?d.payments.length:0,facilities:d?d.credit.length:0,loans:d?loansOf(d).length:0,screen:currentScreen,fx:fx?{source:fx.source,day:fx.day,ugx:fx.rates.UGX,currencies:Object.keys(fx.rates).length,stale:fxStale(fx)}:null};}};
   }
 
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",boot);else boot();

@@ -1,44 +1,39 @@
-# 97 LIVE V2 — Finance Command Centre
+# 97 LIVE — Finance
 
-A private, single-page finance command center for **THE 97 World / NS Creative**.
-Tracks client receivables, mobile-money credit lines, cash balances and monthly
-budgets with a focused **financial signals** engine. It runs entirely in the
-browser: no application server, no database migration, and no bundled AI service.
+A private finance app for **THE 97 World / NS Creative**: money owed to you,
+money you've spent or plan to spend, mobile-money credit, and the cash in your
+accounts — on your phone and computer at once. It runs entirely in the browser
+from a static host; a Supabase table keeps one cloud copy in step across devices.
 
-## Experience V2 — premium finance command
+## Version 3
 
-The current interface keeps the original React app and `ns97-finance-v1` data
-contract, then adds a mobile-safe finance-intelligence layer on top:
+Version 3 is a rebuild of the whole interface on one codebase and one design
+system. What changed for you:
 
-- self-hosted **IBM Plex Mono** financial figures with tabular, lining numerals
-  and **Geist Sans** for interface copy, giving totals a precise banking rhythm
-- a premium neutral-charcoal visual system with emerald, cyan and coral reserved
-  for meaning, plus adaptive light/dark surfaces and accessible contrast
-- richer page, card, number, progress, sheet, button and status motion using
-  compositor-friendly effects, with full reduced-motion support
-- touch-first finance pulse, account and incoming-month sliders with scroll snap
-  and accessible position controls on phones
-- phone-first responsive layouts: 16px editable controls, 46–48px targets,
-  readable long currency amounts and stacked dense grids on narrow phones
-- safe-area and dynamic-viewport sheet sizing, keyboard-aware focused fields,
-  protected sheet scrolling, and shared bottom-navigation spacing
-- pinch zoom is available again; horizontal overflow is fixed at its source
-  instead of being hidden
-- campaign CSV paste no longer rebuilds the panel and loses focus per character
-- cache versions move together so an updated phone cannot load a mixed interface
-- a simplified **Incoming** cockpit with Open, Needs action, Due in 7 days, Paid
-  and Everything views
-- compact deal cards with direct **Record payment**, **WhatsApp** and **Details**
-  actions
-- corrected outstanding, overdue, due-soon and monthly-collected calculations,
-  including reversed-payment exclusion and separate UGX/USD totals
-- a safe-area navigation system that reserves the full menu and floating-action
-  footprint so the last Incoming card remains completely usable on iPhone
-- a logo-led opening sequence with “What’s on your mind today?”, coordinated
-  page reveals, navigation response and reduced-motion fallbacks
-- custom schedule rows as the source of truth for deal total, recalculated live
-  whenever any payment amount changes
-- Equity promoted to the first account position without rewriting saved data
+- **Home answers four questions** — what you have (cash on hand, what you're
+  owed, what you owe, what you can borrow), what's coming (a **cash forecast**
+  for the next 30, 60 or 90 days with its lowest point), what needs you (one
+  prioritised list: overdue payments, loans due, budgets over, a cash shortfall,
+  deals without a date), and how the month is going (collected, spent, kept).
+- **Expenses and Settings are new**, built like the rest of the app instead of
+  borrowed from the old one. Browse any month without changing anything, see
+  spent and still-planned on one bar per budget, mark a planned bill **paid** in
+  one tap, and log an expense straight from Home.
+- **Sync status lives in the header** ("Saved", "Saving…", "Offline · queued"),
+  not in a floating button covering the screen. Changes from your other devices
+  appear in place — the app no longer reloads itself.
+- **Addresses for every screen** (`#/incoming`, `#/credit` …), so Back, refresh
+  and home-screen shortcuts land where you expect.
+- **Safer data**: restoring a backup checks the file and shows what's in it
+  first, and keeps your current data as a restore point; *Erase all data* is
+  typed, not tapped, and downloads a backup first; deletes offer **Undo**.
+- **Readable everywhere**: every screen and sheet passes an automated
+  accessibility check (colour contrast, labels, names, landmarks) in light and
+  dark, money never wraps or gets cut off, and every control is big enough to tap.
+- **Lighter**: about 500 KB to start instead of 875 KB — the old app bundle, two
+  helper scripts, 165 KB of the stylesheet and seven font files are gone.
+- Light, dark or **match the device**, and **Hide amounts** for working in
+  public — both one tap in the header.
 
 ### Incoming schedules
 
@@ -46,7 +41,7 @@ Incoming work stays as one deal with a visible payment schedule. Choose **One
 payment**, **Deposit + balance**, **Equal split**, **Custom schedule**, **Monthly
 retainer**, or **Per part**. A custom schedule lets you enter unequal amounts —
 for example UGX 2,000,000 as a UGX 700,000 deposit followed by a UGX 1,300,000
-balance. Payments are recorded against the schedule, so the dashboard separates
+balance. Payments are recorded against the schedule, so Home separates
 cash actually received from money still promised.
 
 ---
@@ -85,7 +80,14 @@ node --test tests/*.test.cjs
 ```
 `tests/sync.test.cjs` runs the real sync engine through stalled requests,
 conflicting edits from two devices, offline edits and realtime drops on a
-simulated clock.
+simulated clock. `tests/money.test.cjs` covers budgets, the cash forecast and
+runway; `tests/data.test.cjs` checks that old documents keep every field, that
+backups are validated before a restore, and that deletes can be undone.
+
+`tests/browser/audit.cjs` opens every screen, sheet and panel at phone, tablet
+and desktop widths in both themes and fails on accessibility violations
+(axe-core), sideways scrolling, cut-off figures and small tap targets — see
+`tests/browser/README.md`.
 
 ---
 
@@ -96,25 +98,48 @@ device). Cloud sync and live rates need a connection; the finance workspace does
 
 ---
 
-## 3. Financial signals
-The dashboard's **Financial signals** are computed locally from due dates,
-outstanding amounts, balances, budgets and credit. They require no API key and
-do not transmit a finance snapshot to an assistant service. V2 removes the
-Copilot tab, its Settings panel and its active network path.
+## 3. Home and the cash forecast
+Everything on Home is worked out on the device from your own records — nothing
+is sent anywhere.
+
+- **Cash on hand** adds up your accounts; tap **Update** to change several
+  balances and credit limits at once. Beside it: what clients owe you (dollars
+  at today's rate), what you owe on loans today, and what you could still
+  borrow — shown, but never counted as cash.
+- **In 30 days** projects your cash: today's balances, plus payments due in
+  that window, minus planned expenses still to pay and loan repayments with
+  their fees on the due date. Overdue money isn't assumed to arrive. Tap it for
+  60 and 90 days and every movement with the balance after it; if the balance
+  would drop below zero, *Needs attention* says when.
+- **Needs attention** is one list, most urgent first; each line opens the exact
+  filtered view that deals with it.
+
+## 4. Your data & backups
+- Everything saves to this device as you go, and to your cloud copy whenever
+  you're online. The header shows which.
+- **Settings → Your data**: *Download a backup* (one JSON file), *Export
+  spreadsheets* (CSV), and *Restore from a backup*, which checks the file, tells
+  you what's in it and what it replaces, and keeps your current data as a
+  restore point (*Undo the last replace*).
+- **Erase all data** asks you to type ERASE, downloads a backup first, keeps a
+  restore point, and keeps your settings and lists.
+- Deleting a deal, account, credit offer, expense or list item shows **Undo**
+  for a few seconds.
 
 ---
 
-## 4. Your data & backups
-- Everything you enter saves automatically to this browser on this device
-  (per hosted address).
-- **Settings → Backup & data** lets you **Export** a JSON backup and **Import**
-  it on another device or browser.
-- **Reset to sheet data** restores the original figures from your dashboard sheet.
+## 4a. Expenses and budgets
+Each month has a Personal and a Business budget. An entry is either **spent**
+(actual) or **planned**; both count against the budget, and logging a payment
+under the same name as a planned item draws that plan down instead of counting
+it twice. *Safe to spend* = budget − spent − still planned. The ✓ on a planned
+entry marks it paid in one tap. Browsing months is only a view — it never
+changes your data or your other devices.
 
 ---
 
 ## 5. Messaging (WhatsApp reminders & bulk campaigns)
-One **Messaging** card on the dashboard opens a single hub for everything
+One **Reminders** card on Home opens a single hub for everything
 WhatsApp — chasing overdue clients and sending bulk campaigns share the same
 engine, contacts and safety rails, so they live in one place:
 
@@ -237,16 +262,10 @@ and pull in your contacts — re-run it later to sync new ones.
 > number always carries some risk — the safety rails and human pacing are there
 > to keep it looking natural, but keep volumes sensible.
 
-### Polish
-The Messaging screens carry the **97 mark** in their headers, empty states, and
-message previews, animate in the same style as the rest of the app (with full
-`prefers-reduced-motion` support), and have been checked at narrow phone widths
-— dropdown menus dock safely on small screens instead of clipping off-edge.
-
 ---
 
 ## 6. Live currency converter
-The dashboard carries a **Currency** card showing what 1 USD buys in shillings
+Home carries a **Dollar rate** card showing what 1 USD buys in shillings
 right now, plus EUR, GBP, KES and TZS at a glance. Tap it for the full
 **converter**: type an amount, pick any two of ~160 currencies, swap with one
 tap, and see the result update as you type — along with the rate both ways.
@@ -269,11 +288,11 @@ still wakes up on the new day's rate. Nothing to press.
   and how old they are, and the Home total notes the rate its USD part used.
   It keeps retrying on its own and clears as soon as a refresh succeeds.
 - **Your USD rate stays in step.** The daily rate updates the **USD rate** in
-  Settings, so the dashboard's *This month USD* tile shows its shilling value
-  and every finance calculation uses today's number instead of a stale one.
-- **Prefer your own rate?** Tick **Keep my own USD rate** in the converter and
-  auto-update pauses — the figure you typed in Settings is left alone. The
-  converter still shows live rates.
+  Settings, so Home and every total that includes dollars use today's number
+  instead of a stale one.
+- **Prefer your own rate?** Turn on **Settings → Money → Set the dollar rate
+  myself** (or tick it in the converter) and daily updates pause; your rate is
+  used everywhere. The converter still shows live rates.
 
 A bad or empty response from the rate service is discarded rather than saved,
 so a provider having a bad day can never overwrite a good rate with a broken one.
@@ -286,7 +305,7 @@ flipping a label. Tap **Paid** (or **Record payment**) on any upcoming item and
 you get: how much came in, the date, and which account it landed in.
 
 - **Part payments are real.** Enter less than the full amount and the rest
-  stays outstanding — the dashboard, the overdue count and the WhatsApp chase
+  stays outstanding — Home, the overdue count and the WhatsApp chase
   message all quote **what's still owed**, not the original invoice. The card
   shows a progress bar: *UGX 4,000,000 in — of UGX 10,000,000*.
 - **Money lands somewhere.** Pick an account and its balance goes up by the
@@ -294,9 +313,9 @@ you get: how much came in, the date, and which account it landed in.
   (see the converter above), so shilling balances stay honest.
 - **Nothing is one-way.** Every payment is listed on the item with an **Undo**
   that reverses both the ledger entry and the account credit.
-- **Earnings history.** The dashboard carries an **Earnings** card — received
-  this month, spent, kept, and a six-month bar chart of in vs out. **History**
-  opens the full month-by-month table and every payment received.
+- **Earnings history.** Home's month card shows collected, spent and kept, with
+  a six-month chart of in vs out. **History** opens the full month-by-month
+  table and every payment received.
 
 The invoice total lives on the record too, so editing an item edits what the
 job was worth and the outstanding figure follows from it.
@@ -337,7 +356,7 @@ For a three-part deal, entering **$1,000 per part** therefore creates a
 **$3,000** deal with three **$1,000** scheduled payments.
 
 ## 9. Exports & documents
-**Earnings → Export** writes spreadsheet files your accountant can open
+**Settings → Export spreadsheets** (or **Earnings → Export**) writes spreadsheet files your accountant can open
 directly — no formatting to unpick:
 
 - **Receivables** — invoice total, received, outstanding, status, dates.
