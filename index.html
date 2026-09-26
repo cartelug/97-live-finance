@@ -15,25 +15,43 @@
 <link rel="icon" href="./icons/favicon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
 <link rel="preload" as="font" type="font/woff2" href="./fonts/geist-sans.woff2" crossorigin />
-<link rel="stylesheet" href="./app.css?v=9" />
+<link rel="preload" as="font" type="font/woff2" href="./fonts/fraunces-600.woff2" crossorigin />
+<link rel="stylesheet" href="./app.css?v=10" />
 <link rel="preload" as="script" href="./vendor/supabase-js-2.117.0.js" />
 <link rel="preconnect" href="https://rytbeijznlqofstfrmwf.supabase.co" crossorigin />
 <script>
-/* Theme and privacy before first paint, so nothing flashes. The app owns both
-   afterwards (see applyTheme and setPrivacy in app.js). */
+/* Theme and privacy before first paint, so nothing flashes, and whether this
+   launch opens with the intro: once per session, never with reduced motion.
+   The app owns all three afterwards (applyTheme, setPrivacy, finishIntro). */
 (function () {
-  var d = document.documentElement, t = "", p = "";
+  var d = document.documentElement, t = "", p = "", seen = "";
   try { t = localStorage.getItem("ns97.v2.theme") || ""; p = localStorage.getItem("ns97.v2.privacy") || ""; } catch (_) {}
-  var dark = t === "dark" || (t === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+  var mm = window.matchMedia ? function (q) { return matchMedia(q).matches; } : function () { return false; };
+  var dark = t === "dark" || (t === "system" && mm("(prefers-color-scheme: dark)"));
   d.setAttribute("data-theme", dark ? "dark" : "light");
   if (p === "on") d.setAttribute("data-privacy", "on");
   var m = document.querySelector('meta[name="theme-color"]');
-  if (m && dark) m.setAttribute("content", "#0A1211");
+  if (m && dark) m.setAttribute("content", "#070D0B");
+  try { seen = sessionStorage.getItem("ns97.v3.intro") || ""; sessionStorage.setItem("ns97.v3.intro", "1"); } catch (_) {}
+  d.setAttribute("data-intro", !seen && !mm("(prefers-reduced-motion: reduce)") ? "on" : "off");
 })();
 </script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
+<div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
+<div class="scroll-progress" aria-hidden="true"></div>
+<div class="intro" id="intro" aria-hidden="true">
+  <div class="intro-aura"><i></i><i></i><i></i></div>
+  <div class="intro-core">
+    <span class="intro-ring"></span>
+    <span class="brand-mark intro-mark"><img src="./icons/mark-97.png" width="44" height="38" alt="" /></span>
+    <span class="intro-word"><span>L</span><span>I</span><span>V</span><span>E</span></span>
+    <span class="intro-greet" id="intro-greet">Your money, live.</span>
+    <span class="intro-line"><i></i></span>
+  </div>
+</div>
+<script>(function(){var h=new Date().getHours(),g=document.getElementById("intro-greet");if(g)g.textContent=h<12?"Good morning":h<17?"Good afternoon":"Good evening";})();</script>
 <div class="app" id="app">
   <header class="side">
     <div class="appbar">
@@ -43,6 +61,7 @@
       </a>
     </div>
     <nav class="tabs" aria-label="Main">
+      <span class="tab-glider" aria-hidden="true"></span>
       <a class="tab" href="#/home" data-route="home"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3.5 10.5 12 4l8.5 6.5V20a1 1 0 0 1-1 1H15v-6h-6v6H4.5a1 1 0 0 1-1-1Z"/></svg><span>Home</span></a>
       <a class="tab" href="#/incoming" data-route="incoming"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v11m0 0-4.5-4.5M12 14l4.5-4.5"/><path d="M4 14v4.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V14"/></svg><span>Incoming</span></a>
       <a class="tab" href="#/credit" data-route="credit"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="5.5" width="18" height="13" rx="2.5"/><path d="M3 10h18M7 14.5h3"/></svg><span>Credit</span></a>
@@ -63,6 +82,6 @@
 <div class="toasts" id="toasts" role="status" aria-live="polite" aria-atomic="true"></div>
 <script>if("serviceWorker" in navigator){var __hadCtrl=!!navigator.serviceWorker.controller,__reloading=false;navigator.serviceWorker.addEventListener("controllerchange",function(){if(__reloading||!__hadCtrl)return;__reloading=true;window.location.reload()});window.addEventListener("load",function(){navigator.serviceWorker.register("./sw.js").then(function(reg){reg.update();setInterval(function(){reg.update()},3600000);window.addEventListener("focus",function(){reg.update()})}).catch(function(){})});}</script>
 <script defer src="./sync.js?v=32"></script>
-<script defer src="./app.js?v=1"></script>
+<script defer src="./app.js?v=2"></script>
 </body>
 </html>

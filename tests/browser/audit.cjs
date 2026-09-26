@@ -50,7 +50,8 @@ function inPage([phone, scope]) {
     const room = document.documentElement.scrollHeight - last;
     if (room < tabs.getBoundingClientRect().height) out.covered.push('tab bar leaves only ' + Math.round(room) + 'px below the last line');
   }
-  const floating = [...document.querySelectorAll('body *')].filter((el) => shown(el) && getComputedStyle(el).position === 'fixed' && !el.matches('.side,.tabs,.x97-back,.x97-remind-overlay,.s97-cloud-back,.s97-cloud-gate,.toasts'));
+  // Fixed layers painted behind the page (the ambient light) cover nothing.
+  const floating = [...document.querySelectorAll('body *')].filter((el) => shown(el) && getComputedStyle(el).position === 'fixed' && !(parseInt(getComputedStyle(el).zIndex, 10) < 0) && !el.matches('.side,.tabs,.x97-back,.x97-remind-overlay,.s97-cloud-back,.s97-cloud-gate,.toasts'));
   if (scope.startsWith('#main')) for (const f of floating) {
     const fr = f.getBoundingClientRect();
     for (const el of document.querySelectorAll('#main *')) {

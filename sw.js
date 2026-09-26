@@ -3,16 +3,17 @@
    stale-while-revalidate for static assets; cache is the offline fallback only.
    Cross-origin requests (Supabase's API and live rates) are never intercepted;
    the Supabase client library itself ships in vendor/ and is precached. */
-const CACHE = "ns97-live-v31-app3";
+const CACHE = "ns97-live-v32-motion";
 const ASSETS = [
   "./",
   "./index.html",
-  "./app.js?v=1",
-  "./app.css?v=9",
+  "./app.js?v=2",
+  "./app.css?v=10",
   "./sync.js?v=32",
   "./vendor/supabase-js-2.117.0.js",
   "./fonts/geist-sans.woff2",
   "./fonts/geist-mono.woff2",
+  "./fonts/fraunces-600.woff2",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

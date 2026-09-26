@@ -1061,7 +1061,7 @@
       var last = i === series.length - 1;
       var earnedH = Math.max(r.earned > 0 ? 3 : 0, Math.round(r.earned / peak * 100));
       var spentH = Math.max(r.spent > 0 ? 3 : 0, Math.round(r.spent / peak * 100));
-      return '<div class="x97-earn-col' + (last ? " now" : "") + '">' +
+      return '<div class="x97-earn-col' + (last ? " now" : "") + '" style="--i:' + i + '">' +
         '<div class="x97-earn-bars">' +
           '<i class="in" style="height:' + earnedH + '%" title="' + attr(r.label + " earned " + money(r.earned, FX_HOME)) + '"></i>' +
           '<i class="out" style="height:' + spentH + '%" title="' + attr(r.label + " spent " + money(r.spent, FX_HOME)) + '"></i>' +
@@ -1270,7 +1270,7 @@
     var rate = manual ? saved : store ? fxRate(FX_HOME, store) : saved;
     var headline = rate ? fxAmount(rate, FX_HOME) : "—";
     var note = manual ? "Your own rate — daily updates are paused" : !store && saved ? "Saved rate — live rates load when you're online" : fxStaleText(store);
-    return '<section class="card panel">' + sectionHead("Dollar rate", "Converter", "open-converter") +
+    return '<section class="card panel">' + sectionHead("Dollar rate", "Converter", "open-converter", "refresh", "info") +
       '<button type="button" class="x97-fx-card" data-x97-action="open-converter">' +
         '<div class="x97-fx-top">' +
           '<div><div class="x97-fx-label">1 USD buys</div>' +
@@ -1478,8 +1478,10 @@
       holder.setAttribute("aria-live", "polite");
       document.body.appendChild(holder);
     }
-    holder.innerHTML = '<div class="toast ' + esc(kind || "") + '"><span>' + esc(message) + '</span>' +
+    var glyph = kind === "error" ? '<path d="M12 8v5M12 16.5h.01"></path>' : '<path d="m5 12.5 4.5 4.5L19 7"></path>';
+    holder.innerHTML = '<div class="toast ' + esc(kind || "") + '"><span class="toast-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">' + glyph + '</svg></span><span>' + esc(message) + '</span>' +
       (action ? '<button type="button" class="toast-action">' + esc(action.label) + '</button>' : '') + '</div>';
+    if (kind === "success") haptic(10);
     if (action) holder.querySelector(".toast-action").addEventListener("click", function () {
       holder.innerHTML = "";
       clearTimeout(holder._timer);
@@ -1518,16 +1520,16 @@
     try { return typeof window.__s97cloud === "function" ? window.__s97cloud() : null; } catch (_) { return null; }
   }
 
-  function pageHeader(kicker, title, subtitle, actionHTML) {
+  function pageHeader(kicker, title, subtitle, actionHTML, live) {
     return '<header class="page-head"><div class="page-head-text">' +
-      (kicker ? '<p class="eyebrow">' + esc(kicker) + '</p>' : '') +
+      (kicker ? '<p class="eyebrow">' + (live ? '<span class="live-dot" aria-hidden="true"></span>' : '') + esc(kicker) + '</p>' : '') +
       '<h1 class="page-title" tabindex="-1">' + esc(title) + '</h1>' +
       (subtitle ? '<p class="page-sub">' + esc(subtitle) + '</p>' : '') +
       '</div>' + (actionHTML ? '<div class="page-actions">' + actionHTML + '</div>' : '') + '</header>';
   }
 
-  function sectionHead(title, actionText, action) {
-    return '<div class="section-head"><h2 class="section-title">' + esc(title) + '</h2>' +
+  function sectionHead(title, actionText, action, iconName, tone) {
+    return '<div class="section-head"><h2 class="section-title">' + (iconName ? '<span class="sec-icon' + (tone ? " is-" + tone : "") + '" aria-hidden="true">' + icon(iconName, 16) + '</span>' : '') + esc(title) + '</h2>' +
       (actionText ? '<button type="button" class="link-btn" data-x97-action="' + attr(action) + '">' + esc(actionText) + icon("chevron", 14) + '</button>' : '') + '</div>';
   }
 
@@ -1567,6 +1569,8 @@
     });
     document.body.setAttribute("data-screen", screen);
     document.title = screen === "dashboard" ? "97 LIVE" : SCREEN_TITLE[screen] + " · 97 LIVE";
+    moveGlider();
+    if (changed && focusAfterRoute) haptic(8);
     clearTimeout(renderTimer);
     render();
     if (changed) window.scrollTo(0, 0);
@@ -1896,7 +1900,8 @@
     fc.points.slice(1).forEach(function (p) { d += " H" + x(p.date).toFixed(1) + " V" + y(p.balance).toFixed(1); last = p.balance; });
     d += " H" + (W - pad);
     var zero = min < 0 ? '<line class="spark-zero" x1="0" x2="' + W + '" y1="' + y(0).toFixed(1) + '" y2="' + y(0).toFixed(1) + '"></line>' : "";
-    return '<svg class="spark" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' + zero + '<path class="spark-fill" d="' + d + ' V' + H + ' H' + pad + ' Z"></path><path class="spark-line" d="' + d + '"></path></svg>';
+    var dot = '<span class="spark-dot" style="left:' + ((W - pad) / W * 100).toFixed(2) + '%;top:' + (y(last) / H * 100).toFixed(2) + '%"></span>';
+    return '<span class="spark-wrap" aria-hidden="true"><svg class="spark" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none">' + zero + '<path class="spark-fill" d="' + d + ' V' + H + ' H' + pad + ' Z"></path><path class="spark-line" d="' + d + '"></path></svg>' + dot + '</span>';
   }
 
   /* One prioritised list of what needs doing, most urgent first. Each item
@@ -1976,50 +1981,51 @@
     var stale = outUSD && fxStaleReason(fxLoad()) ? " · rate saved " + fxAgo(fxLoad()) : "";
 
     var hero = '<section class="hero" aria-labelledby="hero-label">' +
+      '<div class="hero-aura" aria-hidden="true"><i></i><i></i><i></i></div>' +
       '<div class="hero-top"><span id="hero-label" class="hero-label">Cash on hand</span><button type="button" class="hero-edit" data-x97-action="edit-balances">' + icon("edit", 15) + '<span>Update</span></button></div>' +
-      '<div class="hero-value x97-money">' + money(cash, "UGX") + '</div>' +
+      '<div class="hero-value x97-money" data-count="cash">' + money(cash, "UGX") + '</div>' +
       '<div class="hero-sub">' + esc(joinMeta((doc.balances || []).length + ((doc.balances || []).length === 1 ? " account" : " accounts"), runway == null ? "" : runway > 365 ? "over a year of spending" : "about " + runway + (runway === 1 ? " day" : " days") + " of spending")) + '</div>' +
       '<div class="hero-grid">' +
-        '<button type="button" class="hero-fig" data-x97-action="go" data-screen="upcoming" data-quick="open"><span>Owed to you</span><b class="x97-money">' + heroFig(owed) + '</b>' + (outUSD ? '<small>incl. ' + esc(money(outUSD, "USD", true) + stale) + '</small>' : '<small>' + a.open.length + (a.open.length === 1 ? ' open deal' : ' open deals') + '</small>') + '</button>' +
-        '<button type="button" class="hero-fig" data-x97-action="go" data-screen="credit" data-view="borrowed"><span>You owe</span><b class="x97-money">' + heroFig(a.debt) + '</b><small>' + (a.activeLoans.length ? a.activeLoans.length + (a.activeLoans.length === 1 ? " loan" : " loans") + " · next " + esc(nextLoanDue(a.activeLoans)) : "No loans") + '</small></button>' +
-        '<button type="button" class="hero-fig" data-x97-action="go" data-screen="credit"><span>Can borrow</span><b class="x97-money">' + heroFig(a.creditAvailable) + '</b><small>Not counted as cash</small></button>' +
+        '<button type="button" class="hero-fig" data-x97-action="go" data-screen="upcoming" data-quick="open"><span>Owed to you</span><b class="x97-money" data-count="owed">' + heroFig(owed) + '</b>' + (outUSD ? '<small>incl. ' + esc(money(outUSD, "USD", true) + stale) + '</small>' : '<small>' + a.open.length + (a.open.length === 1 ? ' open deal' : ' open deals') + '</small>') + '</button>' +
+        '<button type="button" class="hero-fig" data-x97-action="go" data-screen="credit" data-view="borrowed"><span>You owe</span><b class="x97-money" data-count="owe">' + heroFig(a.debt) + '</b><small>' + (a.activeLoans.length ? a.activeLoans.length + (a.activeLoans.length === 1 ? " loan" : " loans") + " · next " + esc(nextLoanDue(a.activeLoans)) : "No loans") + '</small></button>' +
+        '<button type="button" class="hero-fig" data-x97-action="go" data-screen="credit"><span>Can borrow</span><b class="x97-money" data-count="borrow">' + heroFig(a.creditAvailable) + '</b><small>Not counted as cash</small></button>' +
       '</div>' +
       '<button type="button" class="forecast" data-x97-action="open-forecast">' +
-        '<span class="forecast-text"><span>In 30 days</span><b class="x97-money">' + money(fc.end, "UGX", true) + '</b><small>' + esc(fc.low < fc.cash ? "Lowest " + money(fc.low, "UGX", true) + " on " + formatDate(fc.lowDate, true) : "Never below today") + '</small></span>' +
+        '<span class="forecast-text"><span>In 30 days</span><b class="x97-money" data-count="fc30">' + money(fc.end, "UGX", true) + '</b><small>' + esc(fc.low < fc.cash ? "Lowest " + money(fc.low, "UGX", true) + " on " + formatDate(fc.lowDate, true) : "Never below today") + '</small></span>' +
         sparklineSVG(fc) + '</button>' +
     '</section>';
 
     var quick = '<div class="quick">' +
-      '<button type="button" class="quick-btn" data-x97-action="record-payment">' + icon("wallet", 18) + '<span>Record payment</span></button>' +
-      '<button type="button" class="quick-btn" data-x97-action="add-upcoming">' + icon("plus", 18) + '<span>New deal</span></button>' +
-      '<button type="button" class="quick-btn" data-x97-action="add-expense">' + icon("receipt", 18) + '<span>Log expense</span></button>' +
+      '<button type="button" class="quick-btn is-pay" data-x97-action="record-payment"><span class="qi" aria-hidden="true">' + icon("wallet", 19) + '</span><span>Record payment</span></button>' +
+      '<button type="button" class="quick-btn is-deal" data-x97-action="add-upcoming"><span class="qi" aria-hidden="true">' + icon("plus", 19) + '</span><span>New deal</span></button>' +
+      '<button type="button" class="quick-btn is-spend" data-x97-action="add-expense"><span class="qi" aria-hidden="true">' + icon("receipt", 19) + '</span><span>Log expense</span></button>' +
     '</div>';
 
     var soon = fc.moves.filter(function (m) { return daysBetween(todayDate(), parseLocalDate(m.date)) <= 14; });
-    var coming = '<section class="card panel">' + sectionHead("Next two weeks", fc.moves.length ? "Full forecast" : "", "open-forecast") +
+    var coming = '<section class="card panel">' + sectionHead("Next two weeks", fc.moves.length ? "Full forecast" : "", "open-forecast", "calendar", "info") +
       (soon.length ? '<div class="moves">' + soon.slice(0, 6).map(moveRow).join("") + '</div>' + (soon.length > 6 ? '<button type="button" class="more-link" data-x97-action="open-forecast">' + (soon.length - 6) + ' more</button>' : '')
         : emptyState("calendar", "Nothing dated in the next two weeks", "Add due dates to deals and planned expenses to see them here.")) +
     '</section>';
 
-    var month = '<section class="card panel">' + sectionHead(monthLabel(key) , "History", "open-earnings") +
+    var month = '<section class="card panel">' + sectionHead(monthLabel(key) , "History", "open-earnings", "trend", "pos") +
       '<div class="trio">' +
-        '<div><span>Collected</span><b class="x97-money pos">' + money(earned, "UGX", true) + '</b></div>' +
-        '<div><span>Spent</span><b class="x97-money neg">' + money(spent, "UGX", true) + '</b></div>' +
-        '<div><span>Kept</span><b class="x97-money' + (earned - spent < 0 ? " neg" : "") + '">' + money(earned - spent, "UGX", true) + '</b></div>' +
+        '<div><span>Collected</span><b class="x97-money pos" data-count="collected">' + money(earned, "UGX", true) + '</b></div>' +
+        '<div><span>Spent</span><b class="x97-money neg" data-count="spent">' + money(spent, "UGX", true) + '</b></div>' +
+        '<div><span>Kept</span><b class="x97-money' + (earned - spent < 0 ? " neg" : "") + '" data-count="kept">' + money(earned - spent, "UGX", true) + '</b></div>' +
       '</div>' + earnChartHTML(earningsSeries(doc, 6)) + '</section>';
 
     var accounts = (doc.balances || []).slice().sort(function (x, y) {
       var xe = /equity/i.test(String(x.account || "")), ye = /equity/i.test(String(y.account || ""));
       return xe === ye ? num(y.balance) - num(x.balance) : xe ? -1 : 1;
     });
-    var accountsCard = '<section class="card panel">' + sectionHead("Accounts", "Add", "add-account") +
+    var accountsCard = '<section class="card panel">' + sectionHead("Accounts", "Add", "add-account", "bank") +
       (accounts.length ? '<div class="list">' + accounts.map(function (b) {
         return '<button type="button" class="list-row" data-x97-action="edit-account" data-id="' + attr(b.id) + '">' + accountIconBox(b.account) + '<span class="list-main"><b>' + esc(b.account || "Account") + '</b><span>' + esc(b.line || b.notes || "Tap to update") + '</span></span><span class="list-value"><b class="x97-money">' + money(b.balance, "UGX") + '</b></span></button>';
       }).join("") + '</div>' : emptyState("bank", "No accounts yet", "Add your bank, mobile money and cash so Home can add them up.", '<button type="button" class="x97-btn" data-x97-action="add-account">' + icon("plus", 16) + ' Add account</button>')) +
     '</section>';
 
     var budgets = ["Personal", "Business"].map(function (type) { return budgetUse(doc, type, key); });
-    var budgetCard = '<section class="card panel">' + sectionHead("Budgets", "Expenses", "go-expenses") +
+    var budgetCard = '<section class="card panel">' + sectionHead("Budgets", "Expenses", "go-expenses", "wallet", "warn") +
       budgets.map(function (u) { return budgetBarHTML(u, true); }).join("") + '</section>';
 
     var pipeMonths = [];
@@ -2028,7 +2034,7 @@
       var mk = monthKey(d), ev = scheduledEvents(doc, false).filter(function (x) { return monthKey(x.date) === mk; });
       if (ev.length) pipeMonths.push({ key: mk, events: ev });
     }
-    var pipeline = '<section class="card panel">' + sectionHead("Coming in", "All deals", "go-upcoming") +
+    var pipeline = '<section class="card panel">' + sectionHead("Coming in", "All deals", "go-upcoming", "arrowin", "pos") +
       (pipeMonths.length ? '<div class="pipe">' + pipeMonths.slice(0, 4).map(function (m) {
         var ugx = m.events.filter(function (x) { return x.currency !== "USD"; }).reduce(function (s, x) { return s + num(x.amount); }, 0);
         var usd = m.events.filter(function (x) { return x.currency === "USD"; }).reduce(function (s, x) { return s + num(x.amount); }, 0);
@@ -2038,15 +2044,15 @@
     '</section>';
 
     var s = messagingSummary(doc);
-    var msgCard = '<section class="card panel">' + sectionHead("Reminders", "Open", "open-messaging") +
+    var msgCard = '<section class="card panel">' + sectionHead("Reminders", "Open", "open-messaging", "message") +
       '<button type="button" class="msg-card" data-x97-action="open-messaging"><span class="msg-icon">' + icon("message", 20) + '</span><span class="msg-main"><b>WhatsApp reminders &amp; campaigns</b><span>' + esc(joinMeta(s.contacts + " contacts", s.campaigns + " campaigns", remindExt.ready ? "sender connected" : "")) + '</span></span>' +
       (s.overdue ? '<span class="pill bad">' + s.overdue + ' to chase</span>' : s.dueSoon ? '<span class="pill warn">' + s.dueSoon + ' due soon</span>' : '<span class="pill good">All clear</span>') + '</button></section>';
 
     root.innerHTML = '<div class="page home" data-page="dashboard">' +
-      pageHeader(dateLine, greetingLine(), summary, "") +
+      pageHeader(dateLine, greetingLine(), summary, "", true) +
       '<div class="home-grid">' +
         '<div class="home-hero">' + hero + quick + '</div>' +
-        '<section class="card panel home-attn">' + sectionHead("Needs attention", "Incoming", "go-upcoming") + attentionHTML(items) + '</section>' +
+        '<section class="card panel home-attn">' + sectionHead("Needs attention", "Incoming", "go-upcoming", items.length ? "alert" : "check", items.length ? "bad" : "pos") + attentionHTML(items) + '</section>' +
         '<div class="home-coming">' + coming + '</div>' +
         '<div class="home-month">' + month + '</div>' +
         '<div class="home-accounts">' + accountsCard + '</div>' +
@@ -2117,7 +2123,7 @@
     var spentPct = u.budget > 0 ? Math.min(100, u.actual / u.budget * 100) : 0;
     var planPct = u.budget > 0 ? Math.min(100 - spentPct, u.stillPlanned / u.budget * 100) : 0;
     var head = u.budget > 0
-      ? '<b class="x97-money' + (u.safe < 0 ? " neg" : "") + '">' + money(u.safe, "UGX", compact) + '</b><span>' + (u.safe < 0 ? "over budget" : "safe to spend") + '</span>'
+      ? '<b class="x97-money' + (u.safe < 0 ? " neg" : "") + '" data-count="safe-' + u.type + '">' + money(u.safe, "UGX", compact) + '</b><span>' + (u.safe < 0 ? "over budget" : "safe to spend") + '</span>'
       : '<b>No budget</b><span>' + esc(money(u.actual, "UGX", compact)) + ' spent</span>';
     return '<div class="budget' + (u.tone ? " is-" + u.tone : "") + '">' +
       '<div class="budget-head"><span class="budget-name">' + esc(u.type) + '</span><span class="budget-left">' + head + '</span></div>' +
@@ -2803,7 +2809,7 @@
     var outUGX = scoped.ugx, outUSD = scoped.usd;
     var heroLabel = "Outstanding" + (state.upcoming.retainers === "only" ? " · Retainers" : state.upcoming.retainers === "exclude" ? " · Excluding retainers" : "") + (selectedMonth !== "all" ? " · " + monthLabel(selectedMonth, true) : "");
     return '<section class="ic-hero">' +
-      '<div class="ic-hero-top"><div><div class="ic-hero-label">' + esc(heroLabel) + '</div><div class="ic-hero-value tabnum"><span class="ic-hero-value-main">' + money(outUGX, "UGX", true) + '</span>' + (outUSD ? ' <span class="ic-hero-usd">+ ' + money(outUSD, "USD", true) + '</span>' : '') + '</div></div><div class="ic-hero-headline">' + esc(headline) + '</div></div>' +
+      '<div class="ic-hero-top"><div><div class="ic-hero-label">' + esc(heroLabel) + '</div><div class="ic-hero-value tabnum"><span class="ic-hero-value-main" data-count="ic-ugx">' + money(outUGX, "UGX", true) + '</span>' + (outUSD ? ' <span class="ic-hero-usd" data-count="ic-usd">+ ' + money(outUSD, "USD", true) + '</span>' : '') + '</div></div><div class="ic-hero-headline">' + esc(headline) + '</div></div>' +
       '</section><div class="ic-filter-deck"><div class="ic-hero-chips" role="group" aria-label="Filter incoming deals">' +
         icQuickChip("overdue", "Overdue", stats.overdue.length, true) +
         icQuickChip("next7", "Next 7 days", stats.due7.length) +
@@ -3194,10 +3200,10 @@
     root.innerHTML = '<div class="page" data-page="credit">' +
       pageHeader("", "Credit", "What you can borrow, what you owe, and when.", '<button type="button" class="x97-btn primary" data-x97-action="add-facility">' + icon("plus", 16) + '<span>Add facility</span></button>') +
       '<div class="stats">' +
-        statTile("Available to borrow", money(availableTotal, "UGX", true), "Across " + live.length + (live.length === 1 ? " live offer" : " live offers"), "brand") +
-        statTile("Borrowed", money(borrowed, "UGX", true), active.length + " active", active.length ? "neg" : "") +
-        statTile("To clear today", money(due, "UGX", true), "Principal plus fees", due ? "neg" : "") +
-        statTile("Next repayment", esc(nextLoanDue(active)), active.length ? "Earliest due date" : "Nothing due", "", true) +
+        statTile("Available to borrow", money(availableTotal, "UGX", true), "Across " + live.length + (live.length === 1 ? " live offer" : " live offers"), "brand", false, "credit") +
+        statTile("Borrowed", money(borrowed, "UGX", true), active.length + " active", active.length ? "neg" : "", false, "arrowout") +
+        statTile("To clear today", money(due, "UGX", true), "Principal plus fees", due ? "neg" : "", false, "clock") +
+        statTile("Next repayment", esc(nextLoanDue(active)), active.length ? "Earliest due date" : "Nothing due", "", true, "calendar") +
       '</div>' +
       '<div class="segmented" role="tablist" aria-label="Credit view">' +
         segButton("credit-view", "available", "Available", view) +
@@ -3208,8 +3214,8 @@
   }
 
   // Shared building blocks for the screens.
-  function statTile(label, valueHTML, sub, tone, plain) {
-    return '<div class="stat' + (tone ? " is-" + tone : "") + '"><span class="stat-label">' + esc(label) + '</span><b class="stat-value' + (plain ? "" : " x97-money") + '">' + valueHTML + '</b>' + (sub ? '<span class="stat-sub">' + esc(sub) + '</span>' : '') + '</div>';
+  function statTile(label, valueHTML, sub, tone, plain, iconName) {
+    return '<div class="stat' + (tone ? " is-" + tone : "") + '">' + (iconName ? '<span class="stat-icon" aria-hidden="true">' + icon(iconName, 16) + '</span>' : '') + '<span class="stat-label">' + esc(label) + '</span><b class="stat-value' + (plain ? "" : " x97-money") + '">' + valueHTML + '</b>' + (sub ? '<span class="stat-sub">' + esc(sub) + '</span>' : '') + '</div>';
   }
   function segButton(action, value, label, current) {
     var on = value === current;
@@ -3231,6 +3237,264 @@
       '<p class="sk-note">' + esc(note) + '</p></div>';
   }
 
+  /* ── Motion ──────────────────────────────────────────────────────────────
+     Every screen is complete the moment it is drawn; motion only adds the way
+     it arrives. The stylesheet owns the animations (its motion layer). This
+     marks what should animate on a screen's first draw (runEntrance), counts
+     figures up and between values (countUp), and drives what CSS alone can't:
+     the tab glider, touch ripples, the hero's tilt, transitions between
+     screens and themes, and the intro's exit. Reduced motion turns it all off. */
+  var reduceQuery = null;
+  var introActive = false;
+  var lastWasSkeleton = false;
+  var canScrollReveal = !!(window.CSS && CSS.supports && CSS.supports("animation-timeline: view()"));
+  function reducedMotion() { return !!(reduceQuery && reduceQuery.matches); }
+
+  // What arrives how, in order. The first rule that claims an element wins, and
+  // anything inside a block that reveals on scroll arrives with that block.
+  var ENTRANCE = [
+    [".page-head .eyebrow", "fade"], [".page-head .page-title", "title"], [".page-head .page-sub", "fade"], [".page-head .page-actions", "pop"],
+    [".home-hero, .ic-hero", "hero"],
+    [".home-grid > :not(.home-hero)", "rise"],
+    [".hero-fig, .forecast, .quick-btn", "pop"],
+    [".att, .move, .pipe-row, .home-accounts .list-row", "ledger"],
+    [".ic-filter-deck, #ic-controls, .ic-filterchips", "rise"],
+    [".ic-list > .ic-row, .ic-list > .ic-group", "ledger"],
+    [".page > .stats > .stat", "pop"],
+    [".page > .segmented, .month-nav, .exp-summary, .page > .chips, .budget-grid > *", "rise"],
+    [".credit-body > *, .credit-body .card-grid > *", "rise"],
+    [".exp-list .day, .page > .empty, .settings-grid > *", "rise"],
+    [".page > .fine, .page > .about", "fade"]
+  ];
+
+  function afterRender(entering) {
+    if (introActive) return;               // the intro's exit plays the entrance
+    if (entering) runEntrance(); else countUp(false);
+  }
+
+  function runEntrance() {
+    if (!root || reducedMotion()) { countUp(true); return; }
+    var box = root.querySelector(".page, .ic-shell");
+    if (!box) return;
+    var fold = (window.innerHeight || 800) * 1.02;
+    box.classList.remove("enter");
+    ENTRANCE.forEach(function (rule) {
+      var n = 0;
+      Array.prototype.forEach.call(box.querySelectorAll(rule[0]), function (el) {
+        if (el.hasAttribute("data-m") || (el.parentElement && el.parentElement.closest('[data-m="scroll"]'))) return;
+        if (canScrollReveal && el.getBoundingClientRect().top > fold) { el.setAttribute("data-m", "scroll"); return; }
+        el.setAttribute("data-m", rule[1]);
+        el.style.setProperty("--i", String(Math.min(n++, 14)));
+      });
+    });
+    void box.offsetWidth;                  // restart, even when replaying after the intro
+    box.classList.add("enter");
+    countUp(true);
+  }
+
+  // Figures count up when a screen arrives, and run from their old value to
+  // the new one when data changes under them (a payment, a filter, a sync).
+  var COUNTS = ".hero-value, .hero-fig b, .forecast-text b, .stat-value.x97-money, .trio b, .budget-left b.x97-money, .ic-hero-value-main, .ic-hero-usd, .facility-avail b, .loan-figures b, .pipe-amt b, .x97-fx-value";
+  var shownFigures = {};
+  function countUp(entering) {
+    if (!root) return;
+    var still = reducedMotion() || privacyOn() || document.hidden;
+    var fold = window.innerHeight || 800;
+    Array.prototype.forEach.call(root.querySelectorAll(COUNTS), function (el, i) {
+      var node = numberNode(el);
+      if (!node) return;
+      // Incoming patches regions in place, so a figure can still be counting
+      // when the next render reads it: read the value it is counting to.
+      var m = /-?\d[\d,]*(?:\.\d+)?/.exec(finalText(node));
+      if (!m || (!/UGX|USD/.test(el.textContent) && !el.hasAttribute("data-count"))) return;
+      var target = parseFloat(m[0].replace(/,/g, ""));
+      var key = currentScreen + ":" + (el.getAttribute("data-count") || i);
+      var from = entering ? 0 : (key in shownFigures ? shownFigures[key] : target);
+      shownFigures[key] = target;
+      if (still || from === target || !isFinite(target)) return;
+      if (entering && el.getBoundingClientRect().top > fold) return;
+      tweenFigure(el, node, m, from, target, entering ? 1150 : 700, entering ? 260 + Math.min(i, 8) * 70 : 0);
+    });
+  }
+  function numberNode(el) {
+    var walker = document.createTreeWalker(el, 4, null), n;   // 4 = text nodes
+    while ((n = walker.nextNode())) if (/\d/.test(n.nodeValue)) return n;
+    return null;
+  }
+  function finalText(node) { return node.__final != null ? node.__final : node.nodeValue; }
+  function tweenFigure(el, node, match, from, to, duration, delay) {
+    var text = finalText(node), prefix = text.slice(0, match.index), suffix = text.slice(match.index + match[0].length);
+    var decimals = (match[0].split(".")[1] || "").length, grouped = match[0].indexOf(",") >= 0;
+    node.nodeValue = text;                 // measure at the final value
+    el.style.minWidth = ""; el.style.display = "";
+    var inline = getComputedStyle(el).display === "inline";
+    // Hold the final width so nothing beside the figure moves while it counts.
+    var width = el.getBoundingClientRect().width;
+    if (inline) el.style.display = "inline-block";
+    el.style.minWidth = width + "px";
+    var token = {}, start = 0;
+    el.__tween = token;
+    node.__final = text;
+    function fmt(v) { return grouped ? v.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : v.toFixed(decimals); }
+    function settle() { node.__final = null; el.style.minWidth = ""; if (inline) el.style.display = ""; }
+    function frame(now) {
+      if (el.__tween !== token) return;
+      if (!node.isConnected) { settle(); return; }   // the figure was re-rendered
+      if (!start) start = now + delay;
+      var t = Math.min(1, Math.max(0, (now - start) / duration));
+      if (t >= 1) { node.nodeValue = text; settle(); el.__tween = null; return; }
+      node.nodeValue = prefix + fmt(from + (to - from) * (1 - Math.pow(2, -10 * t))) + suffix;
+      requestAnimationFrame(frame);
+    }
+    node.nodeValue = prefix + fmt(from) + suffix;
+    requestAnimationFrame(frame);
+  }
+
+  // The highlight behind the current tab slides to it.
+  function moveGlider() {
+    var nav = document.querySelector(".tabs"), glider = nav && nav.querySelector(".tab-glider");
+    var active = nav && nav.querySelector('.tab[aria-current="page"]');
+    if (!glider || !active) return;
+    glider.style.setProperty("--gx", active.offsetLeft + "px");
+    glider.style.setProperty("--gy", active.offsetTop + "px");
+    glider.style.setProperty("--gw", active.offsetWidth + "px");
+    glider.style.setProperty("--gh", active.offsetHeight + "px");
+    if (!glider.classList.contains("ready")) {
+      void glider.offsetWidth;
+      requestAnimationFrame(function () { glider.classList.add("ready"); });
+    }
+  }
+
+  // A soft ripple from wherever a finger or pointer lands.
+  var RIPPLE = ".x97-btn, .quick-btn, .chip, .x97-chip, .ic-quick, .ic-month-chip, .ic-filter-chip, .att, .set-row, .hero-fig, .forecast, .seg, .tab, .s97-cloud-btn, .x97-msg-tile, .x97-deal-mode, .list-row, .move, .pipe-row, .hero-edit, .x97-rm-tool, .sync-chip";
+  function wireRipple() {
+    document.addEventListener("pointerdown", function (e) {
+      if (reducedMotion() || e.button > 0) return;
+      var host = e.target && e.target.closest && e.target.closest(RIPPLE);
+      if (!host || host.disabled) return;
+      var r = host.getBoundingClientRect(), size = Math.max(r.width, r.height) * 2.2;
+      var dot = document.createElement("span");
+      dot.className = "ripple";
+      dot.setAttribute("aria-hidden", "true");
+      dot.style.width = dot.style.height = size + "px";
+      dot.style.left = (e.clientX - r.left - size / 2) + "px";
+      dot.style.top = (e.clientY - r.top - size / 2) + "px";
+      host.appendChild(dot);
+      setTimeout(function () { if (dot.parentNode) dot.parentNode.removeChild(dot); }, 700);
+    }, { passive: true });
+  }
+
+  // On a desktop, the command cards lean toward the pointer and a light follows it.
+  function wireTilt() {
+    if (!window.matchMedia || !matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+    var active = null, frame = 0, last = null;
+    function reset(el) {
+      el.classList.remove("is-tilting");
+      ["--rx", "--ry", "--mx", "--my"].forEach(function (k) { el.style.removeProperty(k); });
+    }
+    document.addEventListener("pointermove", function (e) {
+      last = e;
+      if (frame) return;
+      frame = requestAnimationFrame(function () {
+        frame = 0;
+        var card = !reducedMotion() && last.target && last.target.closest ? last.target.closest(".hero, .ic-hero") : null;
+        if (active && active !== card) reset(active);
+        active = card;
+        if (!card) return;
+        var r = card.getBoundingClientRect(), x = (last.clientX - r.left) / r.width, y = (last.clientY - r.top) / r.height;
+        card.style.setProperty("--mx", (x * 100).toFixed(1) + "%");
+        card.style.setProperty("--my", (y * 100).toFixed(1) + "%");
+        card.style.setProperty("--ry", ((x - 0.5) * 5).toFixed(2) + "deg");
+        card.style.setProperty("--rx", ((0.5 - y) * 4).toFixed(2) + "deg");
+        card.classList.add("is-tilting");
+      });
+    }, { passive: true });
+    document.addEventListener("pointerout", function (e) { if (!e.relatedTarget && active) { reset(active); active = null; } });   // left the window
+  }
+
+  // The header lifts off the page once it scrolls.
+  function wireScroll() {
+    var html = document.documentElement, on = null, frame = 0;
+    function check() {
+      frame = 0;
+      var s = (window.scrollY || 0) > 6;
+      if (s !== on) { on = s; html.classList.toggle("scrolled", s); }
+    }
+    window.addEventListener("scroll", function () { if (!frame) frame = requestAnimationFrame(check); }, { passive: true });
+    check();
+  }
+
+  function haptic(ms) {
+    try { if (navigator.vibrate && !reducedMotion()) navigator.vibrate(ms || 8); } catch (_) {}
+  }
+
+  // Run `update` inside a view transition when the browser has them and motion
+  // is welcome; `kind` picks the transition's look in the stylesheet.
+  var transitions = {};                    // kind → how many are still running
+  function withTransition(kind, update) {
+    var html = document.documentElement;
+    if (!document.startViewTransition || reducedMotion() || document.hidden) { update(); return; }
+    // A second tap cuts the first transition short; its class stays until the
+    // last one of its kind has finished.
+    transitions[kind] = (transitions[kind] || 0) + 1;
+    html.classList.add("vt-" + kind);
+    function clear() { if (--transitions[kind] <= 0) { transitions[kind] = 0; html.classList.remove("vt-" + kind); } }
+    try { document.startViewTransition(update).finished.then(clear, clear); }
+    catch (_) { clear(); update(); }
+  }
+
+  var ROUTE_ORDER = ["dashboard", "upcoming", "credit", "expenses", "settings"];
+  function routeWithTransition() {
+    focusAfterRoute = true;
+    var next = ROUTES[routeFromHash()];
+    if (introActive || !currentScreen || next === currentScreen) { onRoute(); return; }
+    document.documentElement.style.setProperty("--dir", ROUTE_ORDER.indexOf(next) >= ROUTE_ORDER.indexOf(currentScreen) ? "1" : "-1");
+    withTransition("route", onRoute);
+  }
+
+  // Light and dark swap in a circle that grows from the control that asked.
+  function switchTheme(mode, from) {
+    var html = document.documentElement;
+    if (from && from.getBoundingClientRect) {
+      var r = from.getBoundingClientRect();
+      html.style.setProperty("--vt-x", Math.round(r.left + r.width / 2) + "px");
+      html.style.setProperty("--vt-y", Math.round(r.top + r.height / 2) + "px");
+    }
+    withTransition("theme", function () { setTheme(mode); });
+  }
+
+  // The intro stays up until the first screen is drawn and its moment has
+  // played (about a second and a half after launch), then the mark flies into
+  // the header while the screen arrives underneath.
+  function finishIntro() {
+    var html = document.documentElement, intro = document.getElementById("intro");
+    if (!intro || html.getAttribute("data-intro") !== "on") { if (intro) intro.remove(); html.setAttribute("data-intro", "off"); return; }
+    introActive = true;
+    var elapsed = window.performance && performance.now ? performance.now() : 0;
+    var gone = false, timer = setTimeout(leave, Math.max(0, 1500 - elapsed));
+    // A tap or a key skips it.
+    intro.addEventListener("pointerdown", leave);
+    document.addEventListener("keydown", leave);
+    function leave() {
+      if (gone) return;
+      gone = true; clearTimeout(timer);
+      document.removeEventListener("keydown", leave);
+      function swap() {
+        if (intro.parentNode) intro.parentNode.removeChild(intro);
+        html.setAttribute("data-intro", "done");
+        introActive = false;
+        moveGlider();
+        runEntrance();
+      }
+      if (document.startViewTransition && !reducedMotion() && !document.hidden) withTransition("intro", swap);
+      else {
+        intro.classList.add("leaving");
+        setTimeout(function () { introActive = false; runEntrance(); }, 180);
+        setTimeout(function () { if (intro.parentNode) intro.parentNode.removeChild(intro); html.setAttribute("data-intro", "done"); }, 580);
+      }
+    }
+  }
+
   function render() {
     renderTimer = null;
     if (!currentScreen || !root) return;
@@ -3240,8 +3504,13 @@
     var doc = viewDoc();
     if (!doc) {
       root.innerHTML = skeletonHTML();
+      lastWasSkeleton = true;
       return;
     }
+    // A screen arriving (a new tab, or real data replacing the loading
+    // outline) gets its entrance; any other redraw only moves the figures.
+    var entering = screenEntering || lastWasSkeleton;
+    lastWasSkeleton = false;
     try { lastRaw = localStorage.getItem(DATA_KEY) || ""; } catch (_) { lastRaw = ""; }
     if (currentScreen === "dashboard") renderDashboard(doc);
     else if (currentScreen === "upcoming") renderUpcoming(doc);
@@ -3249,6 +3518,7 @@
     else if (currentScreen === "expenses") renderExpenses(doc);
     else if (currentScreen === "settings") renderSettings(doc);
     screenEntering = false;
+    afterRender(entering);
   }
 
   /* ── Sheets ───────────────────────────────────────────────────────────────
@@ -3286,6 +3556,7 @@
     back.id = "x97-sheet";
     back.innerHTML = '<section class="x97-sheet' + (options && options.wide ? " wide" : "") + '" role="dialog" aria-modal="true" aria-labelledby="x97-sheet-title"><div class="x97-handle" aria-hidden="true"></div><div class="x97-sheet-head"><h2 id="x97-sheet-title">' + esc(title) + '</h2><button type="button" class="x97-close" data-x97-action="close-sheet" aria-label="Close">' + icon("close") + '</button></div><div class="x97-sheet-body">' + body + '</div>' + (foot ? '<div class="x97-sheet-foot">' + foot + '</div>' : '') + '</section>';
     document.body.appendChild(back);
+    Array.prototype.forEach.call(back.querySelectorAll(".x97-sheet-body > *"), function (el, i) { el.style.setProperty("--i", String(Math.min(i, 10))); });
     lockSheetScroll();
     back.addEventListener("mousedown", function (e) { if (e.target === back) closeSheet(); });
     back.addEventListener("keydown", function (e) {
@@ -4989,7 +5260,7 @@
     if(action==="forecast-days"){openForecast(btn.dataset.value);return;}
     if(action==="go-expenses"){navigate("expenses");return;}
     if(action==="go-credit"){navigate("credit");return;}
-    if(action==="toggle-theme"){setTheme(effectiveTheme(loadTheme())==="dark"?"light":"dark");return;}
+    if(action==="toggle-theme"){switchTheme(effectiveTheme(loadTheme())==="dark"?"light":"dark",btn);return;}
     if(action==="toggle-privacy"){setPrivacy(!privacyOn());return;}
     if(action==="edit-balances"){openBalancesEditor();return;}
     if(action==="add-account"){openAccountForm();return;}
@@ -5017,7 +5288,7 @@
     if(action==="fx-amount"){fxConv.amount=btn.dataset.value;var amt=document.getElementById("x97-fx-amount");if(amt)amt.value=fxConv.amount;fxPaint();return;}
     if(action==="open-incoming-filters"){openIncomingFilters(readDoc());return;}
     if(action==="open-incoming-more"){openIncomingMore();return;}
-    if(action==="set-theme"){setTheme(btn.dataset.value);return;}
+    if(action==="set-theme"){switchTheme(btn.dataset.value,btn);return;}
     if(action==="grid-collapse-all"){icCollapseAll(btn.dataset.value!=="expand");closeSheet();return;}
     if(action==="incoming-bulk-toggle"){icSetBulkMode(!icBulk.on);return;}
     if(action==="incoming-bulk-cancel"){icSetBulkMode(false);return;}
@@ -5066,6 +5337,7 @@
     ["ns97.v2.react-refresh", "ns97.v2.resume-tab", "ns97.v2.quiet-boot"].forEach(function (k) { try { sessionStorage.removeItem(k); } catch (_) {} });
     root = document.getElementById("main");
     if (window.matchMedia) {
+      reduceQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
       systemDark = window.matchMedia("(prefers-color-scheme: dark)");
       var follow = function () { if (loadTheme() === "system") { applyTheme("system"); scheduleRender(0); } };
       if (systemDark.addEventListener) systemDark.addEventListener("change", follow); else if (systemDark.addListener) systemDark.addListener(follow);
@@ -5074,7 +5346,7 @@
     applyPrivacy();
     loadPrefs(); initRemindBridge(); fxWatch(); persistCreditMigration();
     watchData();
-    window.addEventListener("hashchange", function () { focusAfterRoute = true; onRoute(); });
+    window.addEventListener("hashchange", routeWithTransition);
     // A redraw that waited for a field to lose focus happens as soon as it does.
     document.addEventListener("focusout", function () { if (renderDeferred) setTimeout(function () { if (renderDeferred && !typingInScreen()) render(); }, 0); });
     // Sync status changes (sync.js announces each one): the first cloud load can
@@ -5085,7 +5357,13 @@
       if (ready !== lastReady) { lastReady = ready; if (!readDoc()) scheduleRender(0); }
       if (currentScreen === "settings") scheduleRender(60);
     });
+    wireRipple(); wireTilt(); wireScroll();
+    var gliderFrame = 0;
+    window.addEventListener("resize", function () { if (!gliderFrame) gliderFrame = requestAnimationFrame(function () { gliderFrame = 0; moveGlider(); }); });
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(moveGlider, function () {});
+    if (document.documentElement.getAttribute("data-intro") === "on") introActive = true;
     onRoute();
+    finishIntro();
     window.__x97v2={version:VERSION,render:scheduleRender,navigate:navigate,read:readDoc,analytics:function(){var d=readDoc();return d?analytics(d):null;},forecast:function(days){var d=readDoc();return d?cashForecast(d,days||30):null;},fx:{rates:fxLoad,refresh:function(){fxRefresh(true);},convert:fxConvert},money:{gross:grossOf,paid:paidOf,outstanding:outstandingOf,earned:earnedIn,series:earningsSeries,csv:function(kind){return csvFor(readDoc(),kind).csv;},doc:function(id,kind){var d=readDoc();var i=(d.followups||[]).find(function(x){return String(x.id)===String(id);});return i?documentText(i,d,kind):"";}},selfTest:function(){var d=readDoc(),fx=fxLoad();return {version:VERSION,dataReady:!!d,followups:d?d.followups.length:0,payments:d?d.payments.length:0,facilities:d?d.credit.length:0,loans:d?loansOf(d).length:0,screen:currentScreen,fx:fx?{source:fx.source,day:fx.day,ugx:fx.rates.UGX,currencies:Object.keys(fx.rates).length,stale:fxStale(fx)}:null};}};
   }
 

@@ -35,6 +35,29 @@ system. What changed for you:
 - Light, dark or **match the device**, and **Hide amounts** for working in
   public — both one tap in the header.
 
+### Version 3.1 — motion and depth
+
+- **A launch moment**: the 97 mark springs in, LIVE rises letter by letter with
+  a greeting for the time of day, and the mark flies up into the header as Home
+  arrives. Once per session; a tap skips it.
+- **Screens arrive instead of just appearing**: titles, cards and rows cascade
+  in, amounts count up to their value (and run from old to new when a payment
+  or a sync changes them), charts draw themselves, and content further down
+  rises into place as you scroll to it.
+- **Moving between screens** slides the page in the direction of the tab while
+  the header and tab bar stay put and the tab highlight glides across. Light and
+  dark swap in a circle that grows from the button you pressed.
+- **Depth and light**: a slow aurora behind the app, a living balance card
+  (drifting glow, a passing sheen, a moving grid) that tilts toward the pointer
+  on a computer, a glass header and floating tab bar, colour-coded action tiles
+  and section icons, serif page titles, and a press ripple on every button — with
+  a light tap of vibration on phones that support it.
+- **Calm where it matters**: with *Reduce motion* on in the device's settings
+  none of this plays — no intro, nothing moves, final numbers at once. On a
+  screen you're just looking at, the moving light runs on the graphics chip, so
+  it doesn't drain the battery.
+- About 50 KB more to download (compressed), the display font included.
+
 ### Incoming schedules
 
 Incoming work stays as one deal with a visible payment schedule. Choose **One
@@ -86,8 +109,11 @@ backups are validated before a restore, and that deletes can be undone.
 
 `tests/browser/audit.cjs` opens every screen, sheet and panel at phone, tablet
 and desktop widths in both themes and fails on accessibility violations
-(axe-core), sideways scrolling, cut-off figures and small tap targets — see
-`tests/browser/README.md`.
+(axe-core), sideways scrolling, cut-off figures and small tap targets.
+`tests/browser/motion.cjs` runs the app with animation on and fails if a
+counted-up figure ends on the wrong value, anything is left faded or moved,
+the intro or a screen change doesn't finish cleanly, or a still screen keeps
+working on every frame — see `tests/browser/README.md`.
 
 ---
 
